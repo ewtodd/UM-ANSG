@@ -38,32 +38,32 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1772047000,
-        "narHash": "sha256-7DaQVv4R97cii/Qdfy4tmDZMB2xxtyIvNGSwXBBhSmo=",
+        "lastModified": 1778869304,
+        "narHash": "sha256-30sZNZoA1cqF5JNO9fVX+wgiQYjB7HJqqJ4ztCDeBZE=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "1267bb4920d0fc06ea916734c11b0bf004bbe17e",
+        "rev": "d233902339c02a9c334e7e593de68855ad26c4cb",
         "type": "github"
       },
       "original": {
         "owner": "NixOS",
-        "ref": "nixos-25.11",
+        "ref": "nixos-unstable",
         "repo": "nixpkgs",
         "type": "github"
       }
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1770770419,
-        "narHash": "sha256-iKZMkr6Cm9JzWlRYW/VPoL0A9jVKtZYiU4zSrVeetIs=",
+        "lastModified": 1778443072,
+        "narHash": "sha256-zi7/fsqM/kFdNuED//4WOCUtezGtKKqRNORjMvfwjnA=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "6c5e707c6b5339359a9a9e215c5e66d6d802fd7a",
+        "rev": "da5ad661ba4e5ef59ba743f0d112cbc30e474f32",
         "type": "github"
       },
       "original": {
         "owner": "NixOS",
-        "ref": "nixos-25.11",
+        "ref": "nixos-unstable",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -111,17 +111,14 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1772497000,
-        "narHash": "sha256-7B8gm6G9FjvTvEMf4yCl6XTLbCt4qoTZNwhhfePkH/o=",
-        "owner": "ewtodd",
-        "repo": "Analysis-Utilities",
-        "rev": "c6fe45aafcee724adc35b0397cb5502260ce4172",
-        "type": "github"
+        "lastModified": 1779117858,
+        "narHash": "sha256-Lf83v8AtqkDlT6nC1fwYBVcexRHATHNPtnAuWsH6ZKA=",
+        "path": "/home/e-work/Analysis-Utilities",
+        "type": "path"
       },
       "original": {
-        "owner": "ewtodd",
-        "repo": "Analysis-Utilities",
-        "type": "github"
+        "path": "/home/e-work/Analysis-Utilities",
+        "type": "path"
       }
     }
   },

@@ -4,7 +4,6 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     utils = {
-      inputs.nixpkgs.follows = "nixpkgs";
       url = "/home/e-work/Analysis-Utilities";
     };
   };
@@ -28,6 +27,7 @@
         };
         analysis-utils = utils.packages.${system}.default;
         analysis-utils-py = utils.packages.${system}.pythonPackage;
+        root = pkgs.root;
       in
       {
         devShells.default = pkgs.mkShell {
@@ -55,7 +55,6 @@
           ];
           shellHook = ''
             echo "Analysis-Utilities version: ${analysis-utils.version}"
-            echo "Analysis-Utilities python version: ${analysis-utils-py.version}"
             export CPLUS_INCLUDE_PATH="$PWD/include''${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
             export ROOT_INCLUDE_PATH="$PWD/include''${ROOT_INCLUDE_PATH:+:$ROOT_INCLUDE_PATH}"
             export LD_LIBRARY_PATH="$PWD/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

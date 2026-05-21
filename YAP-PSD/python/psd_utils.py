@@ -56,6 +56,24 @@ def bootstrap_auc(y_true,
     return float(np.mean(aucs)), float(np.std(aucs))
 
 
+def balance_test_set(alpha_features,
+                     gamma_features,
+                     random_state=42):
+    """Subsample the majority class so |alpha| == |gamma|.
+
+    AUC on a heavily imbalanced test set rewards majority-class accuracy;
+    forcing balance gives a class-symmetric reading.
+    """
+    n_balanced = min(len(alpha_features), len(gamma_features))
+    if len(alpha_features) > n_balanced:
+        alpha_features = alpha_features.sample(
+            n=n_balanced, random_state=random_state).reset_index(drop=True)
+    if len(gamma_features) > n_balanced:
+        gamma_features = gamma_features.sample(
+            n=n_balanced, random_state=random_state).reset_index(drop=True)
+    return alpha_features, gamma_features
+
+
 def process_waveforms(waveforms, n_jobs=N_JOBS):
     """Normalize each waveform by its maximum value.
 
@@ -79,6 +97,82 @@ def process_waveforms(waveforms, n_jobs=N_JOBS):
 def column_name(regressor_name):
     """Convert a regressor display name to a DataFrame column name."""
     return regressor_name.replace(" ", "_") + "_Output"
+
+
+def cumulative_shap(shap):
+    """Cumulative SHAP, normalized so the final value is 1.
+
+    Mean(|SHAP|) is non-negative so the cumulative is monotonically
+    non-decreasing; the normalized curve runs from 0 to 1.
+    """
+    cum = np.cumsum(np.asarray(shap, dtype=np.float64))
+    final = cum[-1]
+    if final > 0:
+        cum = cum / final
+    return cum
+
+
+def compute_mean_abs_shap(model,
+                          X,
+                          seed,
+                          explainer,
+                          n_bg=100,
+                          n_explain=500):
+    """Compute mean(|SHAP|) per input feature for a fitted model.
+
+    explainer="tree" uses interventional TreeSHAP (exact for tree models:
+    sklearn forests/GBMs, XGBoost, LightGBM). explainer="kernel" uses
+    KernelSHAP (model-agnostic sampling). Both use a background sample of
+    size n_bg drawn from X and explain n_explain rows from X, so tree and
+    non-tree models can be compared under the same interventional Shapley
+    formulation with the same background distribution.
+    """
+    import shap
+    rng = np.random.RandomState(seed)
+    bg_idx = rng.choice(len(X), size=min(n_bg, len(X)), replace=False)
+    explain_idx = rng.choice(len(X),
+                             size=min(n_explain, len(X)),
+                             replace=False)
+    if explainer == "tree":
+        expl = shap.TreeExplainer(model,
+                                  data=X[bg_idx],
+                                  feature_perturbation="interventional")
+        shap_vals = expl.shap_values(X[explain_idx], check_additivity=False)
+    elif explainer == "kernel":
+        expl = shap.KernelExplainer(model.predict, X[bg_idx])
+        shap_vals = expl.shap_values(X[explain_idx])
+    else:
+        raise ValueError(f"Unknown explainer {explainer!r}")
+    return np.mean(np.abs(shap_vals), axis=0)
+
+
+def style_residual_pad_axes(graph,
+                            x_title,
+                            y_title="#splitline{Cumulative}{SHAP [a.u.]}"):
+    """Apply residual-pad styling matching PlottingUtils::PlotFitWithResiduals.
+
+    Mirrors the bottom-pad style of the C++ fit-with-residuals layout: larger
+    NDC title/label sizes to compensate for the 30%-tall pad, dense y-axis
+    title centered, fixed [0, 1] cumulative range with a small margin.
+
+    Default y-title uses #splitline so that the long label fits in the
+    short pad: under the 90 deg CCW rotation, the second argument lands
+    closer to the y-axis (so "SHAP" reads next to the axis, "Cumulative"
+    one column out).
+    """
+    graph.SetTitle("")
+    graph.GetXaxis().SetTitle(x_title)
+    graph.GetYaxis().SetTitle(y_title)
+    graph.GetXaxis().SetTitleSize(0.13)
+    graph.GetYaxis().SetTitleSize(0.13)
+    graph.GetXaxis().SetLabelSize(0.12)
+    graph.GetYaxis().SetLabelSize(0.12)
+    graph.GetXaxis().SetTitleOffset(1.0)
+    graph.GetYaxis().SetTitleOffset(0.4)
+    graph.GetYaxis().SetNdivisions(505)
+    graph.GetXaxis().SetNdivisions(510)
+    graph.GetYaxis().CenterTitle(True)
+    graph.GetYaxis().SetRangeUser(-0.05, 1.05)
 
 
 def _train_or_load(regressor_cfg, x_train, y_train):
@@ -140,30 +234,23 @@ def _save_timing_table(timing_records, n_cores, cache_dir=None):
         cache_dir = ANALYSIS_CACHE_DIR
     lines = []
     lines.append(r"\begin{table}[htbp]")
-    lines.append(r"  \centering")
-    lines.append(r"  \caption{Training and inference time for each regressor"
-                 f" ({n_cores} cores)."
-                 r"}")
-    lines.append(r"  \label{tab:timing}")
-    lines.append(r"  \begin{tabular}{lcccc}")
-    lines.append(r"    \toprule")
-    lines.append(r"    Method & Train [s] & Train/core [s] "
-                 r"& Infer [$\mu$s/event] & Infer/core [$\mu$s/event] \\")
-    lines.append(r"    \midrule")
+    lines.append(r"    \centering")
+    lines.append(r"    \begin{tabular}{lcc}")
+    lines.append(r"        \hline \hline")
+    lines.append(r"        \textbf{Method} & \textbf{Train [s]} & "
+                 r"\textbf{Infer [$\mu$s/event]} \\")
+    lines.append(r"        \hline")
     for r in timing_records:
-        train = f"{r['train_time']:.3f}" if r.get(
-            "train_time") is not None else "--"
-        train_pc = (f"{r['train_time_per_core']:.3f}"
-                    if r.get("train_time_per_core") is not None else "--")
+        train = (f"{r['train_time']:.3f}"
+                 if r.get("train_time") is not None else "--")
         infer = (f"{r['infer_per_event_us']:.1f}"
                  if r.get("infer_per_event_us") is not None else "--")
-        infer_pc = (f"{r['infer_per_event_per_core_us']:.1f}" if
-                    r.get("infer_per_event_per_core_us") is not None else "--")
-        lines.append(f"    {r['name']} & {train} & {train_pc}"
-                     f" & {infer} & {infer_pc}"
-                     r" \\")
-    lines.append(r"    \bottomrule")
-    lines.append(r"  \end{tabular}")
+        lines.append(f"        {r['name']} & {train} & {infer} " + r"\\")
+    lines.append(r"        \hline \hline")
+    lines.append(r"    \end{tabular}")
+    lines.append(r"    \caption{Training and inference time for each "
+                 f"regressor ({n_cores} threads)" + r"}")
+    lines.append(r"    \label{tab:timing}")
     lines.append(r"\end{table}")
 
     table_str = "\n".join(lines)
@@ -174,6 +261,121 @@ def _save_timing_table(timing_records, n_cores, cache_dir=None):
     print(table_str)
 
 
+HYPERPARAM_SPECS = [
+    {
+        "name": "Random Forest",
+        "label": "tab:rf",
+        "params": ["n_estimators", "max_depth", "max_samples", "max_features"],
+    },
+    {
+        "name": "Gradient Boosting",
+        "label": "tab:gb",
+        "params": ["n_estimators", "max_depth", "learning_rate"],
+    },
+    {
+        "name": "XGBoost",
+        "label": "tab:xgb",
+        "params": ["n_estimators", "max_depth", "learning_rate"],
+    },
+    {
+        "name": "MLP",
+        "label": "tab:mlp",
+        "params": ["hidden_layer_sizes", "max_iter"],
+    },
+]
+
+HYPERPARAM_PAIRS = [(0, 1), (2, 3)]
+
+
+def _fmt_hyperparam_value(value):
+    """Format a hyperparameter value for the LaTeX table."""
+    if isinstance(value, str):
+        return rf"\say{{{value}}}"
+    if isinstance(value, tuple):
+        return "(" + ", ".join(str(x) for x in value) + ")"
+    return str(value)
+
+
+def _build_hyperparam_subtable(name, label, rows, phantom_rows):
+    """Build the LaTeX lines for a single hyperparameter subtable."""
+    indent = "    "
+    out = []
+    out.append(rf"{indent}\begin{{subtable}}[t]{{0.45\textwidth}}")
+    out.append(rf"{indent}    \centering")
+    out.append(rf"{indent}    \begin{{tabular}}{{lc}}")
+    out.append(rf"{indent}        \hline \hline")
+    out.append(rf"{indent}        \textbf{{Parameter}} & \textbf{{Value}} \\")
+    out.append(rf"{indent}        \hline")
+    for param, value in rows:
+        out.append(rf"{indent}        {param} & {value} \\")
+    for param, value in phantom_rows:
+        out.append(rf"{indent}        \phantom{{{param}}} & "
+                   rf"\phantom{{{value}}} \\")
+    out.append(rf"{indent}        \hline \hline")
+    out.append(rf"{indent}    \end{{tabular}}")
+    out.append(rf"{indent}    \caption{{{name}}}")
+    out.append(rf"{indent}    \label{{{label}}}")
+    out.append(rf"{indent}\end{{subtable}}")
+    return out
+
+
+def _save_hyperparameter_table(cache_dir=None):
+    """Save a LaTeX 2x2 subtable showing each regressor's hyperparameters."""
+    from regressors import get_default_regressors
+
+    if cache_dir is None:
+        cache_dir = ANALYSIS_CACHE_DIR
+
+    models_by_name = {r["name"]: r["model"] for r in get_default_regressors()}
+
+    rows_per_spec = []
+    for spec in HYPERPARAM_SPECS:
+        model = models_by_name[spec["name"]]
+        rows = [(key.replace("_",
+                             r"\_"), _fmt_hyperparam_value(getattr(model,
+                                                                   key)))
+                for key in spec["params"]]
+        rows_per_spec.append(rows)
+
+    phantoms_per_spec = [[] for _ in HYPERPARAM_SPECS]
+    for i, j in HYPERPARAM_PAIRS:
+        ni, nj = len(rows_per_spec[i]), len(rows_per_spec[j])
+        if ni > nj:
+            phantoms_per_spec[j] = rows_per_spec[i][nj:]
+        elif nj > ni:
+            phantoms_per_spec[i] = rows_per_spec[j][ni:]
+
+    lines = []
+    lines.append(r"\begin{table}[h!]")
+    lines.append(r"    \centering")
+    lines.append(r"    %")
+    for pair_idx, (i, j) in enumerate(HYPERPARAM_PAIRS):
+        if pair_idx > 0:
+            lines.append(r"    %")
+            lines.append(r"    \vspace{1em}")
+            lines.append(r"    %")
+        for k, spec_idx in enumerate((i, j)):
+            spec = HYPERPARAM_SPECS[spec_idx]
+            lines.extend(
+                _build_hyperparam_subtable(spec["name"], spec["label"],
+                                           rows_per_spec[spec_idx],
+                                           phantoms_per_spec[spec_idx]))
+            if k == 0:
+                lines.append(r"    \hfill")
+    lines.append(r"    %")
+    lines.append(r"    \caption{Parameters used for each of the models}")
+    lines.append(r"    \label{tab:ml}")
+    lines.append(r"\end{table}")
+
+    table_str = "\n".join(lines)
+    output_path = os.path.join(cache_dir, "hyperparameter_table.txt")
+    os.makedirs(cache_dir, exist_ok=True)
+    with open(output_path, "w") as f:
+        f.write(table_str + "\n")
+    print(f"\nLaTeX hyperparameter table saved to {output_path}")
+    print(table_str)
+
+
 def _run_plots(test_alpha_features,
                test_gamma_features,
                test_alpha_wf,
@@ -181,7 +383,10 @@ def _run_plots(test_alpha_features,
                regressor_names,
                lo_lower_dict,
                lo_upper_dict,
-               plot_prefix=""):
+               plot_prefix="",
+               include_legacy_psd=True,
+               auc_lo_subplot_label=None,
+               auc_lo_y_range=(0.6, 1.01)):
     """Run all plotting and analysis on cached/computed test data."""
     alpha_lo_mask = (
         test_alpha_features["light_output"] <= lo_upper_dict["alpha"]) & (
@@ -233,13 +438,16 @@ def _run_plots(test_alpha_features,
     _analyze_all_methods(test_alpha_features_filtered,
                          test_gamma_features_filtered,
                          regressor_names,
-                         plot_prefix=plot_prefix)
+                         plot_prefix=plot_prefix,
+                         include_legacy_psd=include_legacy_psd)
 
-    if (plot_prefix == "" or plot_prefix == "full"):
-        _plot_auc_vs_light_output(test_alpha_features,
-                                  test_gamma_features,
-                                  regressor_names,
-                                  plot_prefix=plot_prefix)
+    _plot_auc_vs_light_output(test_alpha_features,
+                              test_gamma_features,
+                              regressor_names,
+                              plot_prefix=plot_prefix,
+                              include_legacy_psd=include_legacy_psd,
+                              subplot_label=auc_lo_subplot_label,
+                              y_range=auc_lo_y_range)
 
     return (
         (test_alpha_wf, test_gamma_wf),
@@ -253,7 +461,11 @@ def regress_waveforms(waveforms,
                       process_func=process_waveforms,
                       random_state=42,
                       cache_dir=None,
-                      plot_prefix=""):
+                      plot_prefix="",
+                      include_legacy_psd=True,
+                      auc_lo_subplot_label=None,
+                      auc_lo_y_range=(0.6, 1.01),
+                      skip_plots=False):
     """Train and evaluate ML models using waveforms from ROOT files.
 
     Parameters
@@ -292,6 +504,9 @@ def regress_waveforms(waveforms,
             regressor_names = pickle.load(f)
         print(f"  Loaded {len(regressor_names)} regressors: "
               f"{', '.join(regressor_names)}")
+        if skip_plots:
+            return ((test_alpha_wf, test_gamma_wf),
+                    (test_alpha_features, test_gamma_features))
         # Skip to plotting
         return _run_plots(test_alpha_features,
                           test_gamma_features,
@@ -300,7 +515,10 @@ def regress_waveforms(waveforms,
                           regressor_names,
                           lo_lower_dict,
                           lo_upper_dict,
-                          plot_prefix=plot_prefix)
+                          plot_prefix=plot_prefix,
+                          include_legacy_psd=include_legacy_psd,
+                          auc_lo_subplot_label=auc_lo_subplot_label,
+                          auc_lo_y_range=auc_lo_y_range)
 
     os.makedirs(cache_dir, exist_ok=True)
 
@@ -413,6 +631,8 @@ def regress_waveforms(waveforms,
     if any(r.get("train_time") is not None for r in timing_records):
         _save_timing_table(timing_records, n_cores, cache_dir=cache_dir)
 
+    _save_hyperparameter_table(cache_dir=cache_dir)
+
     # Save analysis cache
     test_alpha_features.to_pickle(cache_files["alpha_feat"])
     test_gamma_features.to_pickle(cache_files["gamma_feat"])
@@ -423,6 +643,9 @@ def regress_waveforms(waveforms,
         pickle.dump(regressor_names, f)
     print(f"Analysis cache saved to {cache_dir}/")
 
+    if skip_plots:
+        return ((test_alpha_wf, test_gamma_wf),
+                (test_alpha_features, test_gamma_features))
     return _run_plots(test_alpha_features,
                       test_gamma_features,
                       test_alpha_wf,
@@ -430,14 +653,29 @@ def regress_waveforms(waveforms,
                       regressor_names,
                       lo_lower_dict,
                       lo_upper_dict,
-                      plot_prefix=plot_prefix)
+                      plot_prefix=plot_prefix,
+                      include_legacy_psd=include_legacy_psd,
+                      auc_lo_subplot_label=auc_lo_subplot_label,
+                      auc_lo_y_range=auc_lo_y_range)
 
 
 def _analyze_all_methods(test_alpha_features,
                          test_gamma_features,
                          regressor_names,
-                         plot_prefix=""):
-    """ROC analysis comparing ML regressors, Charge Comparison, and Shape Indicator PSD."""
+                         plot_prefix="",
+                         include_legacy_psd=True):
+    """ROC analysis comparing ML regressors, Charge Comparison, and Shape Indicator PSD.
+
+    The test set is class-balanced (majority class subsampled) so AUC and the
+    5%-FPR thresholds are not inflated by the gamma/alpha population imbalance.
+    Legacy PSD methods (CC/SI) operate on the full waveform and are not
+    meaningful comparators for waveform-slice studies; set
+    include_legacy_psd=False to omit them.
+    """
+    test_alpha_features, test_gamma_features = balance_test_set(
+        test_alpha_features, test_gamma_features)
+    print(f"  Balanced ROC test set: {len(test_alpha_features)} alpha, "
+          f"{len(test_gamma_features)} gamma")
 
     test_features = pd.concat([test_alpha_features,
                                test_gamma_features]).reset_index(drop=True)
@@ -448,23 +686,20 @@ def _analyze_all_methods(test_alpha_features,
     all_methods = [column_name(n) for n in regressor_names]
     all_method_names = list(regressor_names)
 
-    all_methods += ["charge_comparison", "clean_shape_indicator"]
-    all_method_names += ["Charge Comparison", "Shape Indicator"]
+    if include_legacy_psd:
+        all_methods += ["charge_comparison", "clean_shape_indicator"]
+        all_method_names += ["Charge Comparison", "Shape Indicator"]
 
     _plot_roc_curves(test_features, y_true, all_methods, all_method_names,
                      f"{plot_prefix}roc_curves")
 
 
-def _plot_auc_vs_light_output(test_alpha_features,
-                              test_gamma_features,
-                              regressor_names,
-                              plot_prefix=""):
-    """Plot ROC AUC as a function of light output for all classifiers."""
-    # Compute bin edges that equalize the minority-class count per bin
-    alpha_lo = test_alpha_features["light_output"].values
-    gamma_lo = test_gamma_features["light_output"].values
-    lo_min, lo_max = 375, 1575
-    n_bins = 14
+def compute_lo_bin_edges(alpha_lo,
+                         gamma_lo,
+                         lo_min=375,
+                         lo_max=1575,
+                         n_bins=14):
+    """Return LO bin edges that target equal minority-class counts per bin."""
     fine_edges = np.arange(lo_min, lo_max + 25, 25)
     alpha_hist, _ = np.histogram(alpha_lo, bins=fine_edges)
     gamma_hist, _ = np.histogram(gamma_lo, bins=fine_edges)
@@ -481,6 +716,72 @@ def _plot_auc_vs_light_output(test_alpha_features,
             bin_edges.append(fine_edges[i + 1])
             running = 0
     bin_edges.append(lo_max)
+    return bin_edges
+
+
+def per_lo_auc_from_scores(alpha_scores,
+                           gamma_scores,
+                           alpha_lo,
+                           gamma_lo,
+                           random_state=42,
+                           min_per_bin=5):
+    """Compute balanced per-LO-bin AUC + bootstrap error from raw scores.
+
+    Bins are chosen to equalize minority-class counts per bin. Within each
+    bin the majority class is subsampled to the minority size so AUC is
+    insensitive to class imbalance.
+
+    Returns (aucs, errs) — lists aligned with the LO bins. Bins with too
+    few events get NaN.
+    """
+    alpha_scores = np.asarray(alpha_scores)
+    gamma_scores = np.asarray(gamma_scores)
+    alpha_lo = np.asarray(alpha_lo)
+    gamma_lo = np.asarray(gamma_lo)
+
+    bin_edges = compute_lo_bin_edges(alpha_lo, gamma_lo)
+    aucs = []
+    errs = []
+    rng = np.random.RandomState(random_state)
+    for lo, hi in zip(bin_edges[:-1], bin_edges[1:]):
+        a_mask = (alpha_lo >= lo) & (alpha_lo < hi)
+        g_mask = (gamma_lo >= lo) & (gamma_lo < hi)
+        a_s = alpha_scores[a_mask]
+        g_s = gamma_scores[g_mask]
+        n_balanced = min(len(a_s), len(g_s))
+        if n_balanced < min_per_bin:
+            aucs.append(float("nan"))
+            errs.append(float("nan"))
+            continue
+        if len(a_s) > n_balanced:
+            a_s = a_s[rng.choice(len(a_s), n_balanced, replace=False)]
+        if len(g_s) > n_balanced:
+            g_s = g_s[rng.choice(len(g_s), n_balanced, replace=False)]
+        y_true = np.array([0] * n_balanced + [1] * n_balanced)
+        scores = np.concatenate([a_s, g_s])
+        m, s = bootstrap_auc(y_true, scores)
+        aucs.append(m)
+        errs.append(s)
+    return aucs, errs
+
+
+def _compute_per_lo_auc(test_alpha_features,
+                        test_gamma_features,
+                        regressor_names,
+                        include_legacy_psd=True):
+    """Compute per-LO-bin balanced AUC for every method.
+
+    Returns
+    -------
+    bin_centers : list of float
+    lo_bins : list of (lo, hi)
+    auc_results : dict[method_name -> list of float]
+    auc_errors : dict[method_name -> list of float]
+    all_method_names : list of str (display names)
+    """
+    alpha_lo = test_alpha_features["light_output"].values
+    gamma_lo = test_gamma_features["light_output"].values
+    bin_edges = compute_lo_bin_edges(alpha_lo, gamma_lo)
 
     lo_bins = [(bin_edges[i], bin_edges[i + 1])
                for i in range(len(bin_edges) - 1)]
@@ -488,10 +789,10 @@ def _plot_auc_vs_light_output(test_alpha_features,
 
     all_methods = [column_name(n) for n in regressor_names]
     all_method_names = list(regressor_names)
-    all_methods += ["charge_comparison", "clean_shape_indicator"]
-    all_method_names += ["Charge Comparison", "Shape Indicator"]
+    if include_legacy_psd:
+        all_methods += ["charge_comparison", "clean_shape_indicator"]
+        all_method_names += ["Charge Comparison", "Shape Indicator"]
 
-    # Compute AUC per bin per method with bootstrap uncertainties
     auc_results = {name: [] for name in all_method_names}
     auc_errors = {name: [] for name in all_method_names}
 
@@ -516,8 +817,6 @@ def _plot_auc_vs_light_output(test_alpha_features,
                 auc_errors[name].append(np.nan)
             continue
 
-        # Subsample the majority class so AUC and bootstrap uncertainties
-        # are computed on a class-balanced subset per bin.
         if n_alpha > n_balanced:
             alpha_bin = alpha_bin.sample(
                 n=n_balanced, random_state=42).reset_index(drop=True)
@@ -535,6 +834,40 @@ def _plot_auc_vs_light_output(test_alpha_features,
             auc_mean, auc_std = bootstrap_auc(y_true, scores)
             auc_results[name].append(auc_mean)
             auc_errors[name].append(auc_std)
+
+    return bin_centers, lo_bins, auc_results, auc_errors, all_method_names
+
+
+def error_weighted_auc(aucs, errs):
+    """Inverse-variance-weighted mean and combined uncertainty.
+
+    NaNs (from bins with insufficient statistics) are dropped. Returns
+    (nan, nan) if no valid bins remain.
+    """
+    aucs = np.asarray(aucs, dtype=np.float64)
+    errs = np.asarray(errs, dtype=np.float64)
+    valid = ~(np.isnan(aucs) | np.isnan(errs) | (errs <= 0))
+    if not np.any(valid):
+        return float("nan"), float("nan")
+    w = 1.0 / (errs[valid] ** 2)
+    mean = float(np.sum(w * aucs[valid]) / np.sum(w))
+    err = float(1.0 / np.sqrt(np.sum(w)))
+    return mean, err
+
+
+def _plot_auc_vs_light_output(test_alpha_features,
+                              test_gamma_features,
+                              regressor_names,
+                              plot_prefix="",
+                              include_legacy_psd=True,
+                              subplot_label=None,
+                              y_range=(0.6, 1.01)):
+    """Plot ROC AUC as a function of light output for all classifiers."""
+    bin_centers, lo_bins, auc_results, auc_errors, all_method_names = (
+        _compute_per_lo_auc(test_alpha_features,
+                            test_gamma_features,
+                            regressor_names,
+                            include_legacy_psd=include_legacy_psd))
 
     # Plot
     colors = list(ROOT.PlottingUtils.GetDefaultColors())
@@ -581,10 +914,14 @@ def _plot_auc_vs_light_output(test_alpha_features,
             graph.GetYaxis().SetTitle("ROC AUC")
             graph.GetYaxis().SetTitleOffset(1)
             graph.GetXaxis().SetRangeUser(300, 2000)
-            graph.GetYaxis().SetRangeUser(0.6, 1.01)
+            graph.GetYaxis().SetRangeUser(*y_range)
             graph.Draw("APE")
         else:
             graph.Draw("P SAME")
+
+    if subplot_label is not None:
+        _subplot_label_text = ROOT.PlottingUtils.AddText(
+            subplot_label, 0.92, 0.84)
 
     pad_leg.cd()
     leg = ROOT.PlottingUtils.AddLegend(0.0, 0.95, 0.2, 0.85)

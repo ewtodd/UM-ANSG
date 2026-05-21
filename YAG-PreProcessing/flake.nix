@@ -4,7 +4,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     utils = {
-      url = "github:ewtodd/Analysis-Utilities";
+      url = "/home/e-work/Analysis-Utilities";
     };
   };
   outputs =
@@ -20,7 +20,6 @@
         pkgs = nixpkgs.legacyPackages.${system};
         analysis-utils = utils.packages.${system}.default;
         analysis-utils-py = utils.packages.${system}.pythonPackage;
-        root = utils.packages.${system}.root;
       in
       {
         devShells.default = pkgs.mkShell {
@@ -31,7 +30,7 @@
           ];
           buildInputs = [
             analysis-utils
-            root
+            pkgs.root
             pkgs.bash
             # Use the python3 that analysis-utils-py was built against, not
             # pkgs.python3. The two come from different nixpkgs revisions

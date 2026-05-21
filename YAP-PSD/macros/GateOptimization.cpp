@@ -414,16 +414,15 @@ void PlotPSDWithFOM(TH1F *hist_alpha, TH1F *hist_gamma,
   leg->AddEntry((TObject *)0, fom_text, "");
   leg->Draw();
 
-  PlottingUtils::SaveFigure(canvas, output_name + "_" + gamma_label + "",
-                            "", PlotSaveOptions::kLOG);
+  PlottingUtils::SaveFigure(canvas, output_name + "_" + gamma_label + "", "",
+                            PlotSaveOptions::kLOG);
 
   delete canvas;
 }
 
 void GateOptimization() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(Constants::SAVE_FORMAT,
-                                project_root + "/plots",
+  InitUtils::SetROOTPreferences(Constants::SAVE_FORMAT, project_root + "/plots",
                                 project_root + "/root_files");
   ROOT::EnableThreadSafety();
 

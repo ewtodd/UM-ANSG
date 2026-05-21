@@ -31,7 +31,7 @@ Int_t GammaColor(Float_t t) {
 
 void ComputeAndPlot(const TString output_name, const TString label,
                     TGraph *alpha_template, TGraph *gamma_template,
-                    TGraph *compare_template, Bool_t alpha_is_below) {
+                    TGraph *compare_template, Bool_t compare_is_alpha) {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   TString filepath = project_root + "/root_files/" + output_name + ".root";
   TFile *file = TFile::Open(filepath, "READ");
@@ -132,10 +132,10 @@ void ComputeAndPlot(const TString output_name, const TString label,
           Double_t bin_last = merged_sum[last] / peak;
           Double_t comp_last = cy[last];
           Double_t tolerance = 0.0001;
-          if (alpha_is_below)
-            is_alpha_like = (bin_last < comp_last - tolerance);
+          if (compare_is_alpha)
+            is_alpha_like = !(bin_last > comp_last + tolerance);
           else
-            is_alpha_like = (bin_last > comp_last + tolerance);
+            is_alpha_like = (bin_last < comp_last - tolerance);
         }
 
         graphs.push_back(g);
@@ -220,8 +220,8 @@ void ComputeAndPlot(const TString output_name, const TString label,
 
   plot_pad->cd();
   plot_pad->SetLogy(kTRUE);
-  PlottingUtils::SaveFigure(canvas, "avg_waveforms_" + output_name,
-                            "", PlotSaveOptions::kLOG);
+  PlottingUtils::SaveFigure(canvas, "avg_waveforms_" + output_name, "",
+                            PlotSaveOptions::kLOG);
 
   delete canvas;
   for (Int_t i = 0; i < n_graphs; i++) {
@@ -247,15 +247,14 @@ TGraph *LoadTemplate(const TString output_name) {
 
 void AverageWaveforms() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(Constants::SAVE_FORMAT,
-                                project_root + "/plots",
+  InitUtils::SetROOTPreferences(Constants::SAVE_FORMAT, project_root + "/plots",
                                 project_root + "/root_files");
 
   TGraph *alpha_template = LoadTemplate(Constants::AM241);
   TGraph *gamma_template = LoadTemplate(Constants::NA22);
 
   ComputeAndPlot(Constants::AM241, Constants::AM241_LABEL, alpha_template,
-                 gamma_template, gamma_template, kTRUE);
+                 gamma_template, gamma_template, kFALSE);
   ComputeAndPlot(Constants::NA22, Constants::NA22_LABEL, alpha_template,
                  gamma_template, alpha_template, kTRUE);
 

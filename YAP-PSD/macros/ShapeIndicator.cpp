@@ -47,8 +47,8 @@ void CalculateAverageWaveforms(const std::vector<TString> output_names,
     std::vector<std::vector<Float_t>> waveforms;
     Int_t event_counts = 0;
 
-    Float_t min_light_output = output_name == Constants::AM241 ? 1000 : 500;
-    Float_t max_light_output = 1600;
+    Float_t min_light_output = output_name == Constants::AM241 ? 1300 : 500;
+    Float_t max_light_output = 1550;
     Int_t max_events_per_source = CUTS.max_events_per_source;
 
     Long64_t n_entries = tree->GetEntries();

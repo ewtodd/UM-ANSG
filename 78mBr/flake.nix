@@ -19,7 +19,6 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
         analysis-utils = utils.packages.${system}.default;
-        root = utils.packages.${system}.root;
       in
       {
         devShells.default = pkgs.mkShell {

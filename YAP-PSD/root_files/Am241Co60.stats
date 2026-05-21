@@ -10,4 +10,6 @@ Rejected negative integral: 13
 Rejected bad baseline: 1066642
 
 Acceptance rate: 76.1322%
+Mean baseline RMS (all processed): 6.9106 ADC counts (over 13335699 waveforms)
+Mean baseline RMS (accepted only): 6.71053 ADC counts (over 10152765 waveforms)
 

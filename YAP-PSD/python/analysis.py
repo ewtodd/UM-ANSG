@@ -1,9 +1,12 @@
 import time
 import numpy as np
+import ROOT
 from analysis_utilities.io import load_tree_data
 from psd_utils import regress_waveforms, ANALYSIS_CACHE_DIR, ROOT_FILES_DIR
 from regressors import get_default_regressors
 import os
+
+ROOT.PlottingUtils.SetStylePreferences(ROOT.PlotSaveFormat.kPDF)
 
 def main():
     os.makedirs("plots", exist_ok=True)

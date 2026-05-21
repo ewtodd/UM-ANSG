@@ -18,7 +18,7 @@ inline TString ProjectRootOf(const char *file) {
 
 namespace Constants {
 
-const PlotSaveFormat SAVE_FORMAT = PlotSaveFormat::kPNG;
+const PlotSaveFormat SAVE_FORMAT = PlotSaveFormat::kPDF;
 
 // 14 bit digitizer
 const Int_t ADC_MAX = 16384;

@@ -13,7 +13,7 @@ import analysis_utilities
 analysis_utilities.load_cpp_library()
 
 ROOT.gROOT.SetBatch(True)
-ROOT.PlottingUtils.SetStylePreferences(ROOT.PlotSaveFormat.kPNG)
+ROOT.PlottingUtils.SetStylePreferences(ROOT.PlotSaveFormat.kPDF)
 
 SOURCE_MAP = {
     "Am-241 & Cs-137": "Am241Cs137.root",
