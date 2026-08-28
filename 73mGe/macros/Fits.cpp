@@ -11,8 +11,8 @@
 #include <iomanip>
 #include <vector>
 
-const Float_t E_PB_KA1 = 72.8042;
-const Float_t E_PB_KA2 = 74.9694;
+const Float_t E_PB_KA2 = 72.8042;
+const Float_t E_PB_KA1 = 74.9694;
 const Float_t E_GE_73M = 68.752;
 const Float_t E_BKG_73KEV = 73.0;
 
@@ -69,8 +69,8 @@ BkgGeSimResult FitBkgGeSimultaneous(
   Bool_t use_high_exp = kTRUE;
 
   RooFitUtils bkg_fitter(bkg_events, bkg_lo, bkg_hi, Constants::BIN_WIDTH_KEV,
-                          bkg_flat, use_step, use_low_exp, use_low_lin,
-                          use_high_exp);
+                         bkg_flat, use_step, use_low_exp, use_low_lin,
+                         use_high_exp);
   if (interactive)
     bkg_fitter.SetInteractive();
 
@@ -80,7 +80,7 @@ BkgGeSimResult FitBkgGeSimultaneous(
     seed = bkg_fitter.FitSinglePeak(bkg_input, seed_label);
   } else {
     seed = bkg_fitter.FitDoublePeak(bkg_input, seed_label, bkg_peak_mus[0],
-                                      bkg_peak_mus[1]);
+                                    bkg_peak_mus[1]);
   }
 
   if (!seed.valid) {
@@ -97,11 +97,11 @@ BkgGeSimResult FitBkgGeSimultaneous(
   sig_mus.push_back(ge_mu_init);
 
   sim.AddChannel("bkg", bkg_events, bkg_lo, bkg_hi, Constants::BIN_WIDTH_KEV,
-                  n_bkg_peaks, bkg_peak_mus, bkg_flat, use_step, use_low_exp,
-                  use_low_lin, use_high_exp);
+                 n_bkg_peaks, bkg_peak_mus, bkg_flat, use_step, use_low_exp,
+                 use_low_lin, use_high_exp);
   sim.AddChannel("sig", sig_events, sig_lo, sig_hi, Constants::BIN_WIDTH_KEV,
-                  n_bkg_peaks + 1, sig_mus, sig_flat, use_step, use_low_exp,
-                  use_low_lin, use_high_exp);
+                 n_bkg_peaks + 1, sig_mus, sig_flat, use_step, use_low_exp,
+                 use_low_lin, use_high_exp);
 
   for (Int_t i = 0; i < n_bkg_peaks; i++) {
     sim.LinkPeakShape("sig", i, "bkg", i);
@@ -132,25 +132,25 @@ void Fits() {
   std::vector<Float_t> mu_errors;
   std::vector<Float_t> reduced_chi2;
 
-  std::vector<Double_t> pb_mus = {(Double_t)E_PB_KA1, (Double_t)E_PB_KA2};
+  std::vector<Double_t> pb_mus = {(Double_t)E_PB_KA2, (Double_t)E_PB_KA1};
   std::vector<Double_t> one_bkg_mus = {(Double_t)E_BKG_73KEV};
 
-  BkgGeSimResult cd_10 = FitBkgGeSimultaneous(
-      Constants::CDSHIELDBACKGROUND_10PERCENT_20260113,
-      Constants::CDSHIELDSIGNAL_10PERCENT_20260113, 65, 81, 64, 80, pb_mus,
-      E_GE_73M, kTRUE, kTRUE, interactive);
-  BkgGeSimResult cd_25 = FitBkgGeSimultaneous(
-      Constants::CDSHIELDBACKGROUND_25PERCENT_20260113,
-      Constants::CDSHIELDSIGNAL_25PERCENT_20260113, 66, 81, 65, 81, pb_mus,
-      E_GE_73M, kTRUE, kTRUE, interactive);
+  BkgGeSimResult cd_10 =
+      FitBkgGeSimultaneous(Constants::CDSHIELDBACKGROUND_10PERCENT_20260113,
+                           Constants::CDSHIELDSIGNAL_10PERCENT_20260113, 65, 81,
+                           64, 80, pb_mus, E_GE_73M, kTRUE, kTRUE, interactive);
+  BkgGeSimResult cd_25 =
+      FitBkgGeSimultaneous(Constants::CDSHIELDBACKGROUND_25PERCENT_20260113,
+                           Constants::CDSHIELDSIGNAL_25PERCENT_20260113, 66, 81,
+                           65, 81, pb_mus, E_GE_73M, kTRUE, kTRUE, interactive);
   BkgGeSimResult cu_0113 = FitBkgGeSimultaneous(
       Constants::CUSHIELDBACKGROUND_10PERCENT_20260113,
       Constants::CUSHIELDSIGNAL_10PERCENT_20260113, 65, 82, 62, 80, pb_mus,
       E_GE_73M, kFALSE, kTRUE, interactive);
-  BkgGeSimResult cu_0114 = FitBkgGeSimultaneous(
-      Constants::CUSHIELDBACKGROUND_10PERCENT_20260114,
-      Constants::CUSHIELDSIGNAL_10PERCENT_20260114, 66, 82, 63, 80, pb_mus,
-      E_GE_73M, kTRUE, kTRUE, interactive);
+  BkgGeSimResult cu_0114 =
+      FitBkgGeSimultaneous(Constants::CUSHIELDBACKGROUND_10PERCENT_20260114,
+                           Constants::CUSHIELDSIGNAL_10PERCENT_20260114, 66, 82,
+                           63, 80, pb_mus, E_GE_73M, kTRUE, kTRUE, interactive);
 
   BkgGeSimResult noshield_15 = FitBkgGeSimultaneous(
       Constants::NOSHIELDBACKGROUND_5PERCENT_20260115,
@@ -161,14 +161,14 @@ void Fits() {
       Constants::NOSHIELD_GRAPHITECASTLESIGNAL_10PERCENT_20260116, 67, 80, 60,
       77, one_bkg_mus, E_GE_73M, kTRUE, kTRUE, interactive);
 
-  BkgGeSimResult pairs[6] = {cd_10, cd_25, cu_0113,
-                               cu_0114, noshield_15, graphite_16};
+  BkgGeSimResult pairs[6] = {cd_10,   cd_25,       cu_0113,
+                             cu_0114, noshield_15, graphite_16};
   TString labels[6] = {"Cd Shield Signal 10% (01/13)",
-                        "Cd Shield Signal 25% (01/13)",
-                        "Cu Shield Signal 10% (01/13)",
-                        "Cu Shield Signal 10% (01/14)",
-                        "No Shield Signal 5% (01/15)",
-                        "No Shield Graphite Castle Signal 10% (01/16)"};
+                       "Cd Shield Signal 25% (01/13)",
+                       "Cu Shield Signal 10% (01/13)",
+                       "Cu Shield Signal 10% (01/14)",
+                       "No Shield Signal 5% (01/15)",
+                       "No Shield Graphite Castle Signal 10% (01/16)"};
 
   for (Int_t i = 0; i < 6; i++) {
     if (!pairs[i].valid)

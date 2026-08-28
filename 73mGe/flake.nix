@@ -26,7 +26,7 @@
           inherit system;
           config = {
             allowUnfree = true;
-            cudaCapabilities = [ "12.0" ];
+            cudaCapabilities = [ "8.9" ];
             cudaForwardCompat = false;
           };
         };

@@ -68,6 +68,65 @@ static inline Float_t PixelGain(Int_t ix, Int_t iy) {
   return g_pixel_gain[ix][iy];
 }
 
+// Inverse-distance-weighted gain for an interaction at (x, y), using the
+// GAIN_IDW_K_NEAREST nearest pixel centers (weight 1/d^2). Used by the
+// total-energy tree, which keeps off-grid interactions instead of cutting
+// them. Sets any_contributor_bad = kTRUE if any of the contributing centers
+// is a bad/dead pixel (gain <= 0); the caller then drops the whole event.
+static Float_t WeightedPixelGain(Float_t x, Float_t y,
+                                 Bool_t &any_contributor_bad) {
+  Int_t nx = (Int_t)Constants::PIXEL_CENTERS_X_MM.size();
+  Int_t ny = (Int_t)Constants::PIXEL_CENTERS_Y_MM.size();
+  Int_t k = Constants::GAIN_IDW_K_NEAREST;
+
+  std::vector<Float_t> best_d2(k, 1e30f);
+  std::vector<Int_t> best_ix(k, -1);
+  std::vector<Int_t> best_iy(k, -1);
+
+  for (Int_t ix = 0; ix < nx; ix++) {
+    Float_t dx = x - Constants::PIXEL_CENTERS_X_MM[ix];
+    for (Int_t iy = 0; iy < ny; iy++) {
+      Float_t dy = y - Constants::PIXEL_CENTERS_Y_MM[iy];
+      Float_t d2 = dx * dx + dy * dy;
+      Int_t pos = k;
+      while (pos > 0 && d2 < best_d2[pos - 1])
+        pos--;
+      if (pos < k) {
+        for (Int_t m = k - 1; m > pos; m--) {
+          best_d2[m] = best_d2[m - 1];
+          best_ix[m] = best_ix[m - 1];
+          best_iy[m] = best_iy[m - 1];
+        }
+        best_d2[pos] = d2;
+        best_ix[pos] = ix;
+        best_iy[pos] = iy;
+      }
+    }
+  }
+
+  any_contributor_bad = kFALSE;
+  Float_t sum_w = 0;
+  Float_t sum_wg = 0;
+  for (Int_t m = 0; m < k; m++) {
+    if (best_ix[m] < 0)
+      continue;
+    Float_t g = PixelGain(best_ix[m], best_iy[m]);
+    if (g <= 0) {
+      any_contributor_bad = kTRUE;
+      return 0.0f;
+    }
+    Float_t d2 = best_d2[m];
+    if (d2 < 1e-6f)
+      d2 = 1e-6f;
+    Float_t w = 1.0f / d2;
+    sum_w += w;
+    sum_wg += w * g;
+  }
+  if (sum_w <= 0)
+    return 0.0f;
+  return sum_wg / sum_w;
+}
+
 Bool_t IsOnPixelCenter(Float_t pos, const std::vector<Float_t> &centers) {
   for (Int_t i = 0; i < (Int_t)centers.size(); i++) {
     if (TMath::Abs(pos - centers[i]) <= Constants::PIXEL_ACCEPT_HALFWIDTH_MM)
@@ -324,6 +383,105 @@ void FilterDemo(std::vector<TString> filenames) {
   }
 }
 
+// Build a single total-energy tree from bef_tree: one entry per event, summing
+// the gain-corrected energy of every interaction (across quadrants). Drops the
+// depth cut and the single-interaction requirement; keeps the pileup cut. An
+// event is dropped if any interaction's IDW gain has a bad/dead contributor.
+Bool_t BuildTotalEnergyTree(TFile *file) {
+  TTree *tree = static_cast<TTree *>(file->Get("bef_tree"));
+  if (!tree)
+    return kFALSE;
+
+  Float_t energy = 0;
+  Float_t x = 0, y = 0, z = 0;
+  UInt_t eventTime = 0;
+  Int_t liveTime = 0;
+  Int_t nInteractions = 0;
+  Int_t interaction = 0;
+
+  tree->SetBranchAddress("energykeV", &energy);
+  tree->SetBranchAddress("xmm", &x);
+  tree->SetBranchAddress("ymm", &y);
+  tree->SetBranchAddress("zmm", &z);
+  tree->SetBranchAddress("eventTime", &eventTime);
+  tree->SetBranchAddress("liveTime", &liveTime);
+  tree->SetBranchAddress("nInteractions", &nInteractions);
+  tree->SetBranchAddress("interaction", &interaction);
+
+  Float_t outEnergy = 0;
+  UInt_t outEventTime = 0;
+  Int_t outLiveTime = 0;
+  TTree *totalTree =
+      new TTree("total_energy_tree", "Total deposited energy per event");
+  totalTree->Branch("energykeV", &outEnergy, "energykeV/F");
+  totalTree->Branch("eventTime", &outEventTime, "eventTime/i");
+  totalTree->Branch("liveTime", &outLiveTime, "liveTime/I");
+
+  Float_t totalLiveTime_s = 0;
+
+  Float_t event_energy = 0;
+  UInt_t event_eventTime = 0;
+  Int_t event_liveTime = 0;
+  Int_t event_n = 0;
+  Int_t event_seen = 0;
+  Bool_t event_dropped = kFALSE;
+
+  Int_t event_time_prev = -1;
+  Int_t delta_event_time = 0;
+
+  Int_t n_entries = tree->GetEntries();
+  for (Int_t i = 0; i < n_entries; i++) {
+    tree->GetEntry(i);
+
+    if (interaction == 0) {
+      event_energy = 0;
+      event_seen = 0;
+      event_dropped = kFALSE;
+      event_n = nInteractions;
+      event_eventTime = eventTime;
+      event_liveTime = liveTime;
+    }
+
+    Bool_t any_bad = kFALSE;
+    Float_t gain = WeightedPixelGain(x, y, any_bad);
+    if (any_bad)
+      event_dropped = kTRUE;
+    else
+      event_energy += energy * gain;
+    event_seen++;
+
+    if (event_seen == event_n) {
+      Float_t liveTime_us = event_liveTime * Constants::TENS_OF_NS_TO_S * 1e6;
+      if (event_time_prev != -1)
+        delta_event_time = (Int_t)event_eventTime - event_time_prev;
+      Bool_t pileup = (liveTime_us < Constants::PILEUP_LIVETIME_THRESHOLD_US &&
+                       delta_event_time == 0);
+
+      if (!event_dropped && !pileup) {
+        outEnergy = event_energy;
+        outEventTime = event_eventTime;
+        outLiveTime = event_liveTime;
+        totalTree->Fill();
+        totalLiveTime_s += event_liveTime * Constants::TENS_OF_NS_TO_S;
+      }
+      event_time_prev = (Int_t)event_eventTime;
+    }
+  }
+
+  totalTree->Write("", TObject::kOverwrite);
+
+  TParameter<Float_t> *ltParam =
+      new TParameter<Float_t>("LiveTime_Total_s", totalLiveTime_s);
+  ltParam->Write("", TObject::kOverwrite);
+
+  {
+    std::lock_guard<std::mutex> lock(print_mutex);
+    std::cout << "  total_energy_tree: " << totalTree->GetEntries() << " events"
+              << std::endl;
+  }
+  return kTRUE;
+}
+
 Bool_t FilterFile(TString filename) {
   TFile *file = IO::OpenForWriting("filtered/" + filename + ".root", "UPDATE");
   TTree *tree = static_cast<TTree *>(file->Get("bef_tree"));
@@ -436,6 +594,8 @@ Bool_t FilterFile(TString filename) {
         Form("LiveTime_Filtered_Crystal%d_s", c), filteredLiveTime_s[c]);
     ltParam->Write("", TObject::kOverwrite);
   }
+
+  BuildTotalEnergyTree(file);
 
   file->Close();
   return kTRUE;

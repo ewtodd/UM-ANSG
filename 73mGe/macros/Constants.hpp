@@ -33,6 +33,11 @@ const Bool_t USE_FILTERED = kTRUE;
 const Float_t FILTER_DEPTH_MM = 8;
 const Float_t PILEUP_LIVETIME_THRESHOLD_US = 3.0;
 const Float_t PIXEL_ACCEPT_HALFWIDTH_MM = 0.02;
+
+// Number of nearest pixel centers used for inverse-distance gain weighting in
+// the total-energy tree (off-grid interactions are gain-corrected by IDW; the
+// event is dropped if any of these contributors is a bad/dead pixel).
+const Int_t GAIN_IDW_K_NEAREST = 4;
 const std::vector<Float_t> PIXEL_CENTERS_X_MM = {
     -20.7690, -18.8370, -16.9470, -15.0570, -13.1670, -11.2350,
     -9.3450,  -7.4550,  -5.5230,  -3.6330,  -1.7430,  1.7430,

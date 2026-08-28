@@ -21,8 +21,8 @@ const Float_t E_BA133_276 = 276.3989;
 const Float_t E_BA133_303 = 302.8508;
 const Float_t E_BA133_356 = 356.0129;
 const Float_t E_BA133_384 = 383.8485;
-const Float_t E_PB_KA1 = 72.8042;
-const Float_t E_PB_KA2 = 74.9694;
+const Float_t E_PB_KA2 = 72.8042;
+const Float_t E_PB_KA1 = 74.9694;
 const Float_t E_GE_73M = 68.752;
 const Float_t E_CD114M = 95.9023;
 const Float_t E_ANNIHILATION = 510.999;
@@ -56,15 +56,12 @@ std::vector<Double_t> LoadEvents(const TString input_name) {
     return events;
   }
 
-  for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
-    TString treeName = Form("crystal%d_filtered_tree", c);
-    TTree *tree = static_cast<TTree *>(file->Get(treeName));
-    if (!tree)
-      continue;
-    std::vector<Double_t> ch =
-        RooFitUtils::LoadEventsFromTree(tree, "energykeV");
-    events.insert(events.end(), ch.begin(), ch.end());
-  }
+  TTree *tree = static_cast<TTree *>(file->Get("total_energy_tree"));
+  if (tree)
+    events = RooFitUtils::LoadEventsFromTree(tree, "energykeV");
+  else
+    std::cerr << "ERROR: total_energy_tree not found in filtered/" << input_name
+              << ".root" << std::endl;
 
   file->Close();
   delete file;
@@ -122,7 +119,8 @@ FitResult FitCalibrationPeak(const TString input_name, const TString peak_name,
     fitter.SetInteractive();
   FitResult result;
   if (peak_name == "Ba_80.98keV")
-    result = fitter.FitDoublePeak(input_name, peak_name, E_BA133_79, E_BA133_81);
+    result =
+        fitter.FitDoublePeak(input_name, peak_name, E_BA133_79, E_BA133_81);
   else
     result = fitter.FitSinglePeak(input_name, peak_name);
   return result;
@@ -195,7 +193,7 @@ PbGeSimResult FitPbGeSimultaneous(const TString bkg_input,
   if (interactive)
     bkg_fitter.SetInteractive();
   FitResult seed =
-      bkg_fitter.FitDoublePeak(bkg_input, "PbKa_seed", E_PB_KA1, E_PB_KA2);
+      bkg_fitter.FitDoublePeak(bkg_input, "PbKa_seed", E_PB_KA2, E_PB_KA1);
   if (!seed.valid) {
     std::cerr << "ERROR: bkg-only seed fit failed for " << bkg_input
               << std::endl;
@@ -205,8 +203,8 @@ PbGeSimResult FitPbGeSimultaneous(const TString bkg_input,
   RooFitUtils sim;
   if (interactive)
     sim.SetInteractive();
-  std::vector<Double_t> bkg_mus = {(Double_t)E_PB_KA1, (Double_t)E_PB_KA2};
-  std::vector<Double_t> sig_mus = {(Double_t)E_PB_KA1, (Double_t)E_PB_KA2,
+  std::vector<Double_t> bkg_mus = {(Double_t)E_PB_KA2, (Double_t)E_PB_KA1};
+  std::vector<Double_t> sig_mus = {(Double_t)E_PB_KA2, (Double_t)E_PB_KA1,
                                    (Double_t)E_GE_73M};
   sim.AddChannel("bkg", bkg_events, bkg_lo, bkg_hi, Constants::BIN_WIDTH_KEV, 2,
                  bkg_mus, bkg_flat, use_step, use_low_exp, use_low_lin,
@@ -482,13 +480,13 @@ TF1 *BuildCalibration_20260113(TF1 *master, const Bool_t interactive) {
                           Constants::CUSHIELDSIGNAL_10PERCENT_20260113, 65, 82,
                           62, 80, kFALSE, kTRUE, interactive);
   if (cu_pair.valid) {
-    AddCalibrationPoint(cal_data, "Cu Shield Bkg Pb-Ka1",
-                        cu_pair.bkg_channel.peaks.at(0).mu,
-                        cu_pair.bkg_channel.peaks.at(0).mu_error, E_PB_KA1,
-                        cu_pair.bkg_channel.reduced_chi2);
     AddCalibrationPoint(cal_data, "Cu Shield Bkg Pb-Ka2",
+                        cu_pair.bkg_channel.peaks.at(0).mu,
+                        cu_pair.bkg_channel.peaks.at(0).mu_error, E_PB_KA2,
+                        cu_pair.bkg_channel.reduced_chi2);
+    AddCalibrationPoint(cal_data, "Cu Shield Bkg Pb-Ka1",
                         cu_pair.bkg_channel.peaks.at(1).mu,
-                        cu_pair.bkg_channel.peaks.at(1).mu_error, E_PB_KA2, -1);
+                        cu_pair.bkg_channel.peaks.at(1).mu_error, E_PB_KA1, -1);
   }
 
   FitResult ann_result =
@@ -515,13 +513,13 @@ TF1 *BuildCalibration_20260114(TF1 *master, const Bool_t interactive) {
                           Constants::CUSHIELDSIGNAL_10PERCENT_20260114, 66, 82,
                           63, 80, kTRUE, kTRUE, interactive);
   if (cu_pair.valid) {
-    AddCalibrationPoint(cal_data, "Cu Shield Bkg Pb-Ka1",
-                        cu_pair.bkg_channel.peaks.at(0).mu,
-                        cu_pair.bkg_channel.peaks.at(0).mu_error, E_PB_KA1,
-                        cu_pair.bkg_channel.reduced_chi2);
     AddCalibrationPoint(cal_data, "Cu Shield Bkg Pb-Ka2",
+                        cu_pair.bkg_channel.peaks.at(0).mu,
+                        cu_pair.bkg_channel.peaks.at(0).mu_error, E_PB_KA2,
+                        cu_pair.bkg_channel.reduced_chi2);
+    AddCalibrationPoint(cal_data, "Cu Shield Bkg Pb-Ka1",
                         cu_pair.bkg_channel.peaks.at(1).mu,
-                        cu_pair.bkg_channel.peaks.at(1).mu_error, E_PB_KA2, -1);
+                        cu_pair.bkg_channel.peaks.at(1).mu_error, E_PB_KA1, -1);
   }
 
   FitResult ann_result =
@@ -624,45 +622,10 @@ void PulseHeightToDepositedEnergy(const std::vector<TString> &input_names,
                               Constants::PEAK_XMAX);
     peakHist->SetDirectory(0);
 
-    TH1F *crystalHists[Constants::N_CRYSTALS];
-    TH1F *crystalZoomedHists[Constants::N_CRYSTALS];
-    TH1F *crystalPeakHists[Constants::N_CRYSTALS];
-    for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
-      crystalHists[c] = new TH1F(
-          PlottingUtils::GetRandomName(),
-          Form("; Deposited Energy [keV]; Counts / %d eV",
-               Constants::BIN_WIDTH_EV),
-          Constants::HIST_NBINS, Constants::HIST_XMIN, Constants::HIST_XMAX);
-      crystalHists[c]->SetDirectory(0);
-
-      crystalZoomedHists[c] =
-          new TH1F(PlottingUtils::GetRandomName(),
-                   Form("; Deposited Energy [keV]; Counts / %d eV",
-                        Constants::BIN_WIDTH_EV),
-                   Constants::ZOOMED_NBINS, Constants::ZOOMED_XMIN,
-                   Constants::ZOOMED_XMAX);
-      crystalZoomedHists[c]->SetDirectory(0);
-
-      crystalPeakHists[c] = new TH1F(
-          PlottingUtils::GetRandomName(),
-          Form("; Deposited Energy [keV]; Counts / %d eV",
-               Constants::BIN_WIDTH_EV),
-          Constants::PEAK_NBINS, Constants::PEAK_XMIN, Constants::PEAK_XMAX);
-      crystalPeakHists[c]->SetDirectory(0);
-    }
-
-    for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
-      TString treeName = Form("crystal%d_filtered_tree", c);
-      TTree *tree = static_cast<TTree *>(in_file->Get(treeName));
-      if (!tree) {
-        std::cerr << "ERROR: Could not find " << treeName << " in filtered/"
-                  << input_name << ".root" << std::endl;
-        continue;
-      }
-
+    TTree *tree = static_cast<TTree *>(in_file->Get("total_energy_tree"));
+    if (tree) {
       Float_t energy = 0;
       tree->SetBranchAddress("energykeV", &energy);
-
       Int_t n_entries = tree->GetEntries();
       for (Int_t j = 0; j < n_entries; j++) {
         tree->GetEntry(j);
@@ -671,10 +634,10 @@ void PulseHeightToDepositedEnergy(const std::vector<TString> &input_names,
         hist->Fill(deposited_energy);
         zoomedHist->Fill(deposited_energy);
         peakHist->Fill(deposited_energy);
-        crystalHists[c]->Fill(deposited_energy);
-        crystalZoomedHists[c]->Fill(deposited_energy);
-        crystalPeakHists[c]->Fill(deposited_energy);
       }
+    } else {
+      std::cerr << "ERROR: total_energy_tree not found in filtered/"
+                << input_name << ".root" << std::endl;
     }
 
     file->cd();
@@ -682,17 +645,6 @@ void PulseHeightToDepositedEnergy(const std::vector<TString> &input_names,
     hist->Write("calibrated_hist", TObject::kOverwrite);
     zoomedHist->Write("calibrated_zoomedHist", TObject::kOverwrite);
     peakHist->Write("calibrated_peakHist", TObject::kOverwrite);
-    for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
-      crystalHists[c]->Write(Form("calibrated_hist_crystal%d", c),
-                             TObject::kOverwrite);
-      crystalZoomedHists[c]->Write(Form("calibrated_zoomedHist_crystal%d", c),
-                                   TObject::kOverwrite);
-      crystalPeakHists[c]->Write(Form("calibrated_peakHist_crystal%d", c),
-                                 TObject::kOverwrite);
-      delete crystalHists[c];
-      delete crystalZoomedHists[c];
-      delete crystalPeakHists[c];
-    }
 
     delete hist;
     delete zoomedHist;

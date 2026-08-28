@@ -14,8 +14,7 @@
 static std::mutex print_mutex;
 
 Bool_t AddHistogram(TString filename) {
-  TFile *file =
-      IO::OpenForWriting("filtered/" + filename + ".root", "UPDATE");
+  TFile *file = IO::OpenForWriting("filtered/" + filename + ".root", "UPDATE");
 
   TString treeType = Constants::USE_FILTERED ? "filtered" : "unfiltered";
 

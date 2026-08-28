@@ -18,3 +18,10 @@ __pycache__
 *.pcm
 result 
 *.png
+
+# agenix-decrypted BEF sources -- NEVER commit these.
+# They were briefly tracked as empty files in 8532e0a and removed again in
+# 9085254; had they been populated at the time that would have committed
+# decrypted secrets. Ignored by name so no `git add .` can stage them.
+**/BEF.hpp
+**/BEF.cpp

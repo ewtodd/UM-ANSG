@@ -9,8 +9,8 @@
 #include <iostream>
 #include <vector>
 
-const Float_t E_PB_KA1 = 72.8042;
-const Float_t E_PB_KA2 = 74.9694;
+const Float_t E_PB_KA2 = 72.8042;
+const Float_t E_PB_KA1 = 74.9694;
 const Float_t E_GE_73M = 68.752;
 
 std::vector<Double_t> LoadEvents(const TString input_name) {
@@ -66,7 +66,7 @@ void RunCdShieldSimFit(const TString bkg_input, const TString sig_input,
                          use_high_exp);
   bkg_fitter.SetInteractive();
   FitResult pb_seed =
-      bkg_fitter.FitDoublePeak(bkg_input, "Pb_KAlpha_seed", E_PB_KA1, E_PB_KA2);
+      bkg_fitter.FitDoublePeak(bkg_input, "Pb_KAlpha_seed", E_PB_KA2, E_PB_KA1);
 
   if (!pb_seed.valid) {
     std::cerr << "ERROR: bkg-only seed fit failed; aborting sim fit"
@@ -81,8 +81,8 @@ void RunCdShieldSimFit(const TString bkg_input, const TString sig_input,
 
   RooFitUtils sim;
   sim.SetInteractive();
-  std::vector<Double_t> bkg_mus = {(Double_t)E_PB_KA1, (Double_t)E_PB_KA2};
-  std::vector<Double_t> sig_mus = {(Double_t)E_PB_KA1, (Double_t)E_PB_KA2,
+  std::vector<Double_t> bkg_mus = {(Double_t)E_PB_KA2, (Double_t)E_PB_KA1};
+  std::vector<Double_t> sig_mus = {(Double_t)E_PB_KA2, (Double_t)E_PB_KA1,
                                    (Double_t)E_GE_73M};
   sim.AddChannel("bkg", bkg_events, bkg_lo, bkg_hi, Constants::BIN_WIDTH_KEV, 2,
                  bkg_mus, use_flat_bkg, use_step, use_low_exp, use_low_lin,

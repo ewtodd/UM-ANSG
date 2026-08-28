@@ -1,0 +1,9 @@
+# Ge-73m gamma energy results   tag=amxfer
+# method  ge_mu  fit_err  cal_err  bkg_err  chi2  gain_err  label
+insitu  68.762878  0.007135  0.006117  0.052688  2.102476  0.000000  Cu_Shield_Signal_10%_(01/13)
+insitu  68.709473  0.061636  0.008893  0.019096  2.555667  0.006459  Cd_Shield_Signal_10%_(01/13)
+insitu  68.705605  0.027837  0.008909  0.026170  1.484073  0.006483  Cd_Shield_Signal_25%_(01/13)
+insitu  68.862823  0.007566  0.022771  0.083039  6.554476  0.021931  Cu_Shield_Signal_10%_(01/14)
+ratesub  68.748436  0.025540  0.022771  0.000000  1.976182  0.021931  Cu_Shield_Signal_10%_(01/14)_[rate-sub]
+ratesub  68.738014  0.033728  0.006872  0.000000  1.711549  0.000000  No_Shield_Signal_5%_(01/15)_[rate-sub]
+ratesub  68.741753  0.052281  0.013451  0.000000  1.212784  0.000000  Graphite_Castle_Signal_10%_(01/16)_[rate-sub]
