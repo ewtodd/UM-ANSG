@@ -1,22 +1,12 @@
 // Final-budget combiner for the Ge-73m gamma energy.
 //
-// Reads the single per-run .result file written by CalibrationLow.cpp:
-//   results/ge_<RESULT_TAG>.result
-// Each row: method(insitu|ratesub)  ge_mu  fit_err  cal_err  bkg_err  chi2
-//           label
+// Reads the per-run rows written by CalibrationLow.cpp:
+//   method(insitu|ratesub) ge_mu fit_err cal_err bkg_err chi2 gain_err label
 //
-// The calibration uncertainty is ONE term. An orthogonal slope/offset pivot
-// split used to be quoted alongside it, but it is undefined for the pol2
-// calibration the Am anchor requires, and a single total is what we report.
-//
-// Central value and the stat/cal/method/background systematics all come from
-// that one file. Correlated systematics are reported as floors, not 1/sqrt(N).
-//
-// HISTORY: a lineshape systematic was once taken as the per-run
-// |shared - ka1only| in-situ spread, with the alternate arm produced by
-// CalibrationLowKa1.cpp. That macro and its .result file were deleted and the
-// systematic was dropped deliberately -- Table II carries no lineshape column.
-// Nothing here computes one, and this comment no longer claims otherwise.
+// Method 1 (in-situ) sets the central value; Method 2 (rate-sub) enters only
+// as the method systematic. Runs are combined by BLUE with the calibration
+// split into its correlated (Am reference) and independent (gain transfer)
+// parts.
 #include "Constants.hpp"
 #include "InitUtils.hpp"
 #include <RtypesCore.h>
@@ -30,71 +20,28 @@
 #include <sstream>
 #include <vector>
 
-// Which CalibrationLow.cpp run to combine. Must match the RESULT_TAG that macro
-// wrote: "shared" for the Pb-only scheme, "amxfer" for the Am-anchored one.
+// Which run to combine. Must match the RESULT_TAG the rows were written with.
 const TString RESULT_TAG = "amxfer";
 
-// Lineshape variants to compare. Both files must exist; each is produced by
-// CalibrationLow.cpp with USE_HIGH_EXP_TAIL set accordingly. The nominal is
-// the no-high-tail fit: that component rails at both bounds when enabled
-// (amplitude pinned at 0.5, decay at 100 keV across a 19 keV window, i.e. a
-// flat pedestal degenerate with the background), which is not a model the data
-// supports so much as a free parameter absorbing slack.
+// Lineshape variants to compare. Both .result files must exist. The nominal
+// is the no-high-tail fit: that component rails at both bounds when enabled,
+// a flat pedestal degenerate with the background rather than a model the
+// data supports.
 const TString PRIMARY_VARIANT = "_nohitail";
 const TString ALTERNATE_VARIANT = "_hitail";
 
-// Use the alternate lineshape variant at all.
-//
-// OFF. The alternate is the nominal model plus a high-side exponential tail,
-// and that component is not something the data supports -- it is a null
-// parameter. On Am-241, the cleanest isolated line in the analysis (78k events,
-// no doublet partner), it fits to
-//
-//   HighExpTailAmplitude = 6.76e-09 +/- 1.11e-02
-//   HighExpTailRatio     = 1.564    +/- 88.57
-//
-// an amplitude six orders of magnitude below its own error, and a decay
-// constant with no effect on the likelihood and therefore no determination. It
-// is also backwards physically: incomplete charge collection makes a LOW-energy
-// tail, and a high-energy one would be pileup, which is negligible at these
-// rates.
-//
-// Enabling it does not test an alternative model, it hands the fit a degree of
-// freedom the data cannot constrain, and the fits degrade accordingly:
-// chi2/ndf 2.21 against 0.57, fit errors swinging by factors of 2-3 on
-// IDENTICAL data (7.1 vs 18.3 eV, 61.6 vs 26.6 eV), a 7.6 eV error attached to
-// a chi2/ndf 6.55 fit, and central values dragged 45-60 eV low. Under the
-// post-cal Pb lock it reaches chi2/ndf 6.91.
-//
-// A systematic is the spread between models the data supports, not the gap to
-// a rejected one, so quoting that separation would be inventing 8.7 eV of
-// uncertainty rather than measuring it.
-//
-// Nothing replaces it. Locking the post-cal Pb to its tabulated energies -- the
-// obvious external-truth alternative -- moves the kept runs by +3.7/-2.8/+0.7
-// eV and the combined value by 1.7 eV, with chi2 unchanged, so there is no
-// model dependence there to quote either. The remaining budget is fit,
-// calibration and method; method already spans a lineshape change, since
-// in-situ and rate-sub use entirely different response functions, backgrounds
-// and treatments of the Pb.
+// Alternate lineshape variant (high-side exponential tail). OFF: on Am-241
+// that component fits to 6.8e-09 +/- 1.1e-02, an unconstrainable null
+// parameter, and enabling it degrades the fits (chi2/ndf 2.21 vs 0.57,
+// errors swinging 2-3x on identical data). Its separation from the nominal
+// is not a systematic.
 const Bool_t USE_LINESHAPE_VARIANT = kFALSE;
 
-// Goodness-of-fit cut on the in-situ simultaneous fits. This is a cut on fit
-// QUALITY, not on the fitted value: chi2/ndf is computed from the residuals and
-// carries no information about where mu landed, so applying it cannot bias the
-// result toward or away from any particular energy.
-//
-// It exists because the 01/14 in-situ fit fails it at 4.62 while every other
-// in-situ fit sits at 1.5-2.8. That run is also the one place we can prove the
-// in-situ fit is at fault rather than the calibration: its rate-sub row uses
-// the SAME cal_func and the SAME cal_err, and lands 126 eV lower with
-// chi2/ndf 1.59. Same data, same calibration, so the whole 126 eV is the fit.
-// The in-situ fit couples the Ge centroid to the Pb doublet through the linked
-// Ka shape parameters, and on that run the doublet is ~47 eV wide against a
-// truth known to <1 eV.
-//
-// The rate-sub row of a rejected run is KEPT -- the cut removes a failed fit,
-// not a dataset. Set to a large value to disable.
+// Fit-quality cut on the in-situ fits. chi2/ndf carries no information about
+// where mu landed, so it cannot bias the result. Taken on the UNION of
+// failures across both lineshape variants so both are combined over the same
+// runs. A rejected run keeps its rate-sub row: this removes a failed fit,
+// not a dataset.
 const Double_t INSITU_CHI2_MAX = 3.0;
 
 struct Row {
@@ -135,69 +82,6 @@ std::vector<Row> ReadResult(const TString &path) {
   return rows;
 }
 
-// Weight each run by its TOTAL uncertainty (fit (+) cal) rather than by the fit
-// error alone. Weighting on the fit error lets a run with a small fit error
-// dominate no matter how badly calibrated it is: Cd 25% has fit_err 4.7 eV
-// against 22-28 eV for the other two and was carrying ~93% of the weight, while
-// its cal_err of 16.1 eV -- the LARGEST of the three -- never entered the
-// weighting at all.
-const Bool_t WEIGHT_BY_TOTAL_ERR = kTRUE;
-
-// Inverse-variance on the per-run total treats the calibration error as
-// INDEPENDENT between runs, so it shrinks by ~sqrt(N). That is only right if
-// each run's calibration is its own. Here all runs descend from ONE Am-241
-// reference through the gain transfer, so a common component is shared and must
-// not be averaged away. With this on, the base error is floored at the
-// correlated calibration term (the fit-weighted mean of the per-run cal_err),
-// which is the no-reduction limit. Off = full sqrt(N) reduction, i.e. runs
-// treated as fully independent.
-const Bool_t CAL_CORRELATED_FLOOR = kTRUE;
-
-// Per-run total: fit and calibration terms in quadrature.
-std::vector<Double_t> TotalErrors(const std::vector<Double_t> &fe,
-                                  const std::vector<Double_t> &ce) {
-  std::vector<Double_t> t(fe.size(), 0.0);
-  for (size_t i = 0; i < fe.size() && i < ce.size(); i++)
-    t[i] = std::sqrt(fe[i] * fe[i] + ce[i] * ce[i]);
-  return t;
-}
-
-struct Combo {
-  Double_t mean = 0, int_err = 0, ext_err = 0, chi2ndf = 0;
-  Int_t n = 0;
-};
-
-// Inverse-variance combine on fit error; report internal and external (scatter)
-// errors. ext = int * sqrt(chi2/ndf about the weighted mean).
-Combo Combine(const std::vector<Double_t> &m, const std::vector<Double_t> &e) {
-  Combo c;
-  Double_t sw = 0, swx = 0;
-  for (size_t i = 0; i < m.size(); i++) {
-    if (e[i] <= 0)
-      continue;
-    Double_t w = 1.0 / (e[i] * e[i]);
-    sw += w;
-    swx += w * m[i];
-    c.n++;
-  }
-  if (sw <= 0)
-    return c;
-  c.mean = swx / sw;
-  c.int_err = std::sqrt(1.0 / sw);
-  Double_t chi2 = 0;
-  for (size_t i = 0; i < m.size(); i++) {
-    if (e[i] <= 0)
-      continue;
-    Double_t d = (m[i] - c.mean) / e[i];
-    chi2 += d * d;
-  }
-  c.chi2ndf = (c.n > 1) ? chi2 / (c.n - 1) : 0;
-  c.ext_err = c.int_err * std::sqrt(c.chi2ndf > 1 ? c.chi2ndf : 1.0);
-  return c;
-}
-
-// Fit-error-weighted mean of a per-run quantity (for correlated-systematic
-// floors: cal error, background spread).
 Double_t WeightedMean(const std::vector<Double_t> &v,
                       const std::vector<Double_t> &e) {
   Double_t sw = 0, swx = 0;
@@ -211,90 +95,13 @@ Double_t WeightedMean(const std::vector<Double_t> &v,
   return (sw > 0) ? swx / sw : 0;
 }
 
-// Best linear unbiased estimate with a CORRELATED calibration component.
-//
-// Each run carries an independent fit error and a calibration error that is
-// largely COMMON to all runs -- they descend from one Am-241 reference through
-// the gain transfer. Treating the calibration as independent lets it shrink by
-// sqrt(N), which understates the result; treating the whole per-run total as
-// correlated overstates it. Neither is what the old max(stat, cal) floor did
-// either: that was an ad-hoc conservative guess standing in for the covariance.
-//
-// The covariance is
-//
-//   V_ij = sigma_fit,i^2 delta_ij + sigma_cal,i sigma_cal,j
-//
-// diagonal plus rank one, so Sherman-Morrison inverts it in closed form and no
-// matrix code is needed:
-//
-//   1' V^-1 1 = S0 - S1^2 / (1 + S2)
-//   1' V^-1 x = Sx - S1 Sxc / (1 + S2)
-//
-// with S0 = sum 1/d, S1 = sum c/d, S2 = sum c^2/d, Sx = sum x/d,
-// Sxc = sum c x/d, d = sigma_fit^2, c = sigma_cal.
-//
-// rho = 1 for the calibration is the conservative end: part of each run's cal
-// error is its own gain-transfer term, so the truth lies between rho = 1 and
-// rho = 0. The returned error already CONTAINS the calibration; it must not be
-// added again downstream.
+// Combined estimate; err already CONTAINS the calibration, never add it again.
 struct Blue {
   Double_t mean = 0, err = 0, err_nocal = 0, cal_part = 0, chi2ndf = 0;
   Int_t n = 0;
   Bool_t valid = kFALSE;
 };
 
-Blue CombineBlue(const std::vector<Double_t> &x,
-                 const std::vector<Double_t> &fit,
-                 const std::vector<Double_t> &cal) {
-  Blue b;
-  Double_t S0 = 0, S1 = 0, S2 = 0, Sx = 0, Sxc = 0;
-  for (size_t i = 0; i < x.size(); i++) {
-    if (!(fit[i] > 0))
-      continue;
-    Double_t d = fit[i] * fit[i];
-    S0 += 1.0 / d;
-    S1 += cal[i] / d;
-    S2 += cal[i] * cal[i] / d;
-    Sx += x[i] / d;
-    Sxc += cal[i] * x[i] / d;
-    b.n++;
-  }
-  if (b.n == 0 || !(S0 > 0))
-    return b;
-  Double_t den = 1.0 + S2;
-  Double_t A = S0 - S1 * S1 / den;
-  if (!(A > 0))
-    return b;
-  b.mean = (Sx - S1 * Sxc / den) / A;
-
-  Double_t r0 = 0, r1 = 0;
-  for (size_t i = 0; i < x.size(); i++) {
-    if (!(fit[i] > 0))
-      continue;
-    Double_t d = fit[i] * fit[i];
-    Double_t r = x[i] - b.mean;
-    r0 += r * r / d;
-    r1 += cal[i] * r / d;
-  }
-  Double_t chi2 = r0 - r1 * r1 / den;
-  b.chi2ndf = (b.n > 1) ? chi2 / (b.n - 1) : 0;
-  // PDG-style scale factor: inflate by sqrt(chi2/ndf) when the runs scatter by
-  // more than their errors admit. Never deflate when they scatter by less.
-  Double_t scale = (b.chi2ndf > 1.0) ? std::sqrt(b.chi2ndf) : 1.0;
-  b.err = std::sqrt(1.0 / A) * scale;
-  // Diagnostics: the same estimate with the calibration switched off, so the
-  // calibration's share of the total is visible rather than asserted.
-  b.err_nocal = std::sqrt(1.0 / S0) * scale;
-  b.cal_part = (b.err > b.err_nocal)
-                   ? std::sqrt(b.err * b.err - b.err_nocal * b.err_nocal)
-                   : 0.0;
-  b.valid = kTRUE;
-  return b;
-}
-
-// Invert a small symmetric matrix by Gauss-Jordan with partial pivoting.
-// n <= 6 here, so an explicit inverse is simpler and more general than any
-// rank-one shortcut and admits arbitrarily many correlated components.
 Bool_t InvertSym(std::vector<std::vector<Double_t>> &m) {
   Int_t n = (Int_t)m.size();
   std::vector<std::vector<Double_t>> a(n, std::vector<Double_t>(2 * n, 0.0));
@@ -330,16 +137,10 @@ Bool_t InvertSym(std::vector<std::vector<Double_t>> &m) {
   return kTRUE;
 }
 
-// BLUE with an explicit covariance:
-//
-//   V_ij = sigma_diag,i^2 delta_ij + sum_k c_k,i c_k,j
-//
-// Each c_k is one FULLY CORRELATED component shared across runs. Here there are
-// two: the Am reference calibration, which every run inherits from the single
-// pol2 anchor fit, and the gain transfer, whose per-run ratios are all measured
-// against that same reference's Pb centroids and are therefore correlated
-// through it rather than independent. Only the fit errors are left on the
-// diagonal.
+// BLUE with an explicit covariance V_ij = diag_i^2 d_ij + sum_k c_k,i c_k,j,
+// each c_k a fully correlated component. Two here: the Am reference every
+// run inherits, and the gain transfer, correlated through that same
+// reference. Only fit errors stay on the diagonal.
 Blue CombineBlueGen(const std::vector<Double_t> &x,
                     const std::vector<Double_t> &diag,
                     const std::vector<std::vector<Double_t>> &corr) {
@@ -420,7 +221,7 @@ std::set<TString> KeptInsituLabels(const std::vector<Row> &pri,
 
 // One lineshape variant, combined over the rows the mode selects.
 // mode 0 = in-situ only, 1 = in-situ + rate-sub, 2 = rate-sub only.
-// err ALREADY CONTAINS the calibration (see CombineBlue); never add cal again.
+// err ALREADY CONTAINS the calibration; never add a calibration term again.
 struct Variant {
   Double_t mean = 0, err = 0, err_nocal = 0, cal_part = 0, chi2ndf = 0;
   Int_t n = 0;
@@ -428,18 +229,11 @@ struct Variant {
 
 Variant BuildVariant(const std::vector<Row> &rows, Int_t mode,
                      const std::set<TString> &kept_insitu) {
-  // Three error sources per run, from the .result columns:
-  //   fit       independent, always on the diagonal
-  //   transfer  gain_err; every transferred run measures its ratio against the
-  //             SAME reference Pb centroids, so these are correlated with one
-  //             another, not independent -> correlated block
-  //   reference sqrt(cal^2 - gain^2); the single Am pol2 anchor that the 13th
-  //             and 14th all inherit -> correlated block
-  //
-  // The 15th and 16th self-calibrate: they run no gain transfer and inherit no
-  // Am reference (their gain_err is 0 because there is nothing to transfer, not
-  // because they share one). Their calibration is their own, so it belongs on
-  // the DIAGONAL. Putting it in the shared block would over-correlate them.
+  // Three error sources per run: fit (independent, diagonal), gain transfer
+  // (all measured against the same reference centroids -> correlated), and
+  // the Am reference itself, sqrt(cal^2 - gain^2) (shared -> correlated).
+  // The 15th/16th self-calibrate and inherit no reference, so their
+  // calibration goes on the DIAGONAL rather than in a shared block.
   std::vector<Double_t> mu, diag, c_ref, c_xfer;
   for (size_t i = 0; i < rows.size(); i++) {
     const Row &r = rows[i];
@@ -536,7 +330,8 @@ Scheme ReportScheme(const TString &title, const std::vector<Row> &pri,
   if (!o.valid)
     return s;
 
-  std::cout << "\n========== " << title << " ==========" << std::endl;
+  std::cout << std::endl;
+  std::cout << "========== " << title << " ==========" << std::endl;
   std::cout << std::fixed << std::setprecision(5);
   const Variant *vs[2] = {&o.p, &o.a};
   const TString names[2] = {PRIMARY_VARIANT, ALTERNATE_VARIANT};
@@ -602,141 +397,15 @@ void CombineGeResult() {
                  "flipped."
               << std::endl;
 
-  // Split the primary (shared) file by method.
-  std::vector<Double_t> in_mu, in_fe, in_ce, in_be, rs_mu, rs_fe, rs_ce, rs_be;
+  // bkg_err is |cal(precal Ge) - postcal Ge|, a diagnostic only: with the
+  // unit bug fixed the post-cal fit returns its own seed, so it is a
+  // tautology rather than a systematic. Printed, never in the budget.
+  std::vector<Double_t> all_be, all_fe;
   for (size_t i = 0; i < shared.size(); i++) {
-    const Row &r = shared[i];
-    if (r.method == "insitu") {
-      in_mu.push_back(r.mu);
-      in_fe.push_back(r.fit_err);
-      in_ce.push_back(r.cal_err);
-      in_be.push_back(r.bkg_err);
-    } else if (r.method == "ratesub") {
-      rs_mu.push_back(r.mu);
-      rs_fe.push_back(r.fit_err);
-      rs_ce.push_back(r.cal_err);
-      rs_be.push_back(r.bkg_err);
-    }
+    all_be.push_back(shared[i].bkg_err);
+    all_fe.push_back(shared[i].fit_err);
   }
-
-  std::vector<Double_t> in_w =
-      WEIGHT_BY_TOTAL_ERR ? TotalErrors(in_fe, in_ce) : in_fe;
-  std::vector<Double_t> rs_w =
-      WEIGHT_BY_TOTAL_ERR ? TotalErrors(rs_fe, rs_ce) : rs_fe;
-  Combo m1 = Combine(in_mu, in_w);
-  Combo m2 = Combine(rs_mu, rs_w);
-
-  std::vector<Double_t> all_mu = in_mu, all_fe = in_fe, all_ce = in_ce,
-                        all_be = in_be;
-  all_mu.insert(all_mu.end(), rs_mu.begin(), rs_mu.end());
-  all_fe.insert(all_fe.end(), rs_fe.begin(), rs_fe.end());
-  all_ce.insert(all_ce.end(), rs_ce.begin(), rs_ce.end());
-
-  all_be.insert(all_be.end(), rs_be.begin(), rs_be.end());
-  std::vector<Double_t> all_w =
-      WEIGHT_BY_TOTAL_ERR ? TotalErrors(all_fe, all_ce) : all_fe;
-  Combo mc = Combine(all_mu, all_w);
-
-  // STAT: combined fit error (larger of internal/external).
-  Double_t stat = std::max(mc.int_err, mc.ext_err);
-
-  // CAL: weighted-mean per-run calibration error (correlated -> floor). ONE
-  // term: the full parameter covariance of the calibration curve propagated to
-  // E(mu_Ge), which for pol2 is sum_ij mu^(i+j) cov(pi,pj).
-  Double_t cal_sys = WeightedMean(all_ce, all_w);
-
-  // METHOD: in-situ vs rate-subtraction central-value difference.
-  Double_t method_sys =
-      (m1.n > 0 && m2.n > 0) ? std::fabs(m1.mean - m2.mean) : 0;
-  // Overwritten below against the lineshape-averaged value when both variants
-  // are available.
-
-  // BACKGROUND TERM REMOVED FROM THE BUDGET.
-  //
-  // bkg_err is |cal(precal Ge mu) - postcal Ge mu|. It was never a background
-  // systematic: for most of its life it was measuring a UNIT BUG -- the
-  // post-cal fit inherited sigma and the tail lengths in RAW units and held
-  // them fixed while fitting calibrated data, so the two quantities differed by
-  // the ~1% calibration derivative. With that conversion fixed, the post-cal
-  // fit starts from a self-consistent seed and simply returns it, and bkg_err
-  // collapses to ~0.2 eV. That is a tautology, not a measurement: it is no
-  // longer an independent check of anything, so quoting it would understate the
-  // budget rather than pad it.
-  //
-  // The column is still written and printed per run as a diagnostic -- a
-  // non-zero value now means the post-cal fit genuinely moved away from its
-  // seed, which is worth seeing -- but it does not enter the systematic sum.
   Double_t background_sys = WeightedMean(all_be, all_fe);
-
-  // LINESHAPE: the in-situ central value under the two lineshape variants,
-  // half-separated. Both variants fit comparably (summed chi2 differs by under
-  // one unit across three runs), so neither is rejectable and the spread
-  // between them is a genuine model dependence rather than a bad fit. Quoted as
-  // a floor, like the other correlated terms.
-  // LINESHAPE COMBINATION.
-  //
-  // The two variants are fits to the SAME DATA with different lineshapes, so
-  // they are ~100% correlated. The central value is their uncertainty-weighted
-  // average, but the base uncertainty must NOT be reduced in quadrature the way
-  // independent measurements would be -- re-fitting one spectrum with a second
-  // model adds no information, and 1/sqrt(sum 1/sigma^2) would return an error
-  // smaller than either input. The weighted MEAN of the two totals is carried
-  // instead, and the full separation between the variants is then added as the
-  // lineshape systematic.
-  Double_t lineshape_sys = 0;
-  Bool_t have_lineshape = kFALSE;
-  Double_t combined_mean = mc.mean;
-  Double_t combined_base_err = std::max(mc.int_err, mc.ext_err);
-  {
-    std::vector<Double_t> a_mu, a_fe, a_ce;
-    for (size_t i = 0; i < alt.size(); i++)
-      if (alt[i].method == "insitu") {
-        a_mu.push_back(alt[i].mu);
-        a_fe.push_back(alt[i].fit_err);
-        a_ce.push_back(alt[i].cal_err);
-      }
-    if (!a_mu.empty() && m1.n > 0) {
-      std::vector<Double_t> a_w =
-          WEIGHT_BY_TOTAL_ERR ? TotalErrors(a_fe, a_ce) : a_fe;
-      Combo alt_insitu = Combine(a_mu, a_w);
-      Double_t alt_stat = std::max(alt_insitu.int_err, alt_insitu.ext_err);
-      Double_t alt_cal = WeightedMean(a_ce, a_w);
-      Double_t alt_tot =
-          WEIGHT_BY_TOTAL_ERR
-              ? (CAL_CORRELATED_FLOOR ? std::max(alt_stat, alt_cal) : alt_stat)
-              : std::sqrt(alt_stat * alt_stat + alt_cal * alt_cal);
-
-      Double_t pri_stat = std::max(m1.int_err, m1.ext_err);
-      Double_t pri_cal = WeightedMean(in_ce, in_w);
-      Double_t pri_tot =
-          WEIGHT_BY_TOTAL_ERR
-              ? (CAL_CORRELATED_FLOOR ? std::max(pri_stat, pri_cal) : pri_stat)
-              : std::sqrt(pri_stat * pri_stat + pri_cal * pri_cal);
-
-      if (pri_tot > 0 && alt_tot > 0) {
-        Double_t wp = 1.0 / (pri_tot * pri_tot);
-        Double_t wa = 1.0 / (alt_tot * alt_tot);
-        combined_mean = (m1.mean * wp + alt_insitu.mean * wa) / (wp + wa);
-        // Correlated inputs: weighted mean of the totals, NOT 1/sqrt(wp+wa).
-        combined_base_err = (pri_tot * wp + alt_tot * wa) / (wp + wa);
-        lineshape_sys = std::fabs(m1.mean - alt_insitu.mean);
-        have_lineshape = kTRUE;
-
-        std::cout << "\n  [lineshape] " << PRIMARY_VARIANT << " = " << m1.mean
-                  << " +/- " << pri_tot << "   " << ALTERNATE_VARIANT << " = "
-                  << alt_insitu.mean << " +/- " << alt_tot << std::endl;
-        std::cout << "  [lineshape] weighted mean = " << combined_mean
-                  << "   base err = " << combined_base_err
-                  << "   separation = " << lineshape_sys << std::endl;
-        // Method term measured against the LINESHAPE-AVERAGED in-situ value.
-        // Against the primary variant alone it would also carry the lineshape
-        // shift, counting the same effect in two places.
-        if (m2.n > 0)
-          method_sys = std::fabs(combined_mean - m2.mean);
-      }
-    }
-  }
-
   std::cout << std::fixed << std::setprecision(4);
 
   // Fit-quality cut, taken on the UNION of failures across the two lineshape
@@ -754,7 +423,8 @@ void CombineGeResult() {
   // the Pb lines. Their agreement is the analysis's main internal check, and
   // their DIFFERENCE is exactly what is quoted as the method systematic -- the
   // budget line is not an assumed model spread, it is this measured gap.
-  std::cout << "\n===== Two independent measurements of E(Ge-73m) ====="
+  std::cout << std::endl;
+  std::cout << "===== Two independent measurements of E(Ge-73m) ====="
             << std::endl;
   Averaged in_only = AverageVariants(shared, alt, 0, kept);
   if (in_only.valid)
@@ -795,16 +465,12 @@ void CombineGeResult() {
                            shared, alt, 0, kept, rs.central, rs.valid);
   Scheme sB = ReportScheme("Scheme B: in-situ + rate-sub, both weighted",
                            shared, alt, 1, kept, rs.central, rs.valid);
-
-  combined_mean = sA.valid ? sA.central : combined_mean;
   Double_t sys = std::sqrt(sA.method * sA.method + sA.lineshape * sA.lineshape);
   Double_t total = sA.valid ? sA.total : 0.0;
-  method_sys = sA.method;
-  lineshape_sys = sA.lineshape;
-  combined_base_err = sA.base;
+  Double_t combined_mean = sA.valid ? sA.central : 0.0;
 
-  std::cout << "\n========== FINAL: Ge-73m gamma energy =========="
-            << std::endl;
+  std::cout << std::endl;
+  std::cout << "========== FINAL: Ge-73m gamma energy ==========" << std::endl;
   std::cout << "  QUOTED = Method 1 (in-situ); Method 2 enters ONLY as the"
             << " method systematic" << std::endl;
   std::cout << "  E = " << combined_mean << " +/- " << sA.base
@@ -819,7 +485,8 @@ void CombineGeResult() {
   // Comparison table in the collaborator's format: Eg in keV, uncertainties in
   // eV. Columns Fit | Slope | Offset | Bkg | Comb. -- the calibration term is
   // split into the orthogonal pivot slope/offset (slope^2+offset^2 = cal^2).
-  std::cout << "\n----- Comparison table (Eg keV, uncertainties eV) -----"
+  std::cout << std::endl;
+  std::cout << "----- Comparison table (Eg keV, uncertainties eV) -----"
             << std::endl;
   std::cout << "  (cal = full calibration-curve covariance propagated to "
                "E(mu_Ge); bkg = |cal(precal Ge) - postcal Ge|)"
@@ -843,11 +510,12 @@ void CombineGeResult() {
               << std::setw(8) << cal_ev << std::setw(7) << bkg_ev
               << std::setw(9) << comb_ev << std::endl;
   }
-  Double_t stat_ev = stat * 1000.0;
-  Double_t cal_ev = cal_sys * 1000.0;
+  // Fit / Cal here are the independent and correlated halves of the quoted
+  // base error; Comb. is the quoted total. bkg is shown but not summed.
+  Double_t stat_ev = in_only.valid ? in_only.p.err_nocal * 1000.0 : 0;
+  Double_t cal_ev = in_only.valid ? in_only.p.cal_part * 1000.0 : 0;
   Double_t bkg_ev = (background_sys > 0) ? background_sys * 1000.0 : 0;
-  Double_t comb_ev =
-      std::sqrt(stat_ev * stat_ev + cal_ev * cal_ev + bkg_ev * bkg_ev);
+  Double_t comb_ev = total * 1000.0;
   std::cout << std::left << std::setw(34) << "COMBINED (this work, CZT)"
             << std::right << std::fixed << std::setprecision(4) << std::setw(10)
             << combined_mean << std::setprecision(1) << std::setw(7) << stat_ev
