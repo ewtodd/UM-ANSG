@@ -8,7 +8,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     utils = {
-      url = "/home/e-work/Analysis-Utilities";
+      url = "github:ewtodd/Analysis-Utilities";
     };
   };
   outputs =

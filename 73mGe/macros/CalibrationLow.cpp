@@ -11,6 +11,7 @@
 #include <TGraph.h>
 #include <TGraphErrors.h>
 #include <TH1F.h>
+#include <TMatrixD.h>
 #include <TParameter.h>
 #include <TROOT.h>
 #include <TSystem.h>
@@ -116,6 +117,10 @@ struct DayResult {
   std::vector<TString> ge_labels;
   std::vector<Float_t> ge_mus, ge_errs, ge_chi2s;
   std::vector<Float_t> ge_cal_errs;
+  // The OFFSET part of the reference calibration error: its value at the
+  // best-constrained energy. The remainder, sqrt(ref^2 - off^2), is the
+  // multiplicative term, and the gain transfer is a pure scale factor.
+  std::vector<Float_t> ge_cal_offs;
   // The TRANSFER part of ge_cal_errs, parallel to ge_*. ge_cal_err is
   // hypot(reference_cal_err, gain_err), so the reference part -- COMMON to
   // every run on the day -- is sqrt(cal^2 - gain^2) and the transfer part is
@@ -126,6 +131,7 @@ struct DayResult {
   std::vector<Float_t> ge_bkg_errs;
   std::vector<TString> rs_labels;
   std::vector<Float_t> rs_mus, rs_errs, rs_chi2s, rs_cal_errs, rs_gain_errs;
+  std::vector<Float_t> rs_cal_offs;
 };
 
 struct CalFit {
@@ -139,6 +145,7 @@ struct CalFit {
 struct PairCalResult {
   TF1 *cal_func = nullptr;
   Double_t ge_cal_err = 0; // calibration sigma propagated to the Ge energy
+  Double_t ge_cal_off = 0; // its value at the best-constrained energy
 
   Double_t ge_bkg_err = 0; // |cal(precal Ge) - postcal Ge|; see file-top note
   BkgGeSimResult postcal;
@@ -404,6 +411,58 @@ Double_t CalEnergyError(const CalFit &c, Double_t mu) {
   return (var > 0) ? std::sqrt(var) : 0.0;
 }
 
+// The calibration uncertainty at its best-constrained energy, the minimum of
+// CalEnergyError over the anchor region. For a straight line this is the
+// intercept error at the pivot; sqrt(cal^2 - off^2) is then the
+// multiplicative term. The same definition is applied to the pol2.
+Double_t CalOffsetError(const CalFit &c) {
+  Double_t best = 0;
+  for (Double_t x = 50.0; x <= 100.0; x += 0.01) {
+    Double_t e = CalEnergyError(c, x);
+    if (e > 0 && (best <= 0 || e < best))
+      best = e;
+  }
+  return best;
+}
+
+// Parameter covariance as (J^T W J)^-1 with the effective variances
+// ey^2 + (f'(x) ex)^2 at the fitted parameters, exact for the linearised
+// problem. On raw keV the pol2 parameters are 99% anticorrelated and Minuit's
+// numerical Hesse moved the propagated Ge error between 3.2 and 4.6 eV with
+// minimizer and strategy; this gives 5.5 eV independent of both.
+void FillCalCovariance(CalFit &c, const std::vector<Float_t> &x,
+                       const std::vector<Float_t> &ex,
+                       const std::vector<Float_t> &ey, Bool_t fix_p0) {
+  std::vector<Int_t> free_par;
+  for (Int_t k = (fix_p0 ? 1 : 0); k < c.npar; k++)
+    free_par.push_back(k);
+  Int_t nf = (Int_t)free_par.size();
+  TMatrixD H(nf, nf);
+  for (size_t i = 0; i < x.size(); i++) {
+    Double_t xi = x[i];
+    Double_t fp = c.func->Derivative(xi);
+    Double_t s2 = (Double_t)ey[i] * ey[i] + fp * fp * (Double_t)ex[i] * ex[i];
+    for (Int_t a = 0; a < nf; a++)
+      for (Int_t b = 0; b < nf; b++)
+        H(a, b) += std::pow(xi, free_par[a]) * std::pow(xi, free_par[b]) / s2;
+  }
+  H.Invert();
+  Double_t cov[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+  for (Int_t a = 0; a < nf; a++)
+    for (Int_t b = 0; b < nf; b++)
+      cov[free_par[a]][free_par[b]] = H(a, b);
+  c.var_p0 = cov[0][0];
+  c.var_p1 = cov[1][1];
+  c.cov_p0p1 = cov[0][1];
+  if (c.npar >= 3) {
+    c.var_p2 = cov[2][2];
+    c.cov_p0p2 = cov[0][2];
+    c.cov_p1p2 = cov[1][2];
+  }
+  for (Int_t k = 0; k < c.npar; k++)
+    c.func->SetParError(k, std::sqrt(std::max(0.0, cov[k][k])));
+}
+
 CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
                             const TString &date_label, Bool_t fix_p0 = kFALSE,
                             Float_t p0_value = 0, Int_t degree = 1) {
@@ -459,25 +518,14 @@ CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
   out.npar = cal->GetNpar();
   out.p0 = cal->GetParameter(0);
   out.p1 = cal->GetParameter(1);
-  if (fr.Get()) {
-    out.var_p0 = fr->CovMatrix(0, 0);
-    out.var_p1 = fr->CovMatrix(1, 1);
-    out.cov_p0p1 = fr->CovMatrix(0, 1);
-    if (out.npar >= 3) {
-      out.var_p2 = fr->CovMatrix(2, 2);
-      out.cov_p0p2 = fr->CovMatrix(0, 2);
-      out.cov_p1p2 = fr->CovMatrix(1, 2);
-    }
-  } else {
-    out.var_p0 = cal->GetParError(0) * cal->GetParError(0);
-    out.var_p1 = cal->GetParError(1) * cal->GetParError(1);
-    if (out.npar >= 3)
-      out.var_p2 = cal->GetParError(2) * cal->GetParError(2);
-  }
+  FillCalCovariance(out, cal_data.mu, ex, ey, fix_p0);
   if (fr.Get() && fr->Ndf() > 0)
     std::cout << "CAL-FIT " << date_label << " (pol" << (out.npar - 1) << ", "
               << n << " anchors): chi2/ndf = " << std::fixed
-              << std::setprecision(2) << fr->Chi2() / fr->Ndf() << std::endl;
+              << std::setprecision(2) << fr->Chi2() / fr->Ndf()
+              << "   sigma_E at best-constrained point = "
+              << std::setprecision(1) << CalOffsetError(out) * 1000.0 << " eV"
+              << std::endl;
 
   PlottingUtils::SaveFigure(canvas, "calibration_low_" + date_label, "",
                             PlotSaveOptions::kLINEAR);
@@ -748,7 +796,8 @@ void ApplyPol1Cal(const std::vector<TString> &input_names, TF1 *cal,
 
 void AddGeResult(DayResult &result, const BkgGeSimResult &r,
                  const TString &label, Float_t cal_err = 0,
-                 Float_t gain_err = 0, Float_t bkg_err = 0) {
+                 Float_t gain_err = 0, Float_t bkg_err = 0,
+                 Float_t cal_off = 0) {
   if (!r.valid || r.sig_channel.peaks.empty())
     return;
   const PeakFitResult &ge = r.sig_channel.peaks.back();
@@ -757,6 +806,7 @@ void AddGeResult(DayResult &result, const BkgGeSimResult &r,
   result.ge_errs.push_back(ge.mu_error);
   result.ge_chi2s.push_back(r.sig_channel.reduced_chi2);
   result.ge_cal_errs.push_back(cal_err);
+  result.ge_cal_offs.push_back(cal_off);
   result.ge_gain_errs.push_back(gain_err);
   result.ge_bkg_errs.push_back(bkg_err);
 }
@@ -1021,9 +1071,9 @@ PairCalResult ProcessPbAnchoredPair(
   // Pb K-beta doublet (Kb1,3 group ~84.77 and Kb2 group ~87.32): same
   // FitDoublePeak method that seeds the K-alpha, run on the bkg spectrum in the
   // K-beta window. Fit as a doublet to cleanly separate the peaks, but anchor
-  // only on Kb1 -- three Pb points (Ka2, Ka1, Kb1) -> a wide lever arm per
-  // pair. On the reference pair they are joined by Am; on the others they
-  // serve as the gain handle.
+  // only on Kb1 -- three Pb points (Ka2, Ka1, Kb1) spanning 12 keV per pair.
+  // On the reference pair they are joined by Am; on the others they set the
+  // gain.
   // link_sigma = kTRUE: the Pb K-beta1/K-beta2 groups share one detector
   // resolution, so tie their widths. Stops the weaker Kb2 from floating its
   // sigma and trading against the continuum, which would skew the Kb1 anchor.
@@ -1137,6 +1187,7 @@ PairCalResult ProcessPbAnchoredPair(
   if (!pre.sig_channel.peaks.empty()) {
     Double_t mu_ge = pre.sig_channel.peaks.back().mu;
     out.ge_cal_err = CalEnergyError(calfit, mu_ge);
+    out.ge_cal_off = CalOffsetError(calfit);
 
     if (transfer_mode) {
       out.ge_gain_err =
@@ -1337,7 +1388,7 @@ void AppendPairToDay(DayResult &result, const PairCalResult &p,
     result.cal_funcs.push_back(p.cal_func);
   }
   AddGeResult(result, p.postcal, ge_label, p.ge_cal_err, p.ge_gain_err,
-              p.ge_bkg_err);
+              p.ge_bkg_err, p.ge_cal_off);
 }
 
 void PrintPrecalPbComparison(const TString &date_label,
@@ -1396,6 +1447,7 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg, Bool_t interactive) {
   Double_t mu_at_ge =
       (calfit.p1 != 0) ? (E_GE_73M - calfit.p0) / calfit.p1 : E_GE_73M;
   Double_t ge_cal_err = CalEnergyError(calfit, mu_at_ge);
+  Double_t ge_cal_off = CalOffsetError(calfit);
   ApplyPol1Cal(cfg.day_datasets, cal, cfg.date_label);
 
   DayResult result;
@@ -1411,6 +1463,7 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg, Bool_t interactive) {
     result.rs_errs.push_back(rs.mu_err);
     result.rs_chi2s.push_back(rs.chi2);
     result.rs_cal_errs.push_back(ge_cal_err);
+    result.rs_cal_offs.push_back(ge_cal_off);
     result.rs_gain_errs.push_back(0.0f);
     std::cout << "Rate-sub Ge mu for " << cfg.date_label << ": " << std::fixed
               << std::setprecision(4) << rs.mu << " +/- " << rs.mu_err
@@ -1504,6 +1557,7 @@ DayResult ProcessDay_20260113(Bool_t interactive, Float_t &ref_p0_out,
       result.rs_errs.push_back(rs.mu_err);
       result.rs_chi2s.push_back(rs.chi2);
       result.rs_cal_errs.push_back(results[i].ge_cal_err);
+      result.rs_cal_offs.push_back(results[i].ge_cal_off);
       result.rs_gain_errs.push_back(results[i].ge_gain_err);
       std::cout << "Rate-sub Ge mu for 20260113_" << pairs[i].tag << ": "
                 << std::fixed << std::setprecision(4) << rs.mu << " +/- "
@@ -1565,6 +1619,7 @@ DayResult ProcessDay_20260114(Bool_t interactive, Float_t ref_p0,
       result.rs_errs.push_back(rs.mu_err);
       result.rs_chi2s.push_back(rs.chi2);
       result.rs_cal_errs.push_back(cu.ge_cal_err);
+      result.rs_cal_offs.push_back(cu.ge_cal_off);
       result.rs_gain_errs.push_back(cu.ge_gain_err);
       std::cout << "Rate-sub Ge mu for 20260114: " << std::fixed
                 << std::setprecision(4) << rs.mu << " +/- " << rs.mu_err
@@ -1670,7 +1725,8 @@ void CalibrationLow() {
       results_dir + "/ge_" + RESULT_TAG + RESULT_VARIANT + ".result";
   std::ofstream out(result_path.Data());
   out << "# Ge-73m gamma energy results   tag=" << RESULT_TAG << std::endl;
-  out << "# method  ge_mu  fit_err  cal_err  bkg_err  chi2  gain_err  label"
+  out << "# method  ge_mu  fit_err  cal_err  bkg_err  chi2  gain_err  cal_off  "
+         "label"
       << std::endl;
   out << std::fixed << std::setprecision(6);
 
@@ -1690,9 +1746,12 @@ void CalibrationLow() {
           i < days[d]->ge_bkg_errs.size() ? days[d]->ge_bkg_errs[i] : 0;
       Float_t gz =
           i < days[d]->ge_gain_errs.size() ? days[d]->ge_gain_errs[i] : 0;
+      Float_t co =
+          i < days[d]->ge_cal_offs.size() ? days[d]->ge_cal_offs[i] : 0;
       out << "insitu  " << days[d]->ge_mus[i] << "  " << days[d]->ge_errs[i]
           << "  " << ce << "  " << be << "  " << days[d]->ge_chi2s[i] << "  "
-          << gz << "  " << sanitize(days[d]->ge_labels[i]) << std::endl;
+          << gz << "  " << co << "  " << sanitize(days[d]->ge_labels[i])
+          << std::endl;
       std::cout << std::left << std::setw(50) << days[d]->ge_labels[i] << ": "
                 << std::fixed << std::setprecision(4) << days[d]->ge_mus[i]
                 << " +/- " << days[d]->ge_errs[i] << " (fit) +/- " << ce
@@ -1712,6 +1771,8 @@ void CalibrationLow() {
           << "  " << ce << "  " << 0.0 << "  " << days[d]->rs_chi2s[i] << "  "
           << (i < days[d]->rs_gain_errs.size() ? days[d]->rs_gain_errs[i]
                                                : 0.0f)
+          << "  "
+          << (i < days[d]->rs_cal_offs.size() ? days[d]->rs_cal_offs[i] : 0.0f)
           << "  " << sanitize(days[d]->rs_labels[i]) << std::endl;
       std::cout << std::left << std::setw(50) << days[d]->rs_labels[i] << ": "
                 << std::fixed << std::setprecision(4) << days[d]->rs_mus[i]

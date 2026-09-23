@@ -1,3 +1,5 @@
+macros/ExportForAlex.cpp 
+macros/ExportFitCSV.cpp
 include/BEF.hpp
 src/BEF.cpp
 ConvertBEF*

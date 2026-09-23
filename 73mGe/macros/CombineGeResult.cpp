@@ -1,17 +1,28 @@
 // Final-budget combiner for the Ge-73m gamma energy.
 //
 // Reads the per-run rows written by CalibrationLow.cpp:
-//   method(insitu|ratesub) ge_mu fit_err cal_err bkg_err chi2 gain_err label
+//   method(insitu|ratesub) ge_mu fit_err cal_err bkg_err chi2 gain_err
+//   cal_off label
 //
 // Method 1 (in-situ) sets the central value; Method 2 (rate-sub) enters only
 // as the method systematic. Runs are combined by BLUE with the calibration
 // split into its correlated (Am reference) and independent (gain transfer)
 // parts.
+//
+// The calibration term is reported as offset (+) multiplicative. Offset is the
+// calibration error at its best-constrained energy (cal_off, the intercept
+// error at the pivot for a straight line); multiplicative is the rest: the
+// growth of the calibration error from that energy to the Ge line, plus the
+// gain transfer, which is a pure scale factor. offset^2 + mult^2 = cal^2 per
+// run, and the combined columns are the same sums taken with the BLUE
+// weights.
 #include "Constants.hpp"
 #include "InitUtils.hpp"
 #include <RtypesCore.h>
 #include <TString.h>
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -48,7 +59,7 @@ struct Row {
   TString method;
   TString label;
   Double_t mu = 0, fit_err = 0, cal_err = 0, bkg_err = 0, chi2 = 0;
-  Double_t gain_err = 0;
+  Double_t gain_err = 0, cal_off = 0;
 };
 
 std::vector<Row> ReadResult(const TString &path) {
@@ -63,20 +74,24 @@ std::vector<Row> ReadResult(const TString &path) {
     if (line.empty() || line[0] == '#')
       continue;
     std::istringstream ss(line);
-    Row r;
-    std::string method, label;
-    // Columns: method mu fit_err cal_err bkg_err chi2 gain_err label
-    Double_t mu, fe, ce, be, c2, ge;
-    if (!(ss >> method >> mu >> fe >> ce >> be >> c2 >> ge >> label))
+    std::vector<std::string> tok;
+    std::string t;
+    while (ss >> t)
+      tok.push_back(t);
+    // method, then the numeric columns, then the label; cal_off was added
+    // last and is read as 0 from a file that predates it.
+    if (tok.size() < 8)
       continue;
-    r.method = method.c_str();
-    r.mu = mu;
-    r.fit_err = fe;
-    r.cal_err = ce;
-    r.bkg_err = be;
-    r.chi2 = c2;
-    r.gain_err = ge;
-    r.label = label.c_str();
+    Row r;
+    r.method = tok[0].c_str();
+    r.label = tok.back().c_str();
+    r.mu = std::atof(tok[1].c_str());
+    r.fit_err = std::atof(tok[2].c_str());
+    r.cal_err = std::atof(tok[3].c_str());
+    r.bkg_err = std::atof(tok[4].c_str());
+    r.chi2 = std::atof(tok[5].c_str());
+    r.gain_err = std::atof(tok[6].c_str());
+    r.cal_off = (tok.size() >= 9) ? std::atof(tok[7].c_str()) : 0.0;
     rows.push_back(r);
   }
   return rows;
@@ -98,6 +113,8 @@ Double_t WeightedMean(const std::vector<Double_t> &v,
 // Combined estimate; err already CONTAINS the calibration, never add it again.
 struct Blue {
   Double_t mean = 0, err = 0, err_nocal = 0, cal_part = 0, chi2ndf = 0;
+  Double_t scale = 1;
+  std::vector<Double_t> w;
   Int_t n = 0;
   Bool_t valid = kFALSE;
 };
@@ -158,13 +175,17 @@ Blue CombineBlueGen(const std::vector<Double_t> &x,
   if (!InvertSym(V))
     return b;
   Double_t A = 0, B = 0;
+  b.w.assign(n, 0.0);
   for (Int_t i = 0; i < n; i++)
     for (Int_t j = 0; j < n; j++) {
       A += V[i][j];
       B += V[i][j] * x[j];
+      b.w[i] += V[i][j];
     }
   if (!(A > 0))
     return b;
+  for (Int_t i = 0; i < n; i++)
+    b.w[i] /= A;
   b.n = n;
   b.mean = B / A;
   Double_t chi2 = 0;
@@ -173,6 +194,7 @@ Blue CombineBlueGen(const std::vector<Double_t> &x,
       chi2 += (x[i] - b.mean) * V[i][j] * (x[j] - b.mean);
   b.chi2ndf = (n > 1) ? chi2 / (n - 1) : 0;
   Double_t scale = (b.chi2ndf > 1.0) ? std::sqrt(b.chi2ndf) : 1.0;
+  b.scale = scale;
   b.err = std::sqrt(1.0 / A) * scale;
   // Diagnostic: the same estimate with every correlated block switched off, so
   // the correlated share of the total is visible rather than asserted.
@@ -224,6 +246,9 @@ std::set<TString> KeptInsituLabels(const std::vector<Row> &pri,
 // err ALREADY CONTAINS the calibration; never add a calibration term again.
 struct Variant {
   Double_t mean = 0, err = 0, err_nocal = 0, cal_part = 0, chi2ndf = 0;
+  // Exact decomposition of err^2 with the BLUE weights:
+  // stat^2 + offset^2 + mult^2 = err^2.
+  Double_t stat_part = 0, off_part = 0, mult_part = 0;
   Int_t n = 0;
 };
 
@@ -235,6 +260,10 @@ Variant BuildVariant(const std::vector<Row> &rows, Int_t mode,
   // The 15th/16th self-calibrate and inherit no reference, so their
   // calibration goes on the DIAGONAL rather than in a shared block.
   std::vector<Double_t> mu, diag, c_ref, c_xfer;
+  // Per-row offset / multiplicative pieces of the calibration, kept apart from
+  // the BLUE inputs so err can be decomposed with the weights afterwards. Rows
+  // in the shared block sum coherently; own-calibration rows in quadrature.
+  std::vector<Double_t> fit, off, lev, own_off, own_lev;
   for (size_t i = 0; i < rows.size(); i++) {
     const Row &r = rows[i];
     if (r.method == "insitu") {
@@ -251,17 +280,28 @@ Variant BuildVariant(const std::vector<Row> &rows, Int_t mode,
     Double_t g = r.gain_err;
     Double_t ref2 = r.cal_err * r.cal_err - g * g;
     Double_t ref = (ref2 > 0) ? std::sqrt(ref2) : 0.0;
+    Double_t o = std::min(r.cal_off, ref);
+    Double_t l = std::sqrt(std::max(0.0, ref * ref - o * o));
     mu.push_back(r.mu);
+    fit.push_back(r.fit_err);
     if (am_ref_group) {
       diag.push_back(r.fit_err);
       c_ref.push_back(ref);
       c_xfer.push_back(g);
+      off.push_back(o);
+      lev.push_back(l);
+      own_off.push_back(0.0);
+      own_lev.push_back(0.0);
     } else {
       // Own calibration: fold it into the diagonal, contribute to neither
       // shared block.
       diag.push_back(std::sqrt(r.fit_err * r.fit_err + r.cal_err * r.cal_err));
       c_ref.push_back(0.0);
       c_xfer.push_back(0.0);
+      off.push_back(0.0);
+      lev.push_back(0.0);
+      own_off.push_back(o);
+      own_lev.push_back(l);
     }
   }
   Variant v;
@@ -277,6 +317,21 @@ Variant BuildVariant(const std::vector<Row> &rows, Int_t mode,
   v.cal_part = b.cal_part;
   v.chi2ndf = b.chi2ndf;
   v.n = b.n;
+  if (b.valid) {
+    Double_t stat2 = 0, so = 0, sl = 0, sx = 0, own_o2 = 0, own_l2 = 0;
+    for (Int_t i = 0; i < b.n; i++) {
+      Double_t wi = b.w[i];
+      stat2 += wi * wi * fit[i] * fit[i];
+      so += wi * off[i];
+      sl += wi * lev[i];
+      sx += wi * c_xfer[i];
+      own_o2 += wi * wi * own_off[i] * own_off[i];
+      own_l2 += wi * wi * own_lev[i] * own_lev[i];
+    }
+    v.stat_part = std::sqrt(stat2) * b.scale;
+    v.off_part = std::sqrt(so * so + own_o2) * b.scale;
+    v.mult_part = std::sqrt(sl * sl + sx * sx + own_l2) * b.scale;
+  }
   return v;
 }
 
@@ -344,6 +399,9 @@ Scheme ReportScheme(const TString &title, const std::vector<Row> &pri,
               << " (+) common-cal " << vs[k]->cal_part << ")  chi2/ndf "
               << std::setprecision(2) << vs[k]->chi2ndf << std::setprecision(5)
               << std::endl;
+    std::cout << "              split of err with the BLUE weights: stat "
+              << vs[k]->stat_part << " (+) cal offset " << vs[k]->off_part
+              << " (+) cal multiplicative " << vs[k]->mult_part << std::endl;
   }
 
   s.central = o.central;
@@ -483,23 +541,27 @@ void CombineGeResult() {
   std::cout << "  literature 68.752(7), collaborator 68.755" << std::endl;
 
   // Comparison table in the collaborator's format: Eg in keV, uncertainties in
-  // eV. Columns Fit | Slope | Offset | Bkg | Comb. -- the calibration term is
-  // split into the orthogonal pivot slope/offset (slope^2+offset^2 = cal^2).
+  // eV. Columns Fit | Offset | Mult. | Bkg | Comb. -- offset^2 + mult^2 =
+  // cal^2, see the file-top note for the definition.
   std::cout << std::endl;
   std::cout << "----- Comparison table (Eg keV, uncertainties eV) -----"
             << std::endl;
-  std::cout << "  (cal = full calibration-curve covariance propagated to "
-               "E(mu_Ge); bkg = |cal(precal Ge) - postcal Ge|)"
+  std::cout << "  (offset = cal error at its best-constrained energy; mult. = "
+               "its growth to the Ge line + gain transfer; bkg = |cal(precal "
+               "Ge) - postcal Ge|)"
             << std::endl;
   std::cout << std::left << std::setw(34) << "Run" << std::right
             << std::setw(10) << "Eg[keV]" << std::setw(7) << "Fit"
-            << std::setw(8) << "Cal" << std::setw(7) << "Bkg" << std::setw(9)
-            << "Comb." << std::endl;
+            << std::setw(8) << "Offset" << std::setw(7) << "Mult."
+            << std::setw(7) << "Bkg" << std::setw(9) << "Comb." << std::endl;
   for (size_t i = 0; i < shared.size(); i++) {
     if (shared[i].method != "insitu" && shared[i].method != "ratesub")
       continue;
     Double_t fit_ev = shared[i].fit_err * 1000.0;
     Double_t cal_ev = shared[i].cal_err * 1000.0;
+    Double_t off_ev = std::min(shared[i].cal_off * 1000.0, cal_ev);
+    Double_t mult_ev =
+        std::sqrt(std::max(0.0, cal_ev * cal_ev - off_ev * off_ev));
     // Per-run background = |cal(precal Ge) - postcal Ge| for this run.
     Double_t bkg_ev = shared[i].bkg_err * 1000.0;
     Double_t comb_ev =
@@ -507,18 +569,20 @@ void CombineGeResult() {
     std::cout << std::left << std::setw(34) << shared[i].label << std::right
               << std::fixed << std::setprecision(4) << std::setw(10)
               << shared[i].mu << std::setprecision(1) << std::setw(7) << fit_ev
-              << std::setw(8) << cal_ev << std::setw(7) << bkg_ev
-              << std::setw(9) << comb_ev << std::endl;
+              << std::setw(8) << off_ev << std::setw(7) << mult_ev
+              << std::setw(7) << bkg_ev << std::setw(9) << comb_ev << std::endl;
   }
-  // Fit / Cal here are the independent and correlated halves of the quoted
-  // base error; Comb. is the quoted total. bkg is shown but not summed.
-  Double_t stat_ev = in_only.valid ? in_only.p.err_nocal * 1000.0 : 0;
-  Double_t cal_ev = in_only.valid ? in_only.p.cal_part * 1000.0 : 0;
+  // Fit / Offset / Mult. are the exact decomposition of the quoted base error
+  // with the BLUE weights; Comb. is the quoted total. bkg is shown but not
+  // summed.
+  Double_t stat_ev = in_only.valid ? in_only.p.stat_part * 1000.0 : 0;
+  Double_t off_ev = in_only.valid ? in_only.p.off_part * 1000.0 : 0;
+  Double_t mult_ev = in_only.valid ? in_only.p.mult_part * 1000.0 : 0;
   Double_t bkg_ev = (background_sys > 0) ? background_sys * 1000.0 : 0;
   Double_t comb_ev = total * 1000.0;
   std::cout << std::left << std::setw(34) << "COMBINED (this work, CZT)"
             << std::right << std::fixed << std::setprecision(4) << std::setw(10)
             << combined_mean << std::setprecision(1) << std::setw(7) << stat_ev
-            << std::setw(8) << cal_ev << std::setw(7) << bkg_ev << std::setw(9)
-            << comb_ev << std::endl;
+            << std::setw(8) << off_ev << std::setw(7) << mult_ev << std::setw(7)
+            << bkg_ev << std::setw(9) << comb_ev << std::endl;
 }
