@@ -17,7 +17,22 @@
 #include <TTree.h>
 #include <vector>
 
-void GenerateMCData(Bool_t reprocess = kFALSE) {
+// Simulate the half-life the data gave, read back from the extraction, so the
+// closure asks whether this measurement reproduces itself.
+Double_t MeasuredHalfLife() {
+  TFile file("root_files/half_life_results.root", "READ");
+  TF1 *exponential = static_cast<TF1 *>(file.Get("exponential_fit"));
+  if (!exponential) {
+    std::cerr << "No exponential_fit in half_life_results.root; run HalfLife "
+                 "first"
+              << std::endl;
+    return 0;
+  }
+  return exponential->GetParameter(1) * TMath::Log(2);
+}
+
+void GenerateMCData(Int_t num_events, Double_t half_life,
+                    Bool_t reprocess = kFALSE) {
   if (!reprocess)
     return;
 
@@ -57,12 +72,10 @@ void GenerateMCData(Bool_t reprocess = kFALSE) {
   Double_t template_148_peak_height = template_148_y[template_148_peak_pos];
   Double_t template_32_peak_height = template_32_y[template_32_peak_pos];
 
-  Int_t num_events = 5000000;
   Double_t true_light_output_148 = 148.55;
   Double_t true_light_output_32 = 32.3;
   Double_t sigma_adc_148 = 51.2089;
   Double_t sigma_adc_32 = 34.3313;
-  Double_t half_life = 20.6;
   Double_t lifetime = half_life / TMath::Log(2);
 
   Double_t sigma_keV_148 = calibration_slope * sigma_adc_148;
@@ -81,7 +94,7 @@ void GenerateMCData(Bool_t reprocess = kFALSE) {
   TFile *output = new TFile(output_filepath, "RECREATE");
   TTree *output_tree = new TTree("features", "MC double waveform features.");
 
-  TArrayS *output_samples = nullptr;
+  TArrayF *output_samples = nullptr;
   Float_t output_light_output;
   Int_t peak1_position, peak2_position;
   Float_t true_peak1_light_output, true_peak2_light_output, true_time_diff;
@@ -97,6 +110,7 @@ void GenerateMCData(Bool_t reprocess = kFALSE) {
   output_tree->Branch("true_time_diff", &true_time_diff, "true_time_diff/F");
 
   TRandom3 *rng = new TRandom3(0);
+  Int_t rejected_light_output = 0, rejected_peak_finding = 0;
 
   for (Int_t i = 0; i < num_events; i++) {
     if (i % 10000 == 0) {
@@ -131,27 +145,32 @@ void GenerateMCData(Bool_t reprocess = kFALSE) {
     Double_t scale_32 = ph_32 / template_32_peak_height;
 
     Int_t nsamples = template_npoints;
-    std::vector<Short_t> waveform(nsamples, 0);
+    std::vector<Float_t> waveform(nsamples, 0);
 
     Int_t first_peak_sample_pos = template_148_peak_pos;
-    peak1_position = first_peak_sample_pos;
-
-    Int_t time_diff_samples = TMath::Nint(sampled_time_diff / 2.0);
-    Int_t second_peak_sample_pos = first_peak_sample_pos + time_diff_samples;
-    peak2_position = second_peak_sample_pos;
+    // The second pulse lands at a continuous time, not on the sample grid:
+    // place it by the same linear interpolation the fit model uses. Snapping
+    // to the nearest sample put every fitted time on an even number of ns and
+    // produced a comb in the time-difference histogram.
+    Double_t second_peak_pos_exact =
+        first_peak_sample_pos + sampled_time_diff / 2.0;
 
     for (Int_t j = 0; j < nsamples; j++) {
       Int_t template_index = j - first_peak_sample_pos + template_148_peak_pos;
       if (template_index >= 0 && template_index < template_npoints) {
-        waveform[j] += (Short_t)(template_148_y[template_index] * scale_148);
+        waveform[j] += (Float_t)(template_148_y[template_index] * scale_148);
       }
     }
 
     for (Int_t j = 0; j < nsamples; j++) {
-      Int_t template_index = j - second_peak_sample_pos + template_32_peak_pos;
-      if (template_index >= 0 && template_index < template_npoints) {
-        waveform[j] += (Short_t)(template_32_y[template_index] * scale_32);
-      }
+      Double_t exact_index = j - second_peak_pos_exact + template_32_peak_pos;
+      if (exact_index < 0 || exact_index >= template_npoints - 1)
+        continue;
+      Int_t idx_low = (Int_t)exact_index;
+      Double_t frac = exact_index - idx_low;
+      Double_t value = (1.0 - frac) * template_32_y[idx_low] +
+                       frac * template_32_y[idx_low + 1];
+      waveform[j] += (Float_t)(value * scale_32);
     }
 
     Double_t max_value = 0;
@@ -163,9 +182,25 @@ void GenerateMCData(Bool_t reprocess = kFALSE) {
 
     output_light_output = calibration_function->Eval(max_value);
 
+    // Same selection as the real candidates: the light-output window of
+    // GetCandidateWaveforms, then TSpectrum must resolve two peaks, whose
+    // positions seed the fit exactly as they do for data. Overlapping pulses
+    // the finder cannot separate never reach the fit in data, so they must not
+    // reach it here either.
+    if (output_light_output < CANDIDATE_LO_MIN_KEVEE ||
+        output_light_output > CANDIDATE_LO_MAX_KEVEE) {
+      rejected_light_output++;
+      continue;
+    }
+    std::vector<Double_t> waveform_array(waveform.begin(), waveform.end());
+    if (!FindDoublePeaks(waveform_array, peak1_position, peak2_position)) {
+      rejected_peak_finding++;
+      continue;
+    }
+
     if (output_samples)
       delete output_samples;
-    output_samples = new TArrayS(nsamples);
+    output_samples = new TArrayF(nsamples);
     for (Int_t j = 0; j < nsamples; j++) {
       output_samples->SetAt(waveform[j], j);
     }
@@ -173,7 +208,11 @@ void GenerateMCData(Bool_t reprocess = kFALSE) {
     output_tree->Fill();
   }
 
-  std::cout << "Generated " << num_events << " MC events" << std::endl;
+  std::cout << "Generated " << num_events
+            << " MC events: " << output_tree->GetEntries()
+            << " pass the candidate selection (" << rejected_light_output
+            << " outside the light-output window, " << rejected_peak_finding
+            << " without two resolved peaks)" << std::endl;
 
   output->cd();
   output_tree->Write("", TObject::kOverwrite);
@@ -240,9 +279,9 @@ void AnalyzeMCEfficiency(Bool_t reprocess = kFALSE) {
   LO1vsLO2->Fit(gaussian2d, "Q");
 
   Double_t mean_x = gaussian2d->GetParameter(1);
-  Double_t sigma_x = gaussian2d->GetParameter(2);
+  Double_t sigma_x = TMath::Abs(gaussian2d->GetParameter(2));
   Double_t mean_y = gaussian2d->GetParameter(3);
-  Double_t sigma_y = gaussian2d->GetParameter(4);
+  Double_t sigma_y = TMath::Abs(gaussian2d->GetParameter(4));
 
   std::cout << "2D Gaussian fit: " << std::endl;
   std::cout << "Peak 1 mean: " << mean_x << " +/- " << sigma_x << std::endl;
@@ -320,6 +359,36 @@ void AnalyzeMCEfficiency(Bool_t reprocess = kFALSE) {
             << std::endl;
 }
 
+// The point of the Monte Carlo: run the SAME 2D cut and exponential fit that
+// produce the measured half-life on simulated doubles with a known half-life,
+// and see whether it comes back.
+void CheckHalfLifeClosure(Double_t half_life, Bool_t reprocess = kFALSE) {
+  if (!reprocess)
+    return;
+  PlotDoublePeaks("mc_fitted_doubles.root", "mc_", reprocess);
+  HalfLifeResult recovered = FitAndExtractHalfLife(
+      "mc_fitted_doubles.root", "mc_half_life_results.root", "mc_", reprocess);
+  if (!recovered.valid) {
+    std::cerr << "MC half-life extraction failed" << std::endl;
+    return;
+  }
+  Double_t pull = (recovered.error > 0)
+                      ? (recovered.value - half_life) / recovered.error
+                      : 0.0;
+  std::cout << std::endl << "=== MC half-life closure ===" << std::endl;
+  std::cout << "  simulated: " << half_life << " ns" << std::endl;
+  std::cout << "  recovered: " << recovered.value << " +/- " << recovered.error
+            << " ns   (" << recovered.value - half_life << " ns, " << pull
+            << " sigma)" << std::endl;
+  HalfLifeResult scan = ScanCutWidth("mc_fitted_doubles.root",
+                                     "mc_cut_scan.root", "mc_", reprocess);
+  if (scan.valid)
+    std::cout << "  cut-width scan: " << scan.value << " +/- " << scan.error
+              << " ns (weighted mean +/- spread), input " << half_life
+              << " ns is " << (scan.value - half_life) / scan.error
+              << " spreads away" << std::endl;
+}
+
 void PlotTrueMC(Bool_t reprocess = kFALSE) {
   if (!reprocess)
     return;
@@ -360,7 +429,8 @@ void PlotTrueMC(Bool_t reprocess = kFALSE) {
   TCanvas *canvas_2d_true = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDraw2DHistogram(true_LO1vsLO2, canvas_2d_true);
   PlottingUtils::SaveFigure(canvas_2d_true,
-                            "mc_true_peak1_vs_peak2_light_output", "", PlotSaveOptions::kLINEAR);
+                            "mc_true_peak1_vs_peak2_light_output", "",
+                            PlotSaveOptions::kLINEAR);
 
   TCanvas *canvas_p1_true = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDrawHistogram(true_peak1_hist, kBlue + 1);
@@ -407,23 +477,21 @@ void PlotTrueMC(Bool_t reprocess = kFALSE) {
 
   TCanvas *canvas_2d_fitted = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDraw2DHistogram(fitted_LO1vsLO2, canvas_2d_fitted);
-  PlottingUtils::SaveFigure(
-      canvas_2d_fitted, "mc_fitted_peak1_vs_peak2_light_output", "", PlotSaveOptions::kLINEAR);
+  PlottingUtils::SaveFigure(canvas_2d_fitted,
+                            "mc_fitted_peak1_vs_peak2_light_output", "",
+                            PlotSaveOptions::kLINEAR);
 
   TCanvas *canvas_p1_fitted = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDrawHistogram(fitted_peak1_hist, kBlue + 1);
-  PlottingUtils::SaveFigure(canvas_p1_fitted,
-                            "mc_fitted_peak1_light_output");
+  PlottingUtils::SaveFigure(canvas_p1_fitted, "mc_fitted_peak1_light_output");
 
   TCanvas *canvas_p2_fitted = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDrawHistogram(fitted_peak2_hist, kRed + 1);
-  PlottingUtils::SaveFigure(canvas_p2_fitted,
-                            "mc_fitted_peak2_light_output");
+  PlottingUtils::SaveFigure(canvas_p2_fitted, "mc_fitted_peak2_light_output");
 
   TCanvas *canvas_time_fitted = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDrawHistogram(fitted_time_diff_hist, kGreen + 1);
-  PlottingUtils::SaveFigure(canvas_time_fitted,
-                            "mc_fitted_time_difference");
+  PlottingUtils::SaveFigure(canvas_time_fitted, "mc_fitted_time_difference");
 
   mc_fitted->Close();
 
@@ -452,7 +520,11 @@ void PlotTrueMC(Bool_t reprocess = kFALSE) {
 }
 void MonteCarloEfficiency() {
   InitUtils::SetROOTPreferences();
-  GenerateMCData(kTRUE);
+  Double_t half_life = MeasuredHalfLife();
+  if (!(half_life > 0))
+    return;
+  GenerateMCData(5000000, half_life, kTRUE);
   AnalyzeMCEfficiency(kTRUE);
+  CheckHalfLifeClosure(half_life, kTRUE);
   PlotTrueMC(kTRUE);
 }

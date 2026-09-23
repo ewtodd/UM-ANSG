@@ -10,7 +10,7 @@ import sys
 import h5py
 
 sys.path.insert(0, "/home/e-work/Software/Analysis-Utilities/python")
-from analysis_utils.io import load_tree_data
+from analysis_utilities.io import load_tree_data
 
 FILES = {
     "Cs137_raw": ("macros/root_files/Cs137_raw.root", "Data_R"),

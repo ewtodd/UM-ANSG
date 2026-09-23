@@ -26,7 +26,6 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <map>
 #include <set>
 #include <sstream>
 #include <vector>
@@ -34,25 +33,9 @@
 // Which run to combine. Must match the RESULT_TAG the rows were written with.
 const TString RESULT_TAG = "amxfer";
 
-// Lineshape variants to compare. Both .result files must exist. The nominal
-// is the no-high-tail fit: that component rails at both bounds when enabled,
-// a flat pedestal degenerate with the background rather than a model the
-// data supports.
-const TString PRIMARY_VARIANT = "_nohitail";
-const TString ALTERNATE_VARIANT = "_hitail";
-
-// Alternate lineshape variant (high-side exponential tail). OFF: on Am-241
-// that component fits to 6.8e-09 +/- 1.1e-02, an unconstrainable null
-// parameter, and enabling it degrades the fits (chi2/ndf 2.21 vs 0.57,
-// errors swinging 2-3x on identical data). Its separation from the nominal
-// is not a systematic.
-const Bool_t USE_LINESHAPE_VARIANT = kFALSE;
-
 // Fit-quality cut on the in-situ fits. chi2/ndf carries no information about
-// where mu landed, so it cannot bias the result. Taken on the UNION of
-// failures across both lineshape variants so both are combined over the same
-// runs. A rejected run keeps its rate-sub row: this removes a failed fit,
-// not a dataset.
+// where mu landed, so it cannot bias the result. A rejected run keeps its
+// rate-sub row: this removes a failed fit, not a dataset.
 const Double_t INSITU_CHI2_MAX = 3.0;
 
 struct Row {
@@ -210,50 +193,36 @@ Blue CombineBlueGen(const std::vector<Double_t> &x,
   return b;
 }
 
-// In-situ labels that pass the fit-quality cut in BOTH variants. A run cut in
-// one variant and kept in the other makes the lineshape systematic a comparison
-// of different DATASETS rather than of two models of the same data, so the cut
-// must be taken on the union of failures.
-std::set<TString> KeptInsituLabels(const std::vector<Row> &pri,
-                                   const std::vector<Row> &alt) {
-  std::set<TString> failed, all_insitu;
-  const std::vector<Row> *srcs[2] = {&pri, &alt};
-  for (Int_t s = 0; s < 2; s++)
-    for (size_t i = 0; i < srcs[s]->size(); i++) {
-      const Row &r = (*srcs[s])[i];
-      if (r.method != "insitu")
-        continue;
-      all_insitu.insert(r.label);
-      if (r.chi2 > INSITU_CHI2_MAX)
-        failed.insert(r.label);
-    }
+std::set<TString> KeptInsituLabels(const std::vector<Row> &rows) {
   std::set<TString> kept;
-  for (std::set<TString>::const_iterator it = all_insitu.begin();
-       it != all_insitu.end(); ++it)
-    if (failed.find(*it) == failed.end())
-      kept.insert(*it);
-  for (std::set<TString>::const_iterator it = failed.begin();
-       it != failed.end(); ++it)
-    std::cout << "  [cut] in-situ row " << *it << " fails chi2/ndf > "
-              << INSITU_CHI2_MAX
-              << " in at least one lineshape variant; dropped from BOTH"
-              << std::endl;
+  for (size_t i = 0; i < rows.size(); i++) {
+    const Row &r = rows[i];
+    if (r.method != "insitu")
+      continue;
+    if (r.chi2 > INSITU_CHI2_MAX) {
+      std::cout << "  [cut] in-situ row " << r.label << " fails chi2/ndf > "
+                << INSITU_CHI2_MAX << "; dropped" << std::endl;
+      continue;
+    }
+    kept.insert(r.label);
+  }
   return kept;
 }
 
-// One lineshape variant, combined over the rows the mode selects.
+// One combination over the rows the mode selects.
 // mode 0 = in-situ only, 1 = in-situ + rate-sub, 2 = rate-sub only.
 // err ALREADY CONTAINS the calibration; never add a calibration term again.
-struct Variant {
+struct Combination {
   Double_t mean = 0, err = 0, err_nocal = 0, cal_part = 0, chi2ndf = 0;
   // Exact decomposition of err^2 with the BLUE weights:
   // stat^2 + offset^2 + mult^2 = err^2.
   Double_t stat_part = 0, off_part = 0, mult_part = 0;
   Int_t n = 0;
+  Bool_t valid = kFALSE;
 };
 
-Variant BuildVariant(const std::vector<Row> &rows, Int_t mode,
-                     const std::set<TString> &kept_insitu) {
+Combination Combine(const std::vector<Row> &rows, Int_t mode,
+                    const std::set<TString> &kept_insitu) {
   // Three error sources per run: fit (independent, diagonal), gain transfer
   // (all measured against the same reference centroids -> correlated), and
   // the Am reference itself, sqrt(cal^2 - gain^2) (shared -> correlated).
@@ -304,7 +273,7 @@ Variant BuildVariant(const std::vector<Row> &rows, Int_t mode,
       own_lev.push_back(l);
     }
   }
-  Variant v;
+  Combination v;
   if (mu.empty())
     return v;
   std::vector<std::vector<Double_t>> corr;
@@ -317,6 +286,7 @@ Variant BuildVariant(const std::vector<Row> &rows, Int_t mode,
   v.cal_part = b.cal_part;
   v.chi2ndf = b.chi2ndf;
   v.n = b.n;
+  v.valid = b.valid;
   if (b.valid) {
     Double_t stat2 = 0, so = 0, sl = 0, sx = 0, own_o2 = 0, own_l2 = 0;
     for (Int_t i = 0; i < b.n; i++) {
@@ -335,96 +305,47 @@ Variant BuildVariant(const std::vector<Row> &rows, Int_t mode,
   return v;
 }
 
-// The two lineshape variants averaged. They are the SAME DATA refit with a
-// different model, so they are ~100% correlated: the central value is their
-// uncertainty-weighted average, but the base error is the weighted MEAN of the
-// two errors, not 1/sqrt(sum 1/sigma^2), which would return less than either
-// input. Their separation is the lineshape systematic.
-struct Averaged {
-  Variant p, a;
-  Double_t central = 0, base = 0, lineshape = 0;
-  Bool_t have_alt = kFALSE, valid = kFALSE;
-};
-
-Averaged AverageVariants(const std::vector<Row> &pri,
-                         const std::vector<Row> &alt, Int_t mode,
-                         const std::set<TString> &kept) {
-  Averaged o;
-  o.p = BuildVariant(pri, mode, kept);
-  if (o.p.n == 0)
-    return o;
-  o.a = BuildVariant(alt, mode, kept);
-  o.valid = kTRUE;
-  if (o.a.n > 0 && o.a.err > 0 && o.p.err > 0) {
-    Double_t wp = 1.0 / (o.p.err * o.p.err);
-    Double_t wa = 1.0 / (o.a.err * o.a.err);
-    o.central = (o.p.mean * wp + o.a.mean * wa) / (wp + wa);
-    o.base = (o.p.err * wp + o.a.err * wa) / (wp + wa);
-    o.lineshape = std::fabs(o.p.mean - o.a.mean);
-    o.have_alt = kTRUE;
-  } else {
-    o.central = o.p.mean;
-    o.base = o.p.err;
-  }
-  return o;
-}
-
 struct Scheme {
-  Double_t central = 0, base = 0, lineshape = 0, method = 0, total = 0;
+  Double_t central = 0, base = 0, method = 0, total = 0;
   Bool_t valid = kFALSE;
 };
 
 // Print one scheme's FULL derivation, so the quoted number and the printed
 // budget come from the same arithmetic and the column can be added up.
-Scheme ReportScheme(const TString &title, const std::vector<Row> &pri,
-                    const std::vector<Row> &alt, Int_t mode,
-                    const std::set<TString> &kept, Double_t ratesub_central,
-                    Bool_t have_ratesub) {
+Scheme ReportScheme(const TString &title, const std::vector<Row> &rows,
+                    Int_t mode, const std::set<TString> &kept,
+                    Double_t ratesub_central, Bool_t have_ratesub) {
   Scheme s;
-  Averaged o = AverageVariants(pri, alt, mode, kept);
-  if (!o.valid)
+  Combination c = Combine(rows, mode, kept);
+  if (!c.valid)
     return s;
 
   std::cout << std::endl;
   std::cout << "========== " << title << " ==========" << std::endl;
   std::cout << std::fixed << std::setprecision(5);
-  const Variant *vs[2] = {&o.p, &o.a};
-  const TString names[2] = {PRIMARY_VARIANT, ALTERNATE_VARIANT};
-  for (Int_t k = 0; k < 2; k++) {
-    if (vs[k]->n == 0)
-      continue;
-    std::cout << "  " << std::left << std::setw(11) << names[k] << std::right
-              << " n=" << vs[k]->n << "  mean " << vs[k]->mean << "  err "
-              << vs[k]->err << "  (indep " << vs[k]->err_nocal
-              << " (+) common-cal " << vs[k]->cal_part << ")  chi2/ndf "
-              << std::setprecision(2) << vs[k]->chi2ndf << std::setprecision(5)
-              << std::endl;
-    std::cout << "              split of err with the BLUE weights: stat "
-              << vs[k]->stat_part << " (+) cal offset " << vs[k]->off_part
-              << " (+) cal multiplicative " << vs[k]->mult_part << std::endl;
-  }
+  std::cout << "  n=" << c.n << "  mean " << c.mean << "  err " << c.err
+            << "  (indep " << c.err_nocal << " (+) common-cal " << c.cal_part
+            << ")  chi2/ndf " << std::setprecision(2) << c.chi2ndf
+            << std::setprecision(5) << std::endl;
+  std::cout << "  split of err with the BLUE weights: stat " << c.stat_part
+            << " (+) cal offset " << c.off_part << " (+) cal multiplicative "
+            << c.mult_part << std::endl;
 
-  s.central = o.central;
-  s.base = o.base;
-  s.lineshape = o.lineshape;
-  s.method = have_ratesub ? std::fabs(o.central - ratesub_central) : 0;
-  s.total = std::sqrt(s.base * s.base + s.lineshape * s.lineshape +
-                      s.method * s.method);
+  s.central = c.mean;
+  s.base = c.err;
+  s.method = have_ratesub ? std::fabs(c.mean - ratesub_central) : 0;
+  s.total = std::sqrt(s.base * s.base + s.method * s.method);
   s.valid = kTRUE;
 
-  std::cout << "  central   = " << s.central
-            << "   (variant means, weighted by 1/err^2)" << std::endl;
-  std::cout << "  base      = " << s.base
-            << "   (weighted MEAN of the two variant errors -- same data)"
-            << std::endl;
-  std::cout << "  lineshape = " << s.lineshape << "   (variant separation)"
+  std::cout << "  central   = " << s.central << std::endl;
+  std::cout << "  base      = " << s.base << "   (BLUE, fit (+) calibration)"
             << std::endl;
   if (have_ratesub)
     std::cout << "  method    = " << s.method
               << "   (MEASURED gap |M1 - M2|, M2 = " << ratesub_central << ")"
               << std::endl;
-  std::cout << "  TOTAL     = sqrt(" << s.base << "^2 + " << s.lineshape
-            << "^2 + " << s.method << "^2) = " << s.total << std::endl;
+  std::cout << "  TOTAL     = sqrt(" << s.base << "^2 + " << s.method
+            << "^2) = " << s.total << std::endl;
   std::cout << std::setprecision(4) << "  E = " << s.central << " +/- "
             << s.total << " keV" << std::endl;
   return s;
@@ -432,49 +353,27 @@ Scheme ReportScheme(const TString &title, const std::vector<Row> &pri,
 
 void CombineGeResult() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  // PRIMARY is the nominal lineshape; ALTERNATE is the same analysis with the
-  // high-side exponential tail toggled. Their difference is the lineshape
-  // systematic -- the two-file mechanism this combiner was written around,
-  // restored with a better-motivated pair than the old shared/ka1only split.
-  std::vector<Row> shared = ReadResult(
-      project_root + "/results/ge_" + RESULT_TAG + PRIMARY_VARIANT + ".result");
-  if (shared.empty()) {
-    std::cerr << "No results for variant '" << PRIMARY_VARIANT
+  std::vector<Row> rows =
+      ReadResult(project_root + "/results/ge_" + RESULT_TAG + ".result");
+  if (rows.empty()) {
+    std::cerr << "No results for tag '" << RESULT_TAG
               << "'; run CalibrationLow.cpp first." << std::endl;
     return;
   }
-  std::vector<Row> alt;
-  if (USE_LINESHAPE_VARIANT)
-    alt = ReadResult(project_root + "/results/ge_" + RESULT_TAG +
-                     ALTERNATE_VARIANT + ".result");
-  if (USE_LINESHAPE_VARIANT && alt.empty())
-    std::cerr << "WARNING: no results for alternate variant '"
-              << ALTERNATE_VARIANT
-              << "'; the lineshape systematic will be ABSENT from the budget, "
-                 "not zero. Run CalibrationLow.cpp with USE_HIGH_EXP_TAIL "
-                 "flipped."
-              << std::endl;
 
   // bkg_err is |cal(precal Ge) - postcal Ge|, a diagnostic only: with the
   // unit bug fixed the post-cal fit returns its own seed, so it is a
   // tautology rather than a systematic. Printed, never in the budget.
   std::vector<Double_t> all_be, all_fe;
-  for (size_t i = 0; i < shared.size(); i++) {
-    all_be.push_back(shared[i].bkg_err);
-    all_fe.push_back(shared[i].fit_err);
+  for (size_t i = 0; i < rows.size(); i++) {
+    all_be.push_back(rows[i].bkg_err);
+    all_fe.push_back(rows[i].fit_err);
   }
   Double_t background_sys = WeightedMean(all_be, all_fe);
   std::cout << std::fixed << std::setprecision(4);
 
-  // Fit-quality cut, taken on the UNION of failures across the two lineshape
-  // variants so both are combined over the same runs.
-  std::set<TString> kept = KeptInsituLabels(shared, alt);
-
-  // Rate-sub central value, averaged over the two variants exactly as the
-  // in-situ value is, so the method systematic compares like with like. Taking
-  // it from the primary variant alone would fold the lineshape shift into the
-  // method term and count the same effect twice.
-  Averaged rs = AverageVariants(shared, alt, 2, kept);
+  std::set<TString> kept = KeptInsituLabels(rows);
+  Combination rs = Combine(rows, 2, kept);
 
   // TWO INDEPENDENT MEASUREMENTS OF THE SAME QUANTITY, on disjoint datasets and
   // with entirely different response functions, backgrounds and treatments of
@@ -484,18 +383,18 @@ void CombineGeResult() {
   std::cout << std::endl;
   std::cout << "===== Two independent measurements of E(Ge-73m) ====="
             << std::endl;
-  Averaged in_only = AverageVariants(shared, alt, 0, kept);
+  Combination in_only = Combine(rows, 0, kept);
   if (in_only.valid)
-    std::cout << "  Method 1  in-situ simultaneous fit    (" << in_only.p.n
-              << " datasets, 01/13)   : " << in_only.central << " +/- "
-              << in_only.base << " keV" << std::endl;
+    std::cout << "  Method 1  in-situ simultaneous fit    (" << in_only.n
+              << " datasets, 01/13)   : " << in_only.mean << " +/- "
+              << in_only.err << " keV" << std::endl;
   if (rs.valid)
-    std::cout << "  Method 2  live-time rate subtraction  (" << rs.p.n
-              << " datasets, 01/14-16): " << rs.central << " +/- " << rs.base
+    std::cout << "  Method 2  live-time rate subtraction  (" << rs.n
+              << " datasets, 01/14-16): " << rs.mean << " +/- " << rs.err
               << " keV" << std::endl;
   if (in_only.valid && rs.valid) {
-    Double_t diff = std::fabs(in_only.central - rs.central);
-    Double_t ddiff = std::sqrt(in_only.base * in_only.base + rs.base * rs.base);
+    Double_t diff = std::fabs(in_only.mean - rs.mean);
+    Double_t ddiff = std::sqrt(in_only.err * in_only.err + rs.err * rs.err);
     std::cout << "  ---> they agree to " << diff * 1000.0 << " eV, against "
               << ddiff * 1000.0 << " eV on the difference ("
               << std::setprecision(2) << (ddiff > 0 ? diff / ddiff : 0)
@@ -520,10 +419,9 @@ void CombineGeResult() {
   // double-uses those runs, since their difference from the in-situ value is
   // still charged as a systematic. Both are printed; A is quoted.
   Scheme sA = ReportScheme("Scheme A: in-situ only (rate-sub as systematic)",
-                           shared, alt, 0, kept, rs.central, rs.valid);
-  Scheme sB = ReportScheme("Scheme B: in-situ + rate-sub, both weighted",
-                           shared, alt, 1, kept, rs.central, rs.valid);
-  Double_t sys = std::sqrt(sA.method * sA.method + sA.lineshape * sA.lineshape);
+                           rows, 0, kept, rs.mean, rs.valid);
+  Scheme sB = ReportScheme("Scheme B: in-situ + rate-sub, both weighted", rows,
+                           1, kept, rs.mean, rs.valid);
   Double_t total = sA.valid ? sA.total : 0.0;
   Double_t combined_mean = sA.valid ? sA.central : 0.0;
 
@@ -532,7 +430,7 @@ void CombineGeResult() {
   std::cout << "  QUOTED = Method 1 (in-situ); Method 2 enters ONLY as the"
             << " method systematic" << std::endl;
   std::cout << "  E = " << combined_mean << " +/- " << sA.base
-            << " (stat+cal) +/- " << sys << " (sys) keV" << std::endl;
+            << " (stat+cal) +/- " << sA.method << " (sys) keV" << std::endl;
   std::cout << "  E = " << combined_mean << " +/- " << total
             << " keV  (combined)" << std::endl;
   if (sB.valid)
@@ -554,24 +452,24 @@ void CombineGeResult() {
             << std::setw(10) << "Eg[keV]" << std::setw(8) << "Fit"
             << std::setw(8) << "Offset" << std::setw(8) << "Mult."
             << std::setw(8) << "Total" << std::endl;
-  for (size_t i = 0; i < shared.size(); i++) {
-    if (shared[i].method != "insitu" && shared[i].method != "ratesub")
+  for (size_t i = 0; i < rows.size(); i++) {
+    if (rows[i].method != "insitu" && rows[i].method != "ratesub")
       continue;
-    Double_t fit_ev = shared[i].fit_err * 1000.0;
-    Double_t cal_ev = shared[i].cal_err * 1000.0;
-    Double_t off_ev = std::min(shared[i].cal_off * 1000.0, cal_ev);
+    Double_t fit_ev = rows[i].fit_err * 1000.0;
+    Double_t cal_ev = rows[i].cal_err * 1000.0;
+    Double_t off_ev = std::min(rows[i].cal_off * 1000.0, cal_ev);
     Double_t mult_ev =
         std::sqrt(std::max(0.0, cal_ev * cal_ev - off_ev * off_ev));
     Double_t tot_ev = std::sqrt(fit_ev * fit_ev + cal_ev * cal_ev);
-    std::cout << std::left << std::setw(46) << shared[i].label << std::right
+    std::cout << std::left << std::setw(46) << rows[i].label << std::right
               << std::fixed << std::setprecision(5) << std::setw(10)
-              << shared[i].mu << std::setprecision(2) << std::setw(8) << fit_ev
+              << rows[i].mu << std::setprecision(2) << std::setw(8) << fit_ev
               << std::setw(8) << off_ev << std::setw(8) << mult_ev
               << std::setprecision(1) << std::setw(8) << tot_ev << std::endl;
   }
-  Double_t stat_ev = in_only.valid ? in_only.p.stat_part * 1000.0 : 0;
-  Double_t off_ev = in_only.valid ? in_only.p.off_part * 1000.0 : 0;
-  Double_t mult_ev = in_only.valid ? in_only.p.mult_part * 1000.0 : 0;
+  Double_t stat_ev = in_only.valid ? in_only.stat_part * 1000.0 : 0;
+  Double_t off_ev = in_only.valid ? in_only.off_part * 1000.0 : 0;
+  Double_t mult_ev = in_only.valid ? in_only.mult_part * 1000.0 : 0;
   std::cout << std::left << std::setw(46) << "COMBINED (01/13 in-situ, BLUE)"
             << std::right << std::fixed << std::setprecision(5) << std::setw(10)
             << combined_mean << std::setprecision(2) << std::setw(8) << stat_ev

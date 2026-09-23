@@ -13,7 +13,6 @@
 #include <TH1F.h>
 #include <TMatrixD.h>
 #include <TParameter.h>
-#include <TROOT.h>
 #include <TSystem.h>
 #include <TTree.h>
 #include <algorithm>
@@ -23,7 +22,6 @@
 
 // calibration
 const Float_t E_AM241 = 59.5409;
-const Float_t E_BA133_53 = 53.16;
 const Float_t E_BA133_79 = 79.6142;
 const Float_t E_BA133_81 = 80.9979;
 const Float_t E_PB_KA2 = 72.8042;
@@ -49,53 +47,17 @@ const Float_t dE_LINE = 0.010;
 
 const Float_t CAL_RANGE_LOW = 61.5;
 const Float_t CAL_RANGE_HIGH = 80.5;
-
-const Bool_t TAIL_SHARED = kTRUE;
+const Float_t RATESUB_LO = 62.0;
+const Float_t RATESUB_HI = 71.5;
 
 const Int_t REF_CAL_DEGREE = 2;
 const Bool_t LINK_PB_KA_SIGMA = kTRUE;
 
-// Constrain the pre-cal Pb-Ka spacing to tabulated * local gain (the doublet
-// sum fixes the gain, the difference is constrained, so it does not feed on
-// itself). OFF: the 14-23 eV excess is 1.2-1.9 sigma against this
-// measurement's own ~12 eV separation uncertainty -- ordinary scatter.
-const Bool_t CONSTRAIN_PRECAL_SEPARATION = kFALSE;
-const Bool_t CONSTRAIN_PB_KA_SEPARATION = kFALSE;
-
-const Double_t dE_PB_KA_SEP = 0.0015;
-const Bool_t LOCK_POSTCAL_PB = kFALSE;
-
-// High-side exponential tail. OFF: it never takes an interior value across
-// the hand-fitted runs, either switching off or railing at both bounds at
-// once. A 100 keV decay across a 19 keV window is a flat pedestal, degenerate
-// with BkgConstant.
-const Bool_t USE_HIGH_EXP_TAIL = kFALSE;
-
 const Bool_t USE_FLAT_BKG = kTRUE;
-
-// Step (charge-collection shelf) on the calibration-peak fits. OFF: tested
-// on Am-241, the step floats to 73 while the tail decay is unchanged to four
-// digits, so the tails are not standing in for a missing shelf.
-const Bool_t USE_STEP_CAL_PEAKS = kFALSE;
 const Double_t TAIL_RATIO_MAX = 8.0;
 
-// Rate-subtraction tail, held fixed. Nominal is no tail; set FRAC to the
-// in-situ lineshape's tail fraction to measure the systematic.
-const Double_t RATESUB_TAIL_FRAC = 0.0;
-const Double_t RATESUB_TAIL_TAU = 1.0;
-
-// Rate-subtract the 13th's pairs too, for one method across all six
-// datasets. OFF: those rows land 110-150 eV below their own in-situ values
-// for reasons not understood, blowing the method systematic to 80 eV.
-const Bool_t RATESUB_ALL_DAYS = kFALSE;
-const Bool_t RATESUB_TAIL_SCAN = kFALSE;
-
 const TString RESULT_TAG = "amxfer";
-
-const TString RESULT_VARIANT = USE_HIGH_EXP_TAIL ? "_hitail" : "_nohitail";
 const TString OUT_SUBDIR = "calibrated_low_" + RESULT_TAG;
-
-TString G_CSV_PREFIX = "";
 
 struct CalibrationData {
   std::vector<Float_t> mu, mu_errors, calibration_values_keV, reduced_chi2;
@@ -164,9 +126,6 @@ struct LineCalConfig {
   TString postcal_bkg;
   TString postcal_sig;
   TString ge_label;
-  Float_t rs_lo = 62.0;
-  Float_t rs_hi = 71.5;
-  Bool_t rs_linear_bkg = kTRUE;
 };
 
 std::vector<Double_t> LoadFiltered(const TString &input_name) {
@@ -210,53 +169,49 @@ std::vector<Double_t> LoadCalibrated(const TString &input_name) {
 FitResult FitCalPeak(const std::vector<Double_t> &events,
                      const TString &input_name, const TString &peak_name,
                      Float_t fit_low, Float_t fit_high, Bool_t double_peak,
-                     Double_t mu1, Double_t mu2, Bool_t interactive,
-                     Bool_t link_sigma = kFALSE, Bool_t use_step = kFALSE) {
+                     Double_t mu1, Double_t mu2, Bool_t link_sigma = kFALSE) {
   if (events.empty())
     return {};
   RooFitUtils fitter(events, fit_low, fit_high, Constants::BIN_WIDTH_KEV, kTRUE,
-                     use_step, kTRUE, kTRUE, kTRUE);
+                     kFALSE, kTRUE, kTRUE, kTRUE);
   fitter.SetTailRatioMax(TAIL_RATIO_MAX);
-  if (interactive)
-    fitter.SetInteractive();
+  fitter.SetInteractive();
   if (double_peak)
     return fitter.FitDoublePeak(input_name, peak_name, mu1, mu2, link_sigma);
   return fitter.FitSinglePeak(input_name, peak_name);
 }
 
-BkgGeSimResult
-RunBkgGeSim(const std::vector<Double_t> &bkg_events,
-            const std::vector<Double_t> &sig_events,
-            const std::vector<Double_t> &bkg_peak_mus, const TString &bkg_label,
-            const TString &sig_label, const TString &fit_label,
-            Bool_t interactive, Bool_t lock_bkg_peaks = kFALSE,
-            const FitResult *precomputed_bkg_seed = nullptr,
-            const FitResult *precomputed_sig_seed = nullptr,
-            Bool_t share_tail = kTRUE, Float_t fit_lo = CAL_RANGE_LOW,
-            Float_t fit_hi = CAL_RANGE_HIGH, Bool_t force_sim_fit = kFALSE,
-            Double_t constrain_sep_delta = -1.0,
-            Double_t constrain_sep_sigma = -1.0) {
+BkgGeSimResult RunBkgGeSim(const std::vector<Double_t> &bkg_events,
+                           const std::vector<Double_t> &sig_events,
+                           const std::vector<Double_t> &bkg_peak_mus,
+                           const TString &bkg_label, const TString &sig_label,
+                           const TString &fit_label,
+                           const FitResult *precomputed_bkg_seed = nullptr,
+                           const FitResult *precomputed_sig_seed = nullptr) {
   BkgGeSimResult out;
   out.valid = kFALSE;
   Int_t n_bkg = (Int_t)bkg_peak_mus.size();
   if (n_bkg < 1 || n_bkg > 2 || bkg_events.empty() || sig_events.empty())
     return out;
 
+  // No high-side exponential tail: it never takes an interior value across
+  // the hand-fitted runs, either switching off or railing at both bounds at
+  // once.
   const Bool_t kFlatBkg = USE_FLAT_BKG;
   const Bool_t kStep = kFALSE;
   const Bool_t kLowExp = kTRUE;
   const Bool_t kLowLin = kTRUE;
-  const Bool_t kHighExp = USE_HIGH_EXP_TAIL;
+  const Bool_t kHighExp = kFALSE;
 
   FitResult seed;
   if (precomputed_bkg_seed) {
     seed = *precomputed_bkg_seed;
   } else {
-    RooFitUtils bkg_fitter(bkg_events, fit_lo, fit_hi, Constants::BIN_WIDTH_KEV,
-                           kFlatBkg, kStep, kLowExp, kLowLin, kHighExp);
+    RooFitUtils bkg_fitter(bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
+                           Constants::BIN_WIDTH_KEV, kFlatBkg, kStep, kLowExp,
+                           kLowLin, kHighExp);
     bkg_fitter.SetTailRatioMax(TAIL_RATIO_MAX);
-    if (interactive)
-      bkg_fitter.SetInteractive();
+    bkg_fitter.SetInteractive();
     TString seed_label = fit_label + "_BkgSeed";
     if (n_bkg == 1)
       seed = bkg_fitter.FitSinglePeak(bkg_label, seed_label);
@@ -270,30 +225,30 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
     }
   }
 
+  // The saved .simroofits carries the hand-tuned starting point a cold start
+  // cannot reach; SetRefitAfterLoad makes it SEED a real fit rather than be
+  // returned as the result, which once produced post-cal rows holding day-one
+  // constants at chi2 7-9.
   RooFitUtils sim;
   sim.SetTailRatioMax(TAIL_RATIO_MAX);
-  if (interactive) {
-    sim.SetInteractive();
-    if (force_sim_fit)
-      sim.SetRefitAfterLoad();
-  }
+  sim.SetInteractive();
+  sim.SetRefitAfterLoad();
 
   std::vector<Double_t> sig_mus = bkg_peak_mus;
   sig_mus.push_back((Double_t)E_GE_73M);
-  std::vector<Bool_t> bkg_fixed(n_bkg, lock_bkg_peaks);
+  std::vector<Bool_t> bkg_fixed(n_bkg, kFALSE);
   std::vector<Bool_t> sig_fixed(n_bkg + 1, kFALSE);
-  for (Int_t i = 0; i < n_bkg; i++)
-    sig_fixed[i] = lock_bkg_peaks;
 
   std::vector<Bool_t> sig_step(n_bkg + 1, kTRUE);
   sig_step[n_bkg] = kFALSE;
 
-  sim.AddChannel("bkg", bkg_events, fit_lo, fit_hi, Constants::BIN_WIDTH_KEV,
-                 n_bkg, bkg_peak_mus, kFlatBkg, kStep, kLowExp, kLowLin,
-                 kHighExp, bkg_fixed, kFALSE, kTRUE, kFALSE);
-  sim.AddChannel("sig", sig_events, fit_lo, fit_hi, Constants::BIN_WIDTH_KEV,
-                 n_bkg + 1, sig_mus, kFlatBkg, kStep, kLowExp, kLowLin,
-                 kHighExp, sig_fixed, kFALSE, kTRUE, kFALSE, sig_step);
+  sim.AddChannel("bkg", bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
+                 Constants::BIN_WIDTH_KEV, n_bkg, bkg_peak_mus, kFlatBkg, kStep,
+                 kLowExp, kLowLin, kHighExp, bkg_fixed, kFALSE, kTRUE, kFALSE);
+  sim.AddChannel("sig", sig_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
+                 Constants::BIN_WIDTH_KEV, n_bkg + 1, sig_mus, kFlatBkg, kStep,
+                 kLowExp, kLowLin, kHighExp, sig_fixed, kFALSE, kTRUE, kFALSE,
+                 sig_step);
   // Share ONE low-side tail (LowExp + LowLin) across both Pb-Ka lines and the
   // Ge peak, tied to bkg:Ka1. Fit independently, Ka1 inflates its own tail to
   // absorb the inter-peak fill so neither Ka tail is trustworthy, and the Ge
@@ -307,28 +262,16 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
                        "LowLinTailAmplitude", "LowLinTailSlope"};
   const Int_t n_tp = kLowLin ? 4 : 2;
   TString ge_idx = TString::Format("%d", n_bkg + 1);
-  if (share_tail) {
-    for (Int_t t = 0; t < n_tp; t++) {
-      if (n_bkg == 2)
-        sim.LinkParameter(TString("bkg:") + tp[t] + "2",
-                          TString("bkg:") + tp[t] + "1");
-      for (Int_t i = 1; i < n_bkg; i++)
-        sim.LinkParameter(TString("sig:") + tp[t] +
-                              TString::Format("%d", i + 1),
-                          TString("bkg:") + tp[t] + "1");
-      sim.LinkParameter(TString("sig:") + tp[t] + ge_idx,
+  for (Int_t t = 0; t < n_tp; t++) {
+    if (n_bkg == 2)
+      sim.LinkParameter(TString("bkg:") + tp[t] + "2",
                         TString("bkg:") + tp[t] + "1");
-    }
-  } else {
-    for (Int_t t = 0; t < n_tp; t++)
-      sim.LinkParameter(TString("sig:") + tp[t] + ge_idx,
+    for (Int_t i = 1; i < n_bkg; i++)
+      sim.LinkParameter(TString("sig:") + tp[t] + TString::Format("%d", i + 1),
                         TString("bkg:") + tp[t] + "1");
+    sim.LinkParameter(TString("sig:") + tp[t] + ge_idx,
+                      TString("bkg:") + tp[t] + "1");
   }
-
-  if (constrain_sep_delta > 0 && n_bkg == 2)
-    sim.ConstrainPeakSeparation("bkg", 1, 0, constrain_sep_delta,
-                                constrain_sep_sigma > 0 ? constrain_sep_sigma
-                                                        : dE_PB_KA_SEP);
 
   if (LINK_PB_KA_SIGMA && n_bkg == 2)
     sim.LinkParameter("bkg:Sigma2", "bkg:Sigma1");
@@ -346,11 +289,6 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
   out.bkg_channel = results[0];
   out.sig_channel = results[1];
   out.valid = results[1].valid;
-
-  if (!G_CSV_PREFIX.IsNull()) {
-    sim.DumpChannelCSV("bkg", G_CSV_PREFIX + "_bkg");
-    sim.DumpChannelCSV("sig", G_CSV_PREFIX + "_sig");
-  }
   return out;
 }
 
@@ -365,10 +303,6 @@ void AddCalPoint(CalibrationData &cal_data, const TString &name, Float_t mu,
   cal_data.energy_errors.push_back(energy_err);
 }
 
-// Cramer-Rao floor on a fitted centroid, sigma/sqrt(N). A fit reporting less
-// has a broken covariance, not a better measurement: Pb-Kb1 and Am-241 were
-// reaching the weighted cal fit with ~0 error and outvoting every other
-// anchor. A floor only -- a peak that trips it still wants re-tuning.
 Float_t GuardedMuError(const TString &name, const PeakFitResult &pk,
                        const FitResult &fr) {
   if (!(pk.sigma > 0) || !(pk.gaus_amplitude > 0))
@@ -430,11 +364,8 @@ Double_t CalOffsetError(const CalFit &c) {
 // minimizer and strategy; this gives 5.5 eV independent of both.
 void FillCalCovariance(CalFit &c, const std::vector<Float_t> &x,
                        const std::vector<Float_t> &ex,
-                       const std::vector<Float_t> &ey, Bool_t fix_p0) {
-  std::vector<Int_t> free_par;
-  for (Int_t k = (fix_p0 ? 1 : 0); k < c.npar; k++)
-    free_par.push_back(k);
-  Int_t nf = (Int_t)free_par.size();
+                       const std::vector<Float_t> &ey) {
+  Int_t nf = c.npar;
   TMatrixD H(nf, nf);
   for (size_t i = 0; i < x.size(); i++) {
     Double_t xi = x[i];
@@ -442,28 +373,23 @@ void FillCalCovariance(CalFit &c, const std::vector<Float_t> &x,
     Double_t s2 = (Double_t)ey[i] * ey[i] + fp * fp * (Double_t)ex[i] * ex[i];
     for (Int_t a = 0; a < nf; a++)
       for (Int_t b = 0; b < nf; b++)
-        H(a, b) += std::pow(xi, free_par[a]) * std::pow(xi, free_par[b]) / s2;
+        H(a, b) += std::pow(xi, a) * std::pow(xi, b) / s2;
   }
   H.Invert();
-  Double_t cov[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
-  for (Int_t a = 0; a < nf; a++)
-    for (Int_t b = 0; b < nf; b++)
-      cov[free_par[a]][free_par[b]] = H(a, b);
-  c.var_p0 = cov[0][0];
-  c.var_p1 = cov[1][1];
-  c.cov_p0p1 = cov[0][1];
-  if (c.npar >= 3) {
-    c.var_p2 = cov[2][2];
-    c.cov_p0p2 = cov[0][2];
-    c.cov_p1p2 = cov[1][2];
+  c.var_p0 = H(0, 0);
+  c.var_p1 = H(1, 1);
+  c.cov_p0p1 = H(0, 1);
+  if (nf >= 3) {
+    c.var_p2 = H(2, 2);
+    c.cov_p0p2 = H(0, 2);
+    c.cov_p1p2 = H(1, 2);
   }
-  for (Int_t k = 0; k < c.npar; k++)
-    c.func->SetParError(k, std::sqrt(std::max(0.0, cov[k][k])));
+  for (Int_t k = 0; k < nf; k++)
+    c.func->SetParError(k, std::sqrt(std::max(0.0, H(k, k))));
 }
 
 CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
-                            const TString &date_label, Bool_t fix_p0 = kFALSE,
-                            Float_t p0_value = 0, Int_t degree = 1) {
+                            const TString &date_label, Int_t degree = 1) {
   Int_t n = (Int_t)cal_data.mu.size();
   std::vector<Float_t> ex(cal_data.mu_errors);
   std::vector<Float_t> ey(n);
@@ -505,8 +431,6 @@ CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
   cal->SetParameter(1, 1);
   if (degree >= 2)
     cal->SetParameter(2, 0);
-  if (fix_p0)
-    cal->FixParameter(0, p0_value);
   cal->SetNpx(1000);
   TFitResultPtr fr = graph->Fit(cal, "E S Q");
   cal->Draw("SAME");
@@ -516,7 +440,7 @@ CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
   out.npar = cal->GetNpar();
   out.p0 = cal->GetParameter(0);
   out.p1 = cal->GetParameter(1);
-  FillCalCovariance(out, cal_data.mu, ex, ey, fix_p0);
+  FillCalCovariance(out, cal_data.mu, ex, ey);
   if (fr.Get() && fr->Ndf() > 0)
     std::cout << "CAL-FIT " << date_label << " (pol" << (out.npar - 1) << ", "
               << n << " anchors): chi2/ndf = " << std::fixed
@@ -767,13 +691,11 @@ struct RateSubResult {
   Bool_t valid = kFALSE;
 };
 
-RateSubResult
-FitRateSubtractedGe(const TString &sig_run, const TString &bkg_run, TF1 *cal,
-                    const TString &tag, Bool_t interactive, Float_t lo = 62.0,
-                    Float_t hi = 71.5, Bool_t linear_bkg = kFALSE,
-                    Bool_t free_tail = kFALSE, Double_t tail_frac = -1.0,
-                    Double_t tail_tau = -1.0, Double_t bkg_scale = 1.0) {
+RateSubResult FitRateSubtractedGe(const TString &sig_run,
+                                  const TString &bkg_run, TF1 *cal,
+                                  const TString &tag) {
   RateSubResult out;
+  const Float_t lo = RATESUB_LO, hi = RATESUB_HI;
 
   TH1F *sig = BuildRateHist(sig_run, cal, "rate_sig_" + tag, lo, hi);
   TH1F *bkg = BuildRateHist(bkg_run, cal, "rate_bkg_" + tag, lo, hi);
@@ -784,7 +706,7 @@ FitRateSubtractedGe(const TString &sig_run, const TString &bkg_run, TF1 *cal,
   }
   TH1F *res = static_cast<TH1F *>(sig->Clone("rate_residual_" + tag));
   res->SetDirectory(nullptr);
-  res->Add(bkg, -bkg_scale);
+  res->Add(bkg, -1.0);
 
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDrawHistogram(res, kBlack);
@@ -802,40 +724,16 @@ FitRateSubtractedGe(const TString &sig_run, const TString &bkg_run, TF1 *cal,
   Int_t pk_bin = res->GetMaximumBin();
   Double_t pk_val = res->GetBinContent(pk_bin) - bkg0;
   Double_t sigma0 = 0.85;
-  // Gaussian core PLUS a low-side exponential tail, as an exponentially
-  // modified Gaussian (the exponential convolved with the resolution, which is
-  // what the tail physically is).
-  //
-  // The tail is NOT optional. A bare Gaussian biases the centroid LOW on a
-  // tailed peak, and the in-situ model this is compared against carries tails.
-  // Fitting a bare Gaussian here is very likely why the rate-sub sat ~46 eV
-  // below the in-situ once the in-situ shape was freed. Both methods must
-  // describe the same lineshape or the method systematic is a comparison of
-  // two different biases.
-  //
+  // Gaussian core on a linear background. The subtraction leaves a peak on a
+  // near-flat residual, so no tail is fitted here.
   //   [0] area   [1] mu   [2] sigma   [3] bkg0   [4] bkg slope
-  //   [5] tail fraction   [6] tail decay length tau [keV]
-  const char *kEmgLowTail =
-      "(1-[5])*[0]*TMath::Gaus(x,[1],[2],1)"
-      " + [5]*[0]/(2*[6])*TMath::Exp((x-[1])/[6] + [2]*[2]/(2*[6]*[6]))"
-      "   *TMath::Erfc((x-[1])/(TMath::Sqrt2()*[2]) + [2]/(TMath::Sqrt2()*[6]))"
-      " + [3] + [4]*(x-68.75)";
-  TF1 *model = new TF1("ratesub_model_" + tag, kEmgLowTail, lo, hi);
-  model->SetParNames("Area", "Mu", "Sigma", "Bkg0", "BkgSlope", "TailFrac",
-                     "TailTau");
-  model->SetParameters(pk_val * sigma0 * 2.5066, E_GE_73M, sigma0, bkg0, 0.0,
-                       0.20, 1.0);
+  const char *kGausLinBkg =
+      "[0]*TMath::Gaus(x,[1],[2],1) + [3] + [4]*(x-68.75)";
+  TF1 *model = new TF1("ratesub_model_" + tag, kGausLinBkg, lo, hi);
+  model->SetParNames("Area", "Mu", "Sigma", "Bkg0", "BkgSlope");
+  model->SetParameters(pk_val * sigma0 * 2.5066, E_GE_73M, sigma0, bkg0, 0.0);
   model->SetParLimits(1, lo + 1.0, hi - 1.0);
   model->SetParLimits(2, 0.2, 3.0);
-  if (free_tail) {
-    model->SetParLimits(5, 0.0, 0.6);
-    model->SetParLimits(6, 0.2, 5.0);
-  } else {
-    model->FixParameter(5, tail_frac >= 0 ? tail_frac : RATESUB_TAIL_FRAC);
-    model->FixParameter(6, tail_tau > 0 ? tail_tau : RATESUB_TAIL_TAU);
-  }
-  if (!linear_bkg)
-    model->FixParameter(4, 0.0);
   TFitResultPtr fr = res->Fit(model, "S Q R");
   Bool_t ok = fr.Get() && fr->IsValid() && model->GetNDF() > 0;
   if (ok) {
@@ -846,11 +744,8 @@ FitRateSubtractedGe(const TString &sig_run, const TString &bkg_run, TF1 *cal,
     std::cout << "RATESUB-FIT " << tag << ": mu = " << std::fixed
               << std::setprecision(4) << out.mu << " +/- " << out.mu_err
               << " keV   sigma = " << model->GetParameter(2)
-              << "   tailFrac = " << model->GetParameter(5)
-              << "   tailTau = " << model->GetParameter(6)
               << "   bkg0 = " << model->GetParameter(3)
               << "   slope = " << model->GetParameter(4)
-              << "   k = " << bkg_scale
               << "   chi2/ndf = " << std::setprecision(2) << out.chi2
               << std::endl;
   } else {
@@ -891,12 +786,13 @@ FitRateSubtractedGe(const TString &sig_run, const TString &bkg_run, TF1 *cal,
   return out;
 }
 
-PairCalResult ProcessPbAnchoredPair(
-    const TString &bkg_run, const TString &sig_run, const TString &date_label,
-    const TString &pair_tag, Bool_t interactive, const TString &am_run,
-    Bool_t is_reference, Float_t ref_p0, const CalFit *ref_cal = nullptr,
-    const std::vector<Float_t> *ref_pb_mus = nullptr,
-    const std::vector<Float_t> *ref_pb_errs = nullptr) {
+PairCalResult
+ProcessPbAnchoredPair(const TString &bkg_run, const TString &sig_run,
+                      const TString &date_label, const TString &pair_tag,
+                      const TString &am_run, Bool_t is_reference,
+                      const CalFit *ref_cal = nullptr,
+                      const std::vector<Float_t> *ref_pb_mus = nullptr,
+                      const std::vector<Float_t> *ref_pb_errs = nullptr) {
   PairCalResult out;
   out.pair_tag = pair_tag;
 
@@ -909,13 +805,11 @@ PairCalResult ProcessPbAnchoredPair(
   Bool_t have_am = kFALSE;
   if (is_reference && !am_run.IsNull()) {
     std::vector<Double_t> am_events = LoadFiltered(am_run);
-    am = FitCalPeak(am_events, am_run, "Am_59.5keV", 51, 71, kFALSE, 0, 0,
-                    interactive, kFALSE, USE_STEP_CAL_PEAKS);
+    am = FitCalPeak(am_events, am_run, "Am_59.5keV", 51, 71, kFALSE, 0, 0);
     if (am.valid && !am.peaks.empty()) {
       const PeakFitResult &p = am.peaks.at(0);
-      std::cout << "AM-SHAPE step=" << (USE_STEP_CAL_PEAKS ? "on " : "off")
-                << "  chi2/ndf " << am.reduced_chi2 << "  sigma " << p.sigma
-                << "  step " << p.step_amplitude << "  lowExpAmp "
+      std::cout << "AM-SHAPE chi2/ndf " << am.reduced_chi2 << "  sigma "
+                << p.sigma << "  step " << p.step_amplitude << "  lowExpAmp "
                 << p.low_exp_tail_amplitude << "  lowExpTau "
                 << p.low_exp_tail_ratio << "  lowLinAmp "
                 << p.low_lin_tail_amplitude << "  lowLinSlope "
@@ -927,10 +821,8 @@ PairCalResult ProcessPbAnchoredPair(
                 << "; reference line will use Pb peaks only" << std::endl;
   }
 
-  BkgGeSimResult pre =
-      RunBkgGeSim(bkg_events, sig_events, pb_mus, bkg_run, sig_run,
-                  "PreCal_" + pair_tag, interactive, kFALSE, nullptr, nullptr,
-                  TAIL_SHARED, CAL_RANGE_LOW, CAL_RANGE_HIGH, kTRUE);
+  BkgGeSimResult pre = RunBkgGeSim(bkg_events, sig_events, pb_mus, bkg_run,
+                                   sig_run, "PreCal_" + pair_tag);
   if (!pre.valid)
     return out;
 
@@ -939,25 +831,11 @@ PairCalResult ProcessPbAnchoredPair(
     Double_t mu_hi = pre.bkg_channel.peaks.at(1).mu;
     Double_t g = (mu_lo + mu_hi) / (Double_t)(E_PB_KA2 + E_PB_KA1);
     Double_t delta_raw = (Double_t)(E_PB_KA1 - E_PB_KA2) * g;
-    Double_t sig_raw = TMath::Sqrt(dE_PB_KA_SEP * dE_PB_KA_SEP +
-                                   (delta_raw * 5e-4) * (delta_raw * 5e-4));
     std::cout << "PRECAL-SEP " << pair_tag << ": fitted " << std::fixed
               << std::setprecision(5) << (mu_hi - mu_lo) << "  expected "
-              << delta_raw << " +/- " << sig_raw << "  (excess "
-              << std::setprecision(1) << ((mu_hi - mu_lo) - delta_raw) * 1000
-              << " eV)" << std::setprecision(4) << std::endl;
-    if (CONSTRAIN_PRECAL_SEPARATION) {
-      BkgGeSimResult pre2 =
-          RunBkgGeSim(bkg_events, sig_events, pb_mus, bkg_run, sig_run,
-                      "PreCal_" + pair_tag, interactive, kFALSE, nullptr,
-                      nullptr, TAIL_SHARED, CAL_RANGE_LOW, CAL_RANGE_HIGH,
-                      kTRUE, delta_raw, sig_raw);
-      if (pre2.valid)
-        pre = pre2;
-      else
-        std::cerr << "WARNING: constrained pre-cal fit failed for " << pair_tag
-                  << "; keeping the unconstrained result." << std::endl;
-    }
+              << delta_raw << "  (excess " << std::setprecision(1)
+              << ((mu_hi - mu_lo) - delta_raw) * 1000 << " eV)"
+              << std::setprecision(4) << std::endl;
   }
 
   for (size_t i = 0; i < pre.bkg_channel.peaks.size(); i++) {
@@ -976,7 +854,7 @@ PairCalResult ProcessPbAnchoredPair(
   // resolution, so tie their widths. Stops the weaker Kb2 from floating its
   // sigma and trading against the continuum, which would skew the Kb1 anchor.
   FitResult kb = FitCalPeak(bkg_events, bkg_run, "Pb_Kbeta", 81, 91, kTRUE,
-                            E_PB_KB1, E_PB_KB2, interactive, kTRUE);
+                            E_PB_KB1, E_PB_KB2, kTRUE);
 
   if (kb.valid && !kb.peaks.empty()) {
     out.pb_mus_precal.push_back(kb.peaks.at(0).mu);
@@ -1050,16 +928,16 @@ PairCalResult ProcessPbAnchoredPair(
                   GuardedMuError(pair_tag + " Pb-Kb1", kb.peaks.at(0), kb),
                   E_PB_KB1, kb.reduced_chi2, dE_PB_KB1);
     PrintCalSummary(cal_am, cal_label);
-    calfit = CreateAndSavePol1Cal(cal_am, cal_label, kFALSE, 0, REF_CAL_DEGREE);
+    calfit = CreateAndSavePol1Cal(cal_am, cal_label, REF_CAL_DEGREE);
   } else {
     PrintCalSummary(cal_data, cal_label);
-    calfit = CreateAndSavePol1Cal(cal_data, cal_label, kFALSE, 0);
+    calfit = CreateAndSavePol1Cal(cal_data, cal_label);
   }
   TF1 *cal = calfit.func;
 
   CalFit pb_probe = calfit;
   if (have_am)
-    pb_probe = CreateAndSavePol1Cal(cal_data, cal_label + "_PbOnly", kFALSE, 0);
+    pb_probe = CreateAndSavePol1Cal(cal_data, cal_label + "_PbOnly");
 
   if (have_am) {
     out.ref_calfit = calfit;
@@ -1117,8 +995,7 @@ PairCalResult ProcessPbAnchoredPair(
                 GuardedMuError(pair_tag + " Pb-Ka1",
                                pre.bkg_channel.peaks.at(1), pre.bkg_channel),
                 E_PB_KA1, -1, dE_PB_KA);
-    CalFit cal_check =
-        CreateAndSavePol1Cal(cal_am, cal_label + "_AmCheck", kFALSE, 0);
+    CalFit cal_check = CreateAndSavePol1Cal(cal_am, cal_label + "_AmCheck");
     Double_t ge_pre = pre.sig_channel.peaks.back().mu;
     Double_t e_nominal = cal->Eval(ge_pre);
     Double_t e_pbonly = pb_probe.func->Eval(ge_pre);
@@ -1220,22 +1097,14 @@ PairCalResult ProcessPbAnchoredPair(
               << ge_pre.high_exp_tail_ratio * s << std::endl;
   }
 
-  // Pb peaks left FREE post-cal (lock_bkg_peaks = kFALSE): where the calibrated
-  // Pb doublet actually lands is a blind check at the energy of interest. The
-  // whole chain (precal -> cal -> postcal) uses ONE tail model (TAIL_SHARED),
-  // so this run is internally consistent; the alternative tail model is a
-  // separate macro and the lineshape systematic is taken in the combiner.
-  // force_sim_fit = kTRUE, same as the pre-cal. The saved .simroofits carries
-  // the hand-tuned starting point a cold start cannot reach; SetRefitAfterLoad
-  // makes it SEED a real fit rather than be returned as the result, which once
-  // produced post-cal rows holding day-one constants at chi2 7-9.
-  out.postcal = RunBkgGeSim(
-      bc, sc, pb_mus, bkg_run + "_postcal_" + pair_tag,
-      sig_run + "_postcal_" + pair_tag, "PostCal_" + pair_tag, kTRUE,
-      LOCK_POSTCAL_PB, &bkg_seed_post, &sig_seed_post, TAIL_SHARED,
-      CAL_RANGE_LOW, CAL_RANGE_HIGH, kTRUE,
-      CONSTRAIN_PB_KA_SEPARATION ? (Double_t)(E_PB_KA1 - E_PB_KA2) : -1.0,
-      dE_PB_KA_SEP);
+  // Pb peaks left free post-cal: where the calibrated Pb doublet actually
+  // lands is a blind check at the energy of interest. The whole chain (precal
+  // -> cal -> postcal) uses one shared tail model, so this run is internally
+  // consistent.
+  out.postcal =
+      RunBkgGeSim(bc, sc, pb_mus, bkg_run + "_postcal_" + pair_tag,
+                  sig_run + "_postcal_" + pair_tag, "PostCal_" + pair_tag,
+                  &bkg_seed_post, &sig_seed_post);
 
   if (out.postcal.valid) {
     std::cout << "Post-cal FREE Pb mu for " << cal_label << ":" << std::endl;
@@ -1291,31 +1160,19 @@ void PrintPrecalPbComparison(const TString &date_label,
   }
 }
 
-DayResult ProcessLineCalDay(const LineCalConfig &cfg, Bool_t interactive) {
+DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
   CalibrationData cal_data;
 
   std::vector<Double_t> am_events = LoadFiltered(cfg.am_run);
   FitResult am = FitCalPeak(am_events, cfg.am_run, "Am_59.5keV", cfg.am_lo,
-                            cfg.am_hi, kFALSE, 0, 0, interactive);
+                            cfg.am_hi, kFALSE, 0, 0);
   if (am.valid)
     AddCalPoint(cal_data, "Am-241 59.5", am.peaks.at(0).mu,
                 am.peaks.at(0).mu_error, E_AM241, am.reduced_chi2, dE_AM241);
 
-  const Bool_t USE_BA133_53 = kFALSE;
-
   std::vector<Double_t> ba_events = LoadFiltered(cfg.ba_run);
-  if (USE_BA133_53) {
-    FitResult ba53 = FitCalPeak(ba_events, cfg.ba_run, "Ba_53.16keV", 48, 58,
-                                kFALSE, 0, 0, interactive);
-    if (ba53.valid)
-      AddCalPoint(cal_data, "Ba-133 53.16", ba53.peaks.at(0).mu,
-                  ba53.peaks.at(0).mu_error, E_BA133_53, ba53.reduced_chi2,
-                  dE_LINE);
-  }
-
-  FitResult ba81 =
-      FitCalPeak(ba_events, cfg.ba_run, "Ba_80.98keV", 75, 90, kTRUE,
-                 E_BA133_79, E_BA133_81, interactive, kTRUE);
+  FitResult ba81 = FitCalPeak(ba_events, cfg.ba_run, "Ba_80.98keV", 75, 90,
+                              kTRUE, E_BA133_79, E_BA133_81, kTRUE);
   if (ba81.valid)
     AddCalPoint(cal_data, "Ba-133 80.98", ba81.peaks.at(1).mu,
                 ba81.peaks.at(1).mu_error, E_BA133_81, ba81.reduced_chi2,
@@ -1334,9 +1191,8 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg, Bool_t interactive) {
   result.cal_labels.push_back(cfg.date_label);
   result.cal_funcs.push_back(cal);
 
-  RateSubResult rs =
-      FitRateSubtractedGe(cfg.postcal_sig, cfg.postcal_bkg, cal, cfg.date_label,
-                          kFALSE, cfg.rs_lo, cfg.rs_hi, cfg.rs_linear_bkg);
+  RateSubResult rs = FitRateSubtractedGe(cfg.postcal_sig, cfg.postcal_bkg, cal,
+                                         cfg.date_label);
   if (rs.valid) {
     result.rs_labels.push_back(cfg.ge_label + " [rate-sub]");
     result.rs_mus.push_back(rs.mu);
@@ -1360,8 +1216,7 @@ struct ShieldPair {
   TString ge_label;
 };
 
-DayResult ProcessDay_20260113(Bool_t interactive, Float_t &ref_p0_out,
-                              PairCalResult &ref_pair_out) {
+DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
   DayResult result;
 
   std::vector<ShieldPair> pairs;
@@ -1400,12 +1255,9 @@ DayResult ProcessDay_20260113(Bool_t interactive, Float_t &ref_p0_out,
 
   std::vector<PairCalResult> results(pairs.size());
 
-  results[ref_idx] = ProcessPbAnchoredPair(
-      pairs[ref_idx].bkg_run, pairs[ref_idx].sig_run, "20260113",
-      pairs[ref_idx].tag, interactive, am_run, kTRUE, 0);
-  ref_p0_out = results[ref_idx].cal_func
-                   ? results[ref_idx].cal_func->GetParameter(0)
-                   : 0;
+  results[ref_idx] =
+      ProcessPbAnchoredPair(pairs[ref_idx].bkg_run, pairs[ref_idx].sig_run,
+                            "20260113", pairs[ref_idx].tag, am_run, kTRUE);
 
   const CalFit *ref_cal =
       results[ref_idx].has_ref_cal ? &results[ref_idx].ref_calfit : nullptr;
@@ -1415,35 +1267,13 @@ DayResult ProcessDay_20260113(Bool_t interactive, Float_t &ref_p0_out,
   for (Int_t i = 0; i < (Int_t)pairs.size(); i++) {
     if (i == ref_idx)
       continue;
-    results[i] = ProcessPbAnchoredPair(
-        pairs[i].bkg_run, pairs[i].sig_run, "20260113", pairs[i].tag,
-        interactive, "", kFALSE, ref_p0_out, ref_cal, ref_mus, ref_errs);
+    results[i] = ProcessPbAnchoredPair(pairs[i].bkg_run, pairs[i].sig_run,
+                                       "20260113", pairs[i].tag, "", kFALSE,
+                                       ref_cal, ref_mus, ref_errs);
   }
 
   for (Int_t i = 0; i < (Int_t)pairs.size(); i++)
     AppendPairToDay(result, results[i], "20260113", pairs[i].ge_label);
-
-  if (RATESUB_ALL_DAYS)
-    for (Int_t i = 0; i < (Int_t)pairs.size(); i++) {
-      if (!results[i].cal_func)
-        continue;
-      RateSubResult rs = FitRateSubtractedGe(
-          pairs[i].sig_run, pairs[i].bkg_run, results[i].cal_func,
-          "20260113_" + pairs[i].tag, kFALSE, 62.0, 71.5, kTRUE);
-      if (!rs.valid)
-        continue;
-      result.rs_labels.push_back(pairs[i].ge_label + " [rate-sub]");
-      result.rs_mus.push_back(rs.mu);
-      result.rs_errs.push_back(rs.mu_err);
-      result.rs_chi2s.push_back(rs.chi2);
-      result.rs_cal_errs.push_back(results[i].ge_cal_err);
-      result.rs_cal_offs.push_back(results[i].ge_cal_off);
-      result.rs_gain_errs.push_back(results[i].ge_gain_err);
-      std::cout << "Rate-sub Ge mu for 20260113_" << pairs[i].tag << ": "
-                << std::fixed << std::setprecision(4) << rs.mu << " +/- "
-                << rs.mu_err << " keV (chi2/ndf = " << std::setprecision(3)
-                << rs.chi2 << ")" << std::endl;
-    }
 
   std::vector<PairCalResult *> ptrs;
   for (Int_t i = 0; i < (Int_t)pairs.size(); i++)
@@ -1453,46 +1283,21 @@ DayResult ProcessDay_20260113(Bool_t interactive, Float_t &ref_p0_out,
   return result;
 }
 
-DayResult ProcessDay_20260114(Bool_t interactive, Float_t ref_p0,
-                              const PairCalResult &ref_pair) {
+DayResult ProcessDay_20260114(const PairCalResult &ref_pair) {
   DayResult result;
   const CalFit *ref_cal = ref_pair.has_ref_cal ? &ref_pair.ref_calfit : nullptr;
   PairCalResult cu = ProcessPbAnchoredPair(
       Constants::CUSHIELDBACKGROUND_10PERCENT_20260114,
       Constants::CUSHIELDSIGNAL_10PERCENT_20260114, "20260114", "CuShield10",
-      interactive, "", kFALSE, ref_p0, ref_cal, &ref_pair.pb_mus_precal,
+      "", kFALSE, ref_cal, &ref_pair.pb_mus_precal,
       &ref_pair.pb_mu_errs_precal);
   AppendPairToDay(result, cu, "20260114", "Cu Shield Signal 10% (01/14)");
 
   if (cu.cal_func) {
-    if (RATESUB_TAIL_SCAN) {
-      const Double_t scan_k[] = {0.94, 0.97, 1.00, 1.03, 1.06};
-      for (size_t k = 0; k < sizeof(scan_k) / sizeof(scan_k[0]); k++)
-        FitRateSubtractedGe(
-            Constants::CUSHIELDSIGNAL_10PERCENT_20260114,
-            Constants::CUSHIELDBACKGROUND_10PERCENT_20260114, cu.cal_func,
-            TString::Format("20260114_k%03d", (Int_t)(scan_k[k] * 100)), kFALSE,
-            62.0, 71.5, kTRUE, kFALSE, 0.0, 1.0, scan_k[k]);
-      const Double_t scan_fr[] = {0.0, 0.05, 0.10, 0.20, 0.30};
-      for (size_t k = 0; k < sizeof(scan_fr) / sizeof(scan_fr[0]); k++)
-        FitRateSubtractedGe(
-            Constants::CUSHIELDSIGNAL_10PERCENT_20260114,
-            Constants::CUSHIELDBACKGROUND_10PERCENT_20260114, cu.cal_func,
-            TString::Format("20260114_fix%03d", (Int_t)(scan_fr[k] * 100)),
-            kFALSE, 62.0, 71.5, kTRUE, kFALSE, scan_fr[k], 1.0);
-      FitRateSubtractedGe(Constants::CUSHIELDSIGNAL_10PERCENT_20260114,
-                          Constants::CUSHIELDBACKGROUND_10PERCENT_20260114,
-                          cu.cal_func, "20260114_freetail_flat", kFALSE, 62.0,
-                          71.5, kFALSE, kTRUE);
-      FitRateSubtractedGe(Constants::CUSHIELDSIGNAL_10PERCENT_20260114,
-                          Constants::CUSHIELDBACKGROUND_10PERCENT_20260114,
-                          cu.cal_func, "20260114_freetail_lin", kFALSE, 62.0,
-                          71.5, kTRUE, kTRUE);
-    }
     RateSubResult rs =
         FitRateSubtractedGe(Constants::CUSHIELDSIGNAL_10PERCENT_20260114,
                             Constants::CUSHIELDBACKGROUND_10PERCENT_20260114,
-                            cu.cal_func, "20260114", kFALSE, 62.0, 71.5, kTRUE);
+                            cu.cal_func, "20260114");
     if (rs.valid) {
       result.rs_labels.push_back("Cu Shield Signal 10% (01/14) [rate-sub]");
       result.rs_mus.push_back(rs.mu);
@@ -1510,7 +1315,7 @@ DayResult ProcessDay_20260114(Bool_t interactive, Float_t ref_p0,
   return result;
 }
 
-DayResult ProcessDay_20260115(Bool_t interactive) {
+DayResult ProcessDay_20260115() {
   LineCalConfig cfg;
   cfg.date_label = "20260115";
   cfg.am_run = Constants::POSTREACTOR_AM241_20260115;
@@ -1525,10 +1330,10 @@ DayResult ProcessDay_20260115(Bool_t interactive) {
   cfg.postcal_bkg = Constants::NOSHIELDBACKGROUND_5PERCENT_20260115;
   cfg.postcal_sig = Constants::NOSHIELDSIGNAL_5PERCENT_20260115;
   cfg.ge_label = "No Shield Signal 5% (01/15)";
-  return ProcessLineCalDay(cfg, interactive);
+  return ProcessLineCalDay(cfg);
 }
 
-DayResult ProcessDay_20260116(Bool_t interactive) {
+DayResult ProcessDay_20260116() {
   LineCalConfig cfg;
   cfg.date_label = "20260116";
   cfg.am_run = Constants::POSTREACTOR_AM241_BA133_20260116;
@@ -1545,9 +1350,7 @@ DayResult ProcessDay_20260116(Bool_t interactive) {
       Constants::NOSHIELD_GRAPHITECASTLEBACKGROUND_10PERCENT_20260116;
   cfg.postcal_sig = Constants::NOSHIELD_GRAPHITECASTLESIGNAL_10PERCENT_20260116;
   cfg.ge_label = "Graphite Castle Signal 10% (01/16)";
-  cfg.rs_lo = 62.0;
-  cfg.rs_hi = 71.5;
-  return ProcessLineCalDay(cfg, interactive);
+  return ProcessLineCalDay(cfg);
 }
 
 void PrintDayCals(const DayResult &d) {
@@ -1568,14 +1371,11 @@ void CalibrationLow() {
                                 project_root + "/plots/calibration_low_" +
                                     RESULT_TAG,
                                 project_root + "/root_files");
-  Bool_t interactive = kTRUE;
-
-  Float_t ref_p0 = 0;
   PairCalResult ref_pair;
-  DayResult d13 = ProcessDay_20260113(interactive, ref_p0, ref_pair);
-  DayResult d14 = ProcessDay_20260114(interactive, ref_p0, ref_pair);
-  DayResult d15 = ProcessDay_20260115(interactive);
-  DayResult d16 = ProcessDay_20260116(interactive);
+  DayResult d13 = ProcessDay_20260113(ref_pair);
+  DayResult d14 = ProcessDay_20260114(ref_pair);
+  DayResult d15 = ProcessDay_20260115();
+  DayResult d16 = ProcessDay_20260116();
 
   PrintDayCals(d13);
   PrintDayCals(d14);
@@ -1601,8 +1401,7 @@ void CalibrationLow() {
 
   const TString results_dir = project_root + "/results";
   gSystem->mkdir(results_dir, kTRUE);
-  const TString result_path =
-      results_dir + "/ge_" + RESULT_TAG + RESULT_VARIANT + ".result";
+  const TString result_path = results_dir + "/ge_" + RESULT_TAG + ".result";
   std::ofstream out(result_path.Data());
   out << "# Ge-73m gamma energy results   tag=" << RESULT_TAG << std::endl;
   out << "# method  ge_mu  fit_err  cal_err  bkg_err  chi2  gain_err  cal_off  "
@@ -1664,25 +1463,4 @@ void CalibrationLow() {
   std::cout << std::endl;
   std::cout << "Wrote " << result_path << std::endl;
   std::cout << "Run CombineGeResult.cpp for the budget." << std::endl;
-}
-
-void RunFitCSVExport() {
-  const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots/calibration_low_" +
-                                    RESULT_TAG,
-                                project_root + "/root_files");
-  gSystem->mkdir(project_root + "/results", kTRUE);
-
-  G_CSV_PREFIX = project_root + "/results/spectrum_CuShield10_20260113";
-  Float_t ref_p0 = 0;
-  ProcessPbAnchoredPair(Constants::CUSHIELDBACKGROUND_10PERCENT_20260113,
-                        Constants::CUSHIELDSIGNAL_10PERCENT_20260113,
-                        "20260113", "CuShield10", kTRUE,
-                        Constants::POSTREACTOR_AM241_20260113, kTRUE, ref_p0);
-  G_CSV_PREFIX = "";
-  std::cout << std::endl;
-  std::cout << "CSV export done. The sig file is the Pb-Ka + Ge spectrum; "
-               "the bkg file is the Pb-only background channel."
-            << std::endl;
 }

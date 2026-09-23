@@ -90,6 +90,30 @@ void PlotPSPvsLO(std::vector<TString> input_names) {
   }
 }
 
+const Float_t CANDIDATE_LO_MIN_KEVEE = 125;
+const Float_t CANDIDATE_LO_MAX_KEVEE = 175;
+
+// A candidate is a double only if TSpectrum resolves two peaks; their positions
+// seed the template fit. Shared with the Monte Carlo so simulated waveforms
+// face the same selection as real ones. SearchHighRes overwrites its input, so
+// it works on a copy.
+Bool_t FindDoublePeaks(const std::vector<Double_t> &waveform,
+                       Int_t &peak1_position, Int_t &peak2_position) {
+  std::vector<Double_t> work(waveform);
+  Int_t old_ignore_level = gErrorIgnoreLevel;
+  gErrorIgnoreLevel = kError;
+  TSpectrum spectrum(10);
+  Int_t npeaks = spectrum.SearchHighRes(
+      work.data(), work.data(), (Int_t)work.size(), 2, 5, kFALSE, 3, kTRUE, 3);
+  gErrorIgnoreLevel = old_ignore_level;
+  if (npeaks < 2)
+    return kFALSE;
+  Double_t *positions = spectrum.GetPositionX();
+  peak1_position = (Int_t)positions[0];
+  peak2_position = (Int_t)positions[1];
+  return kTRUE;
+}
+
 void GetCandidateWaveforms(std::vector<TString> input_names,
                            Bool_t reprocess = kFALSE) {
   if (!reprocess)
@@ -101,7 +125,7 @@ void GetCandidateWaveforms(std::vector<TString> input_names,
 
   TFile *output = new TFile(candidates_filepath, "RECREATE");
   TTree *output_tree = new TTree("features", "Candidate waveform features.");
-  TArrayS *output_samples = nullptr;
+  TArrayF *output_samples = nullptr;
   Float_t output_psp, output_light_output_keVee;
 
   output_tree->Branch("light_output", &output_light_output_keVee,
@@ -122,7 +146,7 @@ void GetCandidateWaveforms(std::vector<TString> input_names,
     features_tree->SetBranchAddress("light_output", &light_output_keVee);
     features_tree->SetBranchAddress("psp", &psp);
 
-    TArrayS *samples = nullptr;
+    TArrayF *samples = nullptr;
     features_tree->SetBranchAddress("Samples", &samples);
 
     Int_t num_entries = features_tree->GetEntries();
@@ -130,9 +154,10 @@ void GetCandidateWaveforms(std::vector<TString> input_names,
       features_tree->GetEntry(j);
       output_psp = psp;
       output_light_output_keVee = light_output_keVee;
-      if (0.05 < psp && psp < 0.275 && output_light_output_keVee < 175 &&
-          output_light_output_keVee > 125) {
-        output_samples = new TArrayS(*samples);
+      if (0.05 < psp && psp < 0.275 &&
+          output_light_output_keVee < CANDIDATE_LO_MAX_KEVEE &&
+          output_light_output_keVee > CANDIDATE_LO_MIN_KEVEE) {
+        output_samples = new TArrayF(*samples);
         output_tree->Fill();
       }
     }
@@ -153,7 +178,7 @@ void CreateTemplateWaveforms(Bool_t reprocess = kFALSE) {
   TTree *features_tree_148keV =
       static_cast<TTree *>(input_148keV->Get("features"));
 
-  TArrayS *samples_148keV = nullptr;
+  TArrayF *samples_148keV = nullptr;
   Float_t pulse_height_148keV;
   features_tree_148keV->SetBranchAddress("Samples", &samples_148keV);
   features_tree_148keV->SetBranchAddress("pulse_height", &pulse_height_148keV);
@@ -207,7 +232,8 @@ void CreateTemplateWaveforms(Bool_t reprocess = kFALSE) {
       "122 keV 152Eu Template Waveform;Time [ns];ADC");
   template_graph_148keV->SetLineWidth(2);
   template_graph_148keV->Draw();
-  PlottingUtils::SaveFigure(canvas, "template_148keV", "", PlotSaveOptions::kLINEAR);
+  PlottingUtils::SaveFigure(canvas, "template_148keV", "",
+                            PlotSaveOptions::kLINEAR);
   template_graph_148keV->Write("", TObject::kOverwrite);
 
   TString template_32keV_filepath = "root_files/calibration_Eu152.root";
@@ -215,7 +241,7 @@ void CreateTemplateWaveforms(Bool_t reprocess = kFALSE) {
   TTree *features_tree_32keV =
       static_cast<TTree *>(input_32keV->Get("features"));
 
-  TArrayS *samples_32keV = nullptr;
+  TArrayF *samples_32keV = nullptr;
   Float_t pulse_height_32keV;
   features_tree_32keV->SetBranchAddress("Samples", &samples_32keV);
   features_tree_32keV->SetBranchAddress("pulse_height", &pulse_height_32keV);
@@ -263,7 +289,8 @@ void CreateTemplateWaveforms(Bool_t reprocess = kFALSE) {
       "33.4 keV La K-alpha Template Waveform;Time [ns];ADC");
   template_graph_32keV->SetLineWidth(2);
   template_graph_32keV->Draw();
-  PlottingUtils::SaveFigure(canvas, "template_32keV", "", PlotSaveOptions::kLINEAR);
+  PlottingUtils::SaveFigure(canvas, "template_32keV", "",
+                            PlotSaveOptions::kLINEAR);
   output->cd();
   template_graph_32keV->Write("", TObject::kOverwrite);
 
@@ -280,7 +307,7 @@ void AnalyzeDoubleWaveforms(Bool_t reprocess = kFALSE) {
   TFile *input = new TFile(input_filepath, "READ");
   TTree *features_tree = static_cast<TTree *>(input->Get("features"));
 
-  TArrayS *samples = nullptr;
+  TArrayF *samples = nullptr;
   Float_t light_output, psp;
   features_tree->SetBranchAddress("Samples", &samples);
   features_tree->SetBranchAddress("light_output", &light_output);
@@ -289,7 +316,7 @@ void AnalyzeDoubleWaveforms(Bool_t reprocess = kFALSE) {
   TString output_filepath = "root_files/double_waveforms.root";
   TFile *output = new TFile(output_filepath, "RECREATE");
   TTree *output_tree = new TTree("features", "Double waveform features.");
-  TArrayS *output_samples = nullptr;
+  TArrayF *output_samples = nullptr;
   Float_t output_psp, output_light_output;
   Int_t peak1_position, peak2_position;
 
@@ -301,10 +328,6 @@ void AnalyzeDoubleWaveforms(Bool_t reprocess = kFALSE) {
 
   Int_t num_entries = features_tree->GetEntries();
 
-  Int_t oldIgnoreLevel = gErrorIgnoreLevel;
-
-  gErrorIgnoreLevel = kError;
-
   for (Int_t i = 0; i < num_entries; i++) {
     features_tree->GetEntry(i);
 
@@ -314,28 +337,15 @@ void AnalyzeDoubleWaveforms(Bool_t reprocess = kFALSE) {
       waveform_array[j] = (Double_t)samples->At(j);
     }
 
-    TSpectrum *spectrum = new TSpectrum(10);
-    Int_t npeaks =
-        spectrum->SearchHighRes(waveform_array.data(), waveform_array.data(),
-                                nsamples, 2, 5, kFALSE, 3, kTRUE, 3);
+    if (!FindDoublePeaks(waveform_array, peak1_position, peak2_position))
+      continue;
 
-    if (npeaks >= 2) {
-      Double_t *peak_positions = spectrum->GetPositionX();
-
-      output_psp = psp;
-      output_light_output = light_output;
-      peak1_position = (Int_t)peak_positions[0];
-      peak2_position = (Int_t)peak_positions[1];
-
-      if (output_samples)
-        delete output_samples;
-      output_samples = new TArrayS(*samples);
-
-      output_tree->Fill();
-    }
-    gErrorIgnoreLevel = oldIgnoreLevel;
-
-    delete spectrum;
+    output_psp = psp;
+    output_light_output = light_output;
+    if (output_samples)
+      delete output_samples;
+    output_samples = new TArrayF(*samples);
+    output_tree->Fill();
   }
 
   input->Close();
@@ -415,7 +425,9 @@ Double_t CalculateChi2(const Double_t *params, const FitData &data) {
   return chi2;
 }
 
-void FitDoubleWaveforms(Bool_t reprocess = kFALSE) {
+void FitDoubleWaveforms(const TString &input_name = "double_waveforms.root",
+                        const TString &output_name = "fitted_doubles.root",
+                        Bool_t reprocess = kFALSE) {
   if (!reprocess)
     return;
 
@@ -442,11 +454,11 @@ void FitDoubleWaveforms(Bool_t reprocess = kFALSE) {
   Double_t template_148_peak_height = template_148_y[template_148_peak_pos];
   Double_t template_32_peak_height = template_32_y[template_32_peak_pos];
 
-  TString input_filepath = "root_files/double_waveforms.root";
+  TString input_filepath = "root_files/" + input_name;
   TFile *input = new TFile(input_filepath, "READ");
   TTree *features_tree = static_cast<TTree *>(input->Get("features"));
 
-  TArrayS *samples = nullptr;
+  TArrayF *samples = nullptr;
   Float_t light_output, psp;
   Int_t peak1_position, peak2_position; // Add these branch addresses
   features_tree->SetBranchAddress("Samples", &samples);
@@ -455,7 +467,7 @@ void FitDoubleWaveforms(Bool_t reprocess = kFALSE) {
   features_tree->SetBranchAddress("peak1_position", &peak1_position);
   features_tree->SetBranchAddress("peak2_position", &peak2_position);
 
-  TString output_filepath = "root_files/fitted_doubles.root";
+  TString output_filepath = "root_files/" + output_name;
   TFile *output = new TFile(output_filepath, "RECREATE");
   TTree *output_tree =
       new TTree("features", "Fitted double waveform features.");
@@ -669,9 +681,9 @@ void FitDoubleWaveforms(Bool_t reprocess = kFALSE) {
       zero_line->SetLineColor(kBlack);
       zero_line->Draw();
 
-      PlottingUtils::SaveFigure(
-          canvas, Form("double_waveform_fit_%d", i),
-          "double_waveform_fits", PlotSaveOptions::kLINEAR);
+      PlottingUtils::SaveFigure(canvas, Form("double_waveform_fit_%d", i),
+                                "double_waveform_fits",
+                                PlotSaveOptions::kLINEAR);
 
       delete canvas;
       delete original;
@@ -693,11 +705,13 @@ void FitDoubleWaveforms(Bool_t reprocess = kFALSE) {
   output->Close();
 }
 
-void PlotDoublePeaks(Bool_t reprocess = kFALSE) {
+void PlotDoublePeaks(const TString &fitted_name = "fitted_doubles.root",
+                     const TString &plot_prefix = "",
+                     Bool_t reprocess = kFALSE) {
   if (!reprocess)
     return;
 
-  TString output_filepath = "root_files/fitted_doubles.root";
+  TString output_filepath = "root_files/" + fitted_name;
   TFile *output = new TFile(output_filepath, "UPDATE");
   TTree *features_tree = static_cast<TTree *>(output->Get("features"));
 
@@ -737,16 +751,17 @@ void PlotDoublePeaks(Bool_t reprocess = kFALSE) {
 
   TCanvas *canvas2d = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDraw2DHistogram(LO1vsLO2, canvas2d);
-  PlottingUtils::SaveFigure(canvas2d, "peak1_vs_peak2_light_output", "",
+  PlottingUtils::SaveFigure(canvas2d,
+                            plot_prefix + "peak1_vs_peak2_light_output", "",
                             PlotSaveOptions::kLINEAR);
 
   TCanvas *canvas1 = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDrawHistogram(peak1_hist, kBlue + 1);
-  PlottingUtils::SaveFigure(canvas1, "peak1_light_output");
+  PlottingUtils::SaveFigure(canvas1, plot_prefix + "peak1_light_output");
 
   TCanvas *canvas2 = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDrawHistogram(peak2_hist, kRed + 1);
-  PlottingUtils::SaveFigure(canvas2, "peak2_light_output");
+  PlottingUtils::SaveFigure(canvas2, plot_prefix + "peak2_light_output");
 
   output->cd();
   LO1vsLO2->Write("Peak1 vs Peak2 Light Output", TObject::kOverwrite);
@@ -764,103 +779,144 @@ void PlotDoublePeaks(Bool_t reprocess = kFALSE) {
   delete output;
 }
 
-void FitAndExtractHalfLife(Bool_t reprocess = kFALSE) {
-  if (!reprocess)
-    return;
-  TString input_filepath = "root_files/fitted_doubles.root";
-  TFile *input = new TFile(input_filepath, "READ");
-  TTree *features_tree = static_cast<TTree *>(input->Get("features"));
-  TH2F *LO1vsLO2 =
-      static_cast<TH2F *>(input->Get("Peak1 vs Peak2 Light Output"));
+struct HalfLifeResult {
+  Double_t value = 0, error = 0;
+  Bool_t valid = kFALSE;
+};
 
+struct ClusterCut {
+  Double_t mean_x = 0, sigma_x = 1, mean_y = 0, sigma_y = 1;
+  TF2 *gaussian2d = nullptr;
+};
+
+const Int_t TIME_LOWER_NS = 0, TIME_UPPER_NS = 300, TIME_BIN_WIDTH_NS = 2;
+// 100 ns, not 65: on simulated doubles the waveform fit reshapes the
+// distribution below ~100 ns and the exponential comes out 0.2 ns long there;
+// from 100 ns the input half-life is recovered. Above ~200 ns the second pulse
+// runs off the end of the recorded window and the acceptance falls.
+const Int_t FIT_LOWER_NS = 100, FIT_UPPER_NS = 200;
+const Double_t NOMINAL_CUT_SIGMA = 2.0;
+
+ClusterCut FitCluster(TH2F *LO1vsLO2) {
+  ClusterCut cut;
+  cut.gaussian2d =
+      new TF2("gaussian2d", "[0]*TMath::Gaus(x,[1],[2])*TMath::Gaus(y,[3],[4])",
+              0, 200, 0, 200);
+  cut.gaussian2d->SetParameters(LO1vsLO2->GetMaximum(), LO1vsLO2->GetMean(1),
+                                LO1vsLO2->GetRMS(1), LO1vsLO2->GetMean(2),
+                                LO1vsLO2->GetRMS(2));
+  LO1vsLO2->Fit(cut.gaussian2d, "Q");
+  cut.mean_x = cut.gaussian2d->GetParameter(1);
+  cut.sigma_x = TMath::Abs(cut.gaussian2d->GetParameter(2));
+  cut.mean_y = cut.gaussian2d->GetParameter(3);
+  cut.sigma_y = TMath::Abs(cut.gaussian2d->GetParameter(4));
+  std::cout << "2D Gaussian fit: " << std::endl;
+  std::cout << "Peak 1 mean: " << cut.mean_x << " +/- " << cut.sigma_x
+            << std::endl;
+  std::cout << "Peak 2 mean: " << cut.mean_y << " +/- " << cut.sigma_y
+            << std::endl;
+  return cut;
+}
+
+// Time differences of the events within cut_sigma of the cluster centre, in
+// units of the fitted widths.
+TH1F *SelectTimeDifferences(TTree *features_tree, const ClusterCut &cut,
+                            Double_t cut_sigma) {
   Float_t peak1_light_output, peak2_light_output, time_difference;
   features_tree->SetBranchAddress("peak1_light_output", &peak1_light_output);
   features_tree->SetBranchAddress("peak2_light_output", &peak2_light_output);
   features_tree->SetBranchAddress("time_difference", &time_difference);
 
-  TF2 *gaussian2d =
-      new TF2("gaussian2d", "[0]*TMath::Gaus(x,[1],[2])*TMath::Gaus(y,[3],[4])",
-              0, 200, 0, 200);
-  gaussian2d->SetParameters(LO1vsLO2->GetMaximum(), LO1vsLO2->GetMean(1),
-                            LO1vsLO2->GetRMS(1), LO1vsLO2->GetMean(2),
-                            LO1vsLO2->GetRMS(2));
-
-  LO1vsLO2->Fit(gaussian2d, "Q");
-
-  Double_t mean_x = gaussian2d->GetParameter(1);
-  Double_t sigma_x = gaussian2d->GetParameter(2);
-  Double_t mean_y = gaussian2d->GetParameter(3);
-  Double_t sigma_y = gaussian2d->GetParameter(4);
-
-  std::cout << "2D Gaussian fit: " << std::endl;
-  std::cout << "Peak 1 mean: " << mean_x << " +/- " << sigma_x << std::endl;
-  std::cout << "Peak 2 mean: " << mean_y << " +/- " << sigma_y << std::endl;
-
-  const Int_t time_lower = 0, time_upper = 300;
-  const Int_t time_bin_width = 2;
-  const Int_t time_nbins = (time_upper - time_lower) / time_bin_width;
-
   TH1F *time_diff_hist = new TH1F(
-      "", Form("; Time Difference [ns]; Counts / %d ns", time_bin_width),
-      time_nbins, time_lower, time_upper);
+      "", Form("; Time Difference [ns]; Counts / %d ns", TIME_BIN_WIDTH_NS),
+      (TIME_UPPER_NS - TIME_LOWER_NS) / TIME_BIN_WIDTH_NS, TIME_LOWER_NS,
+      TIME_UPPER_NS);
   time_diff_hist->Sumw2();
 
   Int_t num_entries = features_tree->GetEntries();
   for (Int_t j = 0; j < num_entries; j++) {
     features_tree->GetEntry(j);
-
-    Double_t dist_x = (peak1_light_output - mean_x) / sigma_x;
-    Double_t dist_y = (peak2_light_output - mean_y) / sigma_y;
-    Double_t distance = TMath::Sqrt(dist_x * dist_x + dist_y * dist_y);
-
-    if (distance < 2.0) {
+    Double_t dist_x = (peak1_light_output - cut.mean_x) / cut.sigma_x;
+    Double_t dist_y = (peak2_light_output - cut.mean_y) / cut.sigma_y;
+    if (TMath::Sqrt(dist_x * dist_x + dist_y * dist_y) < cut_sigma)
       time_diff_hist->Fill(time_difference);
-    }
   }
+  return time_diff_hist;
+}
 
-  Int_t fit_lower = 65;
-  Int_t fit_upper = 200;
-  TF1 *exponential =
-      new TF1("exponential", "[0]*TMath::Exp(-x/[1])", fit_lower, fit_upper);
+// Likelihood, not chi2: the tail bins hold tens of counts, and a chi2 fit
+// with errors taken from the bin contents overweights downward fluctuations
+// there. On simulated doubles that shortened the recovered half-life by
+// 0.3 ns; the likelihood fit recovers the input.
+HalfLifeResult FitExponential(TH1F *time_diff_hist, TF1 *exponential) {
+  HalfLifeResult result;
+  exponential->SetRange(FIT_LOWER_NS, FIT_UPPER_NS);
   exponential->SetParameters(time_diff_hist->GetMaximum(), 100);
   exponential->SetParNames("Amplitude", "Lifetime");
+  TFitResultPtr fit = time_diff_hist->Fit(exponential, "RLQS");
+  if (!fit.Get() || !fit->IsValid())
+    return result;
+  result.value = exponential->GetParameter(1) * TMath::Log(2);
+  result.error = exponential->GetParError(1) * TMath::Log(2);
+  // Minuit reports success on fits that ran away on a starved histogram;
+  // only a half-life in the physical range with a finite, smaller error
+  // counts.
+  result.valid = TMath::Finite(result.value) && TMath::Finite(result.error) &&
+                 result.value > 1.0 && result.value < 100.0 &&
+                 result.error > 0 && result.error < result.value;
+  return result;
+}
 
-  time_diff_hist->Fit(exponential, "R");
+HalfLifeResult
+FitAndExtractHalfLife(const TString &fitted_name = "fitted_doubles.root",
+                      const TString &results_name = "half_life_results.root",
+                      const TString &plot_prefix = "",
+                      Bool_t reprocess = kFALSE,
+                      Double_t cut_sigma = NOMINAL_CUT_SIGMA) {
+  HalfLifeResult result;
+  if (!reprocess)
+    return result;
+  TString input_filepath = "root_files/" + fitted_name;
+  TFile *input = new TFile(input_filepath, "READ");
+  TTree *features_tree = static_cast<TTree *>(input->Get("features"));
+  TH2F *LO1vsLO2 =
+      static_cast<TH2F *>(input->Get("Peak1 vs Peak2 Light Output"));
 
-  Double_t lifetime = exponential->GetParameter(1);
-  Double_t lifetime_error = exponential->GetParError(1);
-  Double_t half_life = lifetime * TMath::Log(2);
-  Double_t half_life_error = lifetime_error * TMath::Log(2);
-
-  std::cout << "Lifetime: " << lifetime << " +/- " << lifetime_error << " ns"
-            << std::endl;
-  std::cout << "Half-life: " << half_life << " +/- " << half_life_error << " ns"
-            << std::endl;
+  ClusterCut cut = FitCluster(LO1vsLO2);
+  TH1F *time_diff_hist = SelectTimeDifferences(features_tree, cut, cut_sigma);
+  TF1 *exponential = new TF1("exponential", "[0]*TMath::Exp(-x/[1])",
+                             FIT_LOWER_NS, FIT_UPPER_NS);
+  result = FitExponential(time_diff_hist, exponential);
+  std::cout << "Lifetime: " << exponential->GetParameter(1) << " +/- "
+            << exponential->GetParError(1) << " ns" << std::endl;
+  std::cout << "Half-life: " << result.value << " +/- " << result.error
+            << " ns   (cut " << cut_sigma << " sigma)" << std::endl;
 
   TCanvas *canvas_2d = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDraw2DHistogram(LO1vsLO2, canvas_2d);
-  gaussian2d->Draw("CONT3 SAME");
-  PlottingUtils::SaveFigure(canvas_2d, "fitted_2d_gaussian", "", PlotSaveOptions::kLINEAR);
+  cut.gaussian2d->Draw("CONT3 SAME");
+  PlottingUtils::SaveFigure(canvas_2d, plot_prefix + "fitted_2d_gaussian", "",
+                            PlotSaveOptions::kLINEAR);
 
   TCanvas *canvas_time = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureHistogram(time_diff_hist, kBlue + 1);
   time_diff_hist->SetMarkerSize(2);
   time_diff_hist->Draw("E SAME");
   TMarker *marker_lower =
-      new TMarker(fit_lower, exponential->Eval(fit_lower), 21);
+      new TMarker(FIT_LOWER_NS, exponential->Eval(FIT_LOWER_NS), 21);
   marker_lower->SetMarkerColor(kRed);
   marker_lower->SetMarkerSize(1);
   marker_lower->Draw();
 
   Float_t marker_upper_y =
-      exponential->Eval(fit_upper) > time_diff_hist->GetMinimum()
-          ? exponential->Eval(fit_upper)
+      exponential->Eval(FIT_UPPER_NS) > time_diff_hist->GetMinimum()
+          ? exponential->Eval(FIT_UPPER_NS)
           : time_diff_hist->GetMinimum();
-  TMarker *marker_upper = new TMarker(fit_upper, marker_upper_y, 21);
+  TMarker *marker_upper = new TMarker(FIT_UPPER_NS, marker_upper_y, 21);
   marker_upper->SetMarkerColor(kRed);
   marker_upper->SetMarkerSize(1);
   marker_upper->Draw();
-  exponential->SetRange(time_lower, time_upper);
+  exponential->SetRange(TIME_LOWER_NS, TIME_UPPER_NS);
   exponential->Draw("SAME");
 
   TLegend *leg = new TLegend(0.6, 0.75, 0.88, 0.88);
@@ -869,31 +925,127 @@ void FitAndExtractHalfLife(Bool_t reprocess = kFALSE) {
   leg->SetTextSize(0.05);
   leg->SetTextFont(132);
   leg->AddEntry((TObject *)0,
-                Form("t_{1/2} = %.1f #pm %.1f ns", half_life, half_life_error),
+                Form("t_{1/2} = %.1f #pm %.1f ns", result.value, result.error),
                 "");
   leg->AddEntry(marker_upper, "Fit region");
   leg->SetMargin(0.1);
   leg->Draw();
 
-  PlottingUtils::SaveFigure(canvas_time, "time_difference_fit");
+  PlottingUtils::SaveFigure(canvas_time, plot_prefix + "time_difference_fit");
 
-  TString output_filepath = "root_files/half_life_results.root";
+  TString output_filepath = "root_files/" + results_name;
   TFile *output = new TFile(output_filepath, "RECREATE");
   LO1vsLO2->Write("2D_Gaussian_Fit");
   time_diff_hist->Write("Time_Difference");
-  gaussian2d->Write("gaussian2d_fit");
+  cut.gaussian2d->Write("gaussian2d_fit");
   exponential->Write("exponential_fit");
   output->Close();
 
   delete canvas_2d;
   delete canvas_time;
   delete time_diff_hist;
-  delete gaussian2d;
+  delete cut.gaussian2d;
   delete exponential;
   delete output;
 
   input->Close();
   delete input;
+  return result;
+}
+
+// The quoted uncertainty is the sensitivity of the half-life to where the
+// fiducial cut is drawn, not the parabolic error of one fit: refit with the
+// cut radius stepped from 0.5 to 5 sigma (below that the fit is noise-limited,
+// above it the selection no longer changes) and take the spread. This is the
+// perturbation analysis of Fondement et al., Nucl. Phys. A 1075 (2026) 123485.
+HalfLifeResult ScanCutWidth(const TString &fitted_name = "fitted_doubles.root",
+                            const TString &results_name = "cut_scan.root",
+                            const TString &plot_prefix = "",
+                            Bool_t reprocess = kFALSE) {
+  HalfLifeResult summary;
+  if (!reprocess)
+    return summary;
+  TString input_filepath = "root_files/" + fitted_name;
+  TFile *input = new TFile(input_filepath, "READ");
+  TTree *features_tree = static_cast<TTree *>(input->Get("features"));
+  TH2F *LO1vsLO2 =
+      static_cast<TH2F *>(input->Get("Peak1 vs Peak2 Light Output"));
+  ClusterCut cut = FitCluster(LO1vsLO2);
+
+  const Double_t k_min = 0.5, k_max = 5.0, k_step = 0.1;
+  std::vector<Double_t> ks, values, errors;
+  TF1 *exponential = new TF1("exponential_scan", "[0]*TMath::Exp(-x/[1])",
+                             FIT_LOWER_NS, FIT_UPPER_NS);
+  std::cout << "Cut-width scan:" << std::endl;
+  for (Double_t k = k_min; k <= k_max + 1e-9; k += k_step) {
+    TH1F *time_diff_hist = SelectTimeDifferences(features_tree, cut, k);
+    HalfLifeResult r = FitExponential(time_diff_hist, exponential);
+    if (r.valid) {
+      ks.push_back(k);
+      values.push_back(r.value);
+      errors.push_back(r.error);
+      std::cout << "  k = " << std::fixed << std::setprecision(1) << k
+                << "   t1/2 = " << std::setprecision(3) << r.value << " +/- "
+                << r.error << " ns   (" << (Int_t)time_diff_hist->GetEntries()
+                << " events)" << std::endl;
+    }
+    delete time_diff_hist;
+  }
+  delete exponential;
+
+  Int_t n = (Int_t)ks.size();
+  if (n == 0) {
+    input->Close();
+    delete input;
+    return summary;
+  }
+  Double_t sw = 0, swx = 0, sx = 0, sxx = 0;
+  for (Int_t i = 0; i < n; i++) {
+    Double_t w = 1.0 / (errors[i] * errors[i]);
+    sw += w;
+    swx += w * values[i];
+    sx += values[i];
+    sxx += values[i] * values[i];
+  }
+  Double_t mean = swx / sw;
+  Double_t spread = TMath::Sqrt(TMath::Max(0.0, sxx / n - (sx / n) * (sx / n)));
+  Double_t lo = *std::min_element(values.begin(), values.end());
+  Double_t hi = *std::max_element(values.begin(), values.end());
+  summary.value = mean;
+  summary.error = spread;
+  summary.valid = kTRUE;
+  std::cout << "Cut-width scan summary (" << n << " cuts from " << k_min
+            << " to " << k_max << " sigma):" << std::endl;
+  std::cout << "  weighted mean t1/2 = " << std::setprecision(3) << mean
+            << " ns   spread (rms) = " << spread << " ns   range " << lo
+            << " to " << hi << " ns" << std::endl;
+
+  TGraphErrors *graph =
+      new TGraphErrors(n, ks.data(), values.data(), nullptr, errors.data());
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
+  PlottingUtils::ConfigureGraph(graph, kBlue + 1,
+                                "; Cut radius [#sigma]; t_{1/2} [ns]");
+  graph->Draw("APE");
+  TLine *mean_line = new TLine(k_min, mean, k_max, mean);
+  mean_line->SetLineColor(kRed);
+  mean_line->SetLineStyle(2);
+  mean_line->Draw();
+  PlottingUtils::SaveFigure(canvas, plot_prefix + "half_life_vs_cut_width", "",
+                            PlotSaveOptions::kLINEAR);
+
+  TString output_filepath = "root_files/" + results_name;
+  TFile *output = new TFile(output_filepath, "RECREATE");
+  graph->Write("half_life_vs_cut_width");
+  output->Close();
+
+  delete canvas;
+  delete mean_line;
+  delete graph;
+  delete cut.gaussian2d;
+  delete output;
+  input->Close();
+  delete input;
+  return summary;
 }
 
 void HalfLife() {
@@ -904,7 +1056,7 @@ void HalfLife() {
   Bool_t reprocess_waveform = kTRUE;
   Bool_t reprocess_halflife = kTRUE;
 
-  std::vector<TString> input_names = Constants::ALL_DATASETS;
+  std::vector<TString> input_names = Constants::ALL_OUTPUT_NAMES;
 
   CalculatePSPvsLO(input_names, reprocess_initial);
   if (reprocess_initial)
@@ -917,7 +1069,10 @@ void HalfLife() {
   if (reprocess_waveform)
     PlotPSPvsLO({"double_waveforms"});
   CreateTemplateWaveforms(reprocess_waveform);
-  FitDoubleWaveforms(reprocess_waveform);
-  PlotDoublePeaks(reprocess_halflife);
-  FitAndExtractHalfLife(reprocess_halflife);
+  FitDoubleWaveforms("double_waveforms.root", "fitted_doubles.root",
+                     reprocess_waveform);
+  PlotDoublePeaks("fitted_doubles.root", "", reprocess_halflife);
+  FitAndExtractHalfLife("fitted_doubles.root", "half_life_results.root", "",
+                        reprocess_halflife);
+  ScanCutWidth("fitted_doubles.root", "cut_scan.root", "", reprocess_halflife);
 }

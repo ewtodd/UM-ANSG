@@ -18,10 +18,8 @@ struct CalibrationData {
   std::vector<TString> peak_names;
 };
 
-FitResultStandard FitSinglePeak(const TString input_name,
-                                const TString peak_name,
-                                const Float_t expected_mu) {
-
+FitResult FitCalibrationPeak(const TString input_name, const TString peak_name,
+                             Float_t fit_low, Float_t fit_high) {
   TFile *file = new TFile("root_files/" + input_name + ".root", "READ");
   if (!file || file->IsZombie()) {
     std::cerr << "Cannot open " << input_name << ".root" << std::endl;
@@ -30,7 +28,7 @@ FitResultStandard FitSinglePeak(const TString input_name,
 
   TH1F *hist = static_cast<TH1F *>(file->Get("pulse_height"));
   if (!hist) {
-    std::cerr << "Cannot find 'Pulse Height' histogram in " << input_name
+    std::cerr << "Cannot find 'pulse_height' histogram in " << input_name
               << ".root" << std::endl;
     file->Close();
     delete file;
@@ -41,97 +39,55 @@ FitResultStandard FitSinglePeak(const TString input_name,
   file->Close();
   delete file;
 
-  FittingUtils *fitter = nullptr;
-  FitResultStandard result = {};
-
-  Float_t fit_low = expected_mu * 0.85;
-  Float_t fit_high = expected_mu * 1.15;
-
-  if (peak_name == "La_33keV") {
-    fit_low = 250;
-    fit_high = 800;
-    fitter = new FittingUtils(hist, fit_low, fit_high, kFALSE, kFALSE);
-  } else if (peak_name == "Am_59keV") {
-    fit_low = 600;
-    fit_high = 900;
-    fitter = new FittingUtils(hist, fit_low, fit_high, kFALSE, kFALSE);
-  } else if (peak_name == "Eu_122keV") {
-    fit_low = expected_mu * 0.90;
-    fit_high = expected_mu * 1.08;
-    fitter = new FittingUtils(hist, fit_low, fit_high, kFALSE, kFALSE);
-  } else if (peak_name == "Eu_245keV") {
-    fit_low = 2990;
-    fit_high = 3500;
-    fitter = new FittingUtils(hist, fit_low, fit_high, kFALSE, kFALSE);
-  } else if (peak_name == "Eu_344keV") {
-    fit_low = 4100;
-    fit_high = 5000;
-    fitter = new FittingUtils(hist, fit_low, fit_high, kFALSE, kFALSE);
-  } else {
-    fitter = new FittingUtils(hist, fit_low, fit_high, kFALSE, kFALSE);
-  }
-
-  result = fitter->FitPeakStandard(input_name, peak_name);
-
+  FittingUtils fitter(hist, fit_low, fit_high);
+  FitResult result = fitter.FitSinglePeak(input_name, peak_name);
   delete hist;
-  delete fitter;
   return result;
+}
+
+void AddCalibrationPoint(CalibrationData &cal_data, const TString &peak_name,
+                         const FitResult &result, Float_t energy_keV) {
+  if (!result.valid || result.peaks.empty()) {
+    std::cerr << "Fit failed for " << peak_name << "; point skipped"
+              << std::endl;
+    return;
+  }
+  cal_data.peak_names.push_back(peak_name);
+  cal_data.mu.push_back(result.peaks.at(0).mu);
+  cal_data.mu_errors.push_back(result.peaks.at(0).mu_error);
+  cal_data.calibration_values_keV.push_back(energy_keV);
+  cal_data.reduced_chi2.push_back(result.reduced_chi2);
 }
 
 CalibrationData FitCalibrationPeaks() {
   CalibrationData cal_data;
 
-  // Zero point
   cal_data.peak_names.push_back("Zero");
   cal_data.mu.push_back(0);
   cal_data.mu_errors.push_back(0);
   cal_data.calibration_values_keV.push_back(0);
   cal_data.reduced_chi2.push_back(0);
 
-  // La K-alpha 33 keV
-  FitResultStandard la_result = FitSinglePeak(
-      Constants::CALIBRATION_EU152, "La_33keV", 525); // ~525 ADC expected
-  cal_data.peak_names.push_back("La_33keV");
-  cal_data.mu.push_back(la_result.mu);
-  cal_data.mu_errors.push_back(la_result.mu_error);
-  cal_data.calibration_values_keV.push_back(Constants::E_LA_33KEV);
-  cal_data.reduced_chi2.push_back(la_result.reduced_chi2);
-
-  // Am-241 59.5 keV
-  FitResultStandard am_result = FitSinglePeak(
-      Constants::CALIBRATION_AM241, "Am_59keV", 780); // ~780 ADC expected
-  cal_data.peak_names.push_back("Am_59keV");
-  cal_data.mu.push_back(am_result.mu);
-  cal_data.mu_errors.push_back(am_result.mu_error);
-  cal_data.calibration_values_keV.push_back(Constants::E_AM241_59KEV);
-  cal_data.reduced_chi2.push_back(am_result.reduced_chi2);
-
-  // Eu-152 122 keV
-  FitResultStandard eu122_result = FitSinglePeak(
-      Constants::CALIBRATION_EU152, "Eu_122keV", 1650); // ~1650 ADC expected
-  cal_data.peak_names.push_back("Eu_122keV");
-  cal_data.mu.push_back(eu122_result.mu);
-  cal_data.mu_errors.push_back(eu122_result.mu_error);
-  cal_data.calibration_values_keV.push_back(Constants::E_EU152_122KEV);
-  cal_data.reduced_chi2.push_back(eu122_result.reduced_chi2);
-
-  // Eu-152 245 keV
-  FitResultStandard eu245_result = FitSinglePeak(
-      Constants::CALIBRATION_EU152, "Eu_245keV", 3275); // ~3250 ADC expected
-  cal_data.peak_names.push_back("Eu_245keV");
-  cal_data.mu.push_back(eu245_result.mu);
-  cal_data.mu_errors.push_back(eu245_result.mu_error);
-  cal_data.calibration_values_keV.push_back(Constants::E_EU152_245KEV);
-  cal_data.reduced_chi2.push_back(eu245_result.reduced_chi2);
-
-  // Eu-152 344 keV
-  FitResultStandard eu344_result = FitSinglePeak(
-      Constants::CALIBRATION_EU152, "Eu_344keV", 4577); // ~4577 ADC expected
-  cal_data.peak_names.push_back("Eu_344keV");
-  cal_data.mu.push_back(eu344_result.mu);
-  cal_data.mu_errors.push_back(eu344_result.mu_error);
-  cal_data.calibration_values_keV.push_back(Constants::E_EU152_344KEV);
-  cal_data.reduced_chi2.push_back(eu344_result.reduced_chi2);
+  AddCalibrationPoint(
+      cal_data, "La_33keV",
+      FitCalibrationPeak(Constants::CALIBRATION_EU152, "La_33keV", 250, 800),
+      Constants::E_LA_33KEV);
+  AddCalibrationPoint(
+      cal_data, "Am_59keV",
+      FitCalibrationPeak(Constants::CALIBRATION_AM241, "Am_59keV", 600, 900),
+      Constants::E_AM241_59KEV);
+  AddCalibrationPoint(
+      cal_data, "Eu_122keV",
+      FitCalibrationPeak(Constants::CALIBRATION_EU152, "Eu_122keV", 1485, 1782),
+      Constants::E_EU152_122KEV);
+  AddCalibrationPoint(
+      cal_data, "Eu_245keV",
+      FitCalibrationPeak(Constants::CALIBRATION_EU152, "Eu_245keV", 2990, 3500),
+      Constants::E_EU152_245KEV);
+  AddCalibrationPoint(
+      cal_data, "Eu_344keV",
+      FitCalibrationPeak(Constants::CALIBRATION_EU152, "Eu_344keV", 4100, 5000),
+      Constants::E_EU152_344KEV);
 
   return cal_data;
 }
@@ -173,7 +129,8 @@ TF1 *CreateAndSaveCalibration(const CalibrationData &cal_data) {
 
   TFitResultPtr fit_result = calibration_curve->Fit(calibration_fit, "LRE");
   calibration_fit->Draw("SAME");
-  PlottingUtils::SaveFigure(canvas, "calibration", "", PlotSaveOptions::kLINEAR);
+  PlottingUtils::SaveFigure(canvas, "calibration", "",
+                            PlotSaveOptions::kLINEAR);
 
   delete canvas;
   return calibration_fit;

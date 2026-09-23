@@ -7,9 +7,8 @@
 #include <TH1F.h>
 #include <TH2D.h>
 #include <TMath.h>
-#include <TROOT.h>
+#include <TObjString.h>
 #include <TString.h>
-#include <TSystem.h>
 #include <TTree.h>
 #include <algorithm>
 #include <cmath>
@@ -51,14 +50,10 @@ struct PixelRow {
   Int_t crystal = -1;
   Int_t ix = -1;
   Int_t iy = -1;
-  Float_t x_mm = 0;
-  Float_t y_mm = 0;
   Int_t n_events = 0;
   Float_t mu = 0;
   Float_t mu_err = 0;
   Float_t sigma = 0;
-  Float_t sigma_err = 0;
-  Float_t reduced_chi2 = -1;
   Bool_t valid = kFALSE;
   Bool_t bad = kFALSE;
   TString reason;
@@ -404,8 +399,6 @@ void PixelCalibration() {
       row.crystal = GetCrystalIndex(x_c, y_c);
       row.ix = ix;
       row.iy = iy;
-      row.x_mm = x_c;
-      row.y_mm = y_c;
       row.n_events = n_in_window;
 
       if (row.n_events < MIN_FIT_EVENTS) {
@@ -448,8 +441,6 @@ void PixelCalibration() {
         row.mu = p.mu;
         row.mu_err = p.mu_error;
         row.sigma = p.sigma;
-        row.sigma_err = p.sigma_error;
-        row.reduced_chi2 = result.reduced_chi2;
         row.valid = kTRUE;
       }
 

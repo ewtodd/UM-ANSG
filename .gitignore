@@ -25,3 +25,8 @@ result
 # decrypted secrets. Ignored by name so no `git add .` can stage them.
 **/BEF.hpp
 **/BEF.cpp
+
+# data and caches live on /labdata; local symlinks only
+78mBr/macros/root_files
+YAP-PSD/root_files
+YAP-PSD/python/*_cache

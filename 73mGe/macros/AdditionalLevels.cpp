@@ -1,13 +1,3 @@
-// Search for 73Ge transitions above 150 keV in interaction-summed CZT data
-// (the "Additional 73Ge Levels?" section of the PRC draft).
-//
-// Both runs are fitted SIMULTANEOUSLY with one shared lineshape rather than
-// subtracting a background. Subtraction fails twice over: the sample adds
-// ~2.85x continuum everywhere so sig-minus-bkg is positive throughout, and
-// scaling to that continuum instead over-subtracts every line common to both
-// runs. Lines present in both (113Cd(n,g) from the detector, room background)
-// go in the background channel and are shape-linked into the signal channel;
-// sample-only lines (73Ge, 77Ge/77As activation) are extra signal peaks.
 #include "Constants.hpp"
 #include "IOUtils.hpp"
 #include "InitUtils.hpp"
@@ -30,8 +20,8 @@ struct LRTResult {
 
 // Energy scale. Verified against Ba-133 (81-384), the Cd anchor (558.456,
 // exact by construction) and Cd 805.89: residuals scatter +/-0.6 keV about
-// zero with no trend, so the through-origin per-pixel gain is adequate here and
-// 0.6 keV is the systematic to quote on any centroid.
+// zero with no trend, so the through-origin per-pixel gain is adequate here for
+// a first pass and 0.6 keV is the systematic to quote on any centroid.
 const Double_t E_SCALE_SYST_KEV = 0.6;
 
 // A sample line with a tabulated energy is a reference, not an unknown, so it
