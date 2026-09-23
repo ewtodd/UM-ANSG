@@ -541,19 +541,19 @@ void CombineGeResult() {
   std::cout << "  literature 68.752(7), collaborator 68.755" << std::endl;
 
   // Comparison table in the collaborator's format: Eg in keV, uncertainties in
-  // eV. Columns Fit | Offset | Mult. | Bkg | Comb. -- offset^2 + mult^2 =
-  // cal^2, see the file-top note for the definition.
+  // eV. Columns Fit | Offset | Mult. | Total -- offset^2 + mult^2 = cal^2, see
+  // the file-top note for the definition. Per run, Total = fit (+) cal; the
+  // combined row's Total is the quoted number and includes the method term.
   std::cout << std::endl;
   std::cout << "----- Comparison table (Eg keV, uncertainties eV) -----"
             << std::endl;
   std::cout << "  (offset = cal error at its best-constrained energy; mult. = "
-               "its growth to the Ge line + gain transfer; bkg = |cal(precal "
-               "Ge) - postcal Ge|)"
+               "its growth to the Ge line + gain transfer)"
             << std::endl;
-  std::cout << std::left << std::setw(34) << "Run" << std::right
-            << std::setw(10) << "Eg[keV]" << std::setw(7) << "Fit"
-            << std::setw(8) << "Offset" << std::setw(7) << "Mult."
-            << std::setw(7) << "Bkg" << std::setw(9) << "Comb." << std::endl;
+  std::cout << std::left << std::setw(46) << "Run" << std::right
+            << std::setw(10) << "Eg[keV]" << std::setw(8) << "Fit"
+            << std::setw(8) << "Offset" << std::setw(8) << "Mult."
+            << std::setw(8) << "Total" << std::endl;
   for (size_t i = 0; i < shared.size(); i++) {
     if (shared[i].method != "insitu" && shared[i].method != "ratesub")
       continue;
@@ -562,27 +562,23 @@ void CombineGeResult() {
     Double_t off_ev = std::min(shared[i].cal_off * 1000.0, cal_ev);
     Double_t mult_ev =
         std::sqrt(std::max(0.0, cal_ev * cal_ev - off_ev * off_ev));
-    // Per-run background = |cal(precal Ge) - postcal Ge| for this run.
-    Double_t bkg_ev = shared[i].bkg_err * 1000.0;
-    Double_t comb_ev =
-        std::sqrt(fit_ev * fit_ev + cal_ev * cal_ev + bkg_ev * bkg_ev);
-    std::cout << std::left << std::setw(34) << shared[i].label << std::right
-              << std::fixed << std::setprecision(4) << std::setw(10)
-              << shared[i].mu << std::setprecision(1) << std::setw(7) << fit_ev
-              << std::setw(8) << off_ev << std::setw(7) << mult_ev
-              << std::setw(7) << bkg_ev << std::setw(9) << comb_ev << std::endl;
+    Double_t tot_ev = std::sqrt(fit_ev * fit_ev + cal_ev * cal_ev);
+    std::cout << std::left << std::setw(46) << shared[i].label << std::right
+              << std::fixed << std::setprecision(5) << std::setw(10)
+              << shared[i].mu << std::setprecision(2) << std::setw(8) << fit_ev
+              << std::setw(8) << off_ev << std::setw(8) << mult_ev
+              << std::setprecision(1) << std::setw(8) << tot_ev << std::endl;
   }
-  // Fit / Offset / Mult. are the exact decomposition of the quoted base error
-  // with the BLUE weights; Comb. is the quoted total. bkg is shown but not
-  // summed.
   Double_t stat_ev = in_only.valid ? in_only.p.stat_part * 1000.0 : 0;
   Double_t off_ev = in_only.valid ? in_only.p.off_part * 1000.0 : 0;
   Double_t mult_ev = in_only.valid ? in_only.p.mult_part * 1000.0 : 0;
-  Double_t bkg_ev = (background_sys > 0) ? background_sys * 1000.0 : 0;
-  Double_t comb_ev = total * 1000.0;
-  std::cout << std::left << std::setw(34) << "COMBINED (this work, CZT)"
-            << std::right << std::fixed << std::setprecision(4) << std::setw(10)
-            << combined_mean << std::setprecision(1) << std::setw(7) << stat_ev
-            << std::setw(8) << off_ev << std::setw(7) << mult_ev << std::setw(7)
-            << bkg_ev << std::setw(9) << comb_ev << std::endl;
+  std::cout << std::left << std::setw(46) << "COMBINED (01/13 in-situ, BLUE)"
+            << std::right << std::fixed << std::setprecision(5) << std::setw(10)
+            << combined_mean << std::setprecision(2) << std::setw(8) << stat_ev
+            << std::setw(8) << off_ev << std::setw(8) << mult_ev
+            << std::setprecision(1) << std::setw(8) << total * 1000.0
+            << std::endl;
+  std::cout << "  combined Total = sqrt(" << std::setprecision(2) << stat_ev
+            << "^2 + " << off_ev << "^2 + " << mult_ev << "^2 + method "
+            << sA.method * 1000.0 << "^2)" << std::endl;
 }
