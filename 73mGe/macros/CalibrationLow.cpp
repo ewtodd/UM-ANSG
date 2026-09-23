@@ -79,8 +79,6 @@ const Bool_t USE_FLAT_BKG = kTRUE;
 const Bool_t USE_STEP_CAL_PEAKS = kFALSE;
 const Double_t TAIL_RATIO_MAX = 8.0;
 
-const Bool_t USE_AFFINE_TRANSFER = kFALSE;
-
 // Rate-subtraction tail, held fixed. Nominal is no tail; set FRAC to the
 // in-situ lineshape's tail fraction to measure the systematic.
 const Double_t RATESUB_TAIL_FRAC = 0.0;
@@ -530,106 +528,6 @@ CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
   PlottingUtils::SaveFigure(canvas, "calibration_low_" + date_label, "",
                             PlotSaveOptions::kLINEAR);
   return out;
-}
-
-struct AffineResult {
-  Double_t a = 0.0; // offset [keV]
-  Double_t b = 1.0; // gain
-  Double_t var_a = 0, var_b = 0, cov_ab = 0;
-  Double_t chi2_ndf = 0;
-  Int_t n = 0;
-  Bool_t valid = kFALSE;
-};
-
-AffineResult PbAffineVsReference(const std::vector<Float_t> &mu_run,
-                                 const std::vector<Float_t> &err_run,
-                                 const std::vector<Float_t> &mu_ref,
-                                 const std::vector<Float_t> &err_ref) {
-  AffineResult out;
-  size_t n = std::min(mu_run.size(), mu_ref.size());
-  std::vector<Double_t> x, y, ex, ey;
-  for (size_t i = 0; i < n; i++) {
-    if (mu_run[i] <= 0 || mu_ref[i] <= 0)
-      continue;
-    x.push_back(mu_ref[i]);
-    y.push_back(mu_run[i]);
-    ex.push_back(i < err_ref.size() && err_ref[i] > 0 ? err_ref[i] : 1e-4);
-    ey.push_back(i < err_run.size() && err_run[i] > 0 ? err_run[i] : 1e-4);
-  }
-  out.n = (Int_t)x.size();
-  if (out.n < 3)
-    return out; // need a spare point for a meaningful residual
-
-  TGraphErrors g((Int_t)x.size(), x.data(), y.data(), ex.data(), ey.data());
-  TF1 lin("pb_affine", "pol1", x.front() - 5.0, x.back() + 5.0);
-  lin.SetParameters(0.0, 1.0);
-  TFitResultPtr fr = g.Fit(&lin, "E S Q N");
-  if (!fr.Get())
-    return out;
-
-  out.a = lin.GetParameter(0);
-  out.b = lin.GetParameter(1);
-  out.var_a = fr->CovMatrix(0, 0);
-  out.var_b = fr->CovMatrix(1, 1);
-  out.cov_ab = fr->CovMatrix(0, 1);
-  out.chi2_ndf = (fr->Ndf() > 0) ? fr->Chi2() / fr->Ndf() : 0.0;
-  if (out.chi2_ndf > 1.0) {
-    out.var_a *= out.chi2_ndf;
-    out.var_b *= out.chi2_ndf;
-    out.cov_ab *= out.chi2_ndf;
-  }
-  out.valid = kTRUE;
-  return out;
-}
-
-CalFit AffineScaleCal(const CalFit &ref, const AffineResult &t,
-                      const TString &label) {
-  TF1 *src = ref.func;
-  Int_t npar = src->GetNpar();
-  Double_t lo = 0, hi = 0;
-  src->GetRange(lo, hi);
-  TF1 *scaled = new TF1("cal_low_" + label, src->GetExpFormula(), lo, hi);
-
-  Double_t p0 = src->GetParameter(0);
-  Double_t p1 = (npar > 1) ? src->GetParameter(1) : 0.0;
-  Double_t p2 = (npar > 2) ? src->GetParameter(2) : 0.0;
-  Double_t a = t.a, b = (t.b != 0 ? t.b : 1.0);
-
-  scaled->SetParameter(0, p0 - p1 * a / b + p2 * a * a / (b * b));
-  if (npar > 1)
-    scaled->SetParameter(1, p1 / b - 2.0 * p2 * a / (b * b));
-  if (npar > 2)
-    scaled->SetParameter(2, p2 / (b * b));
-  scaled->SetNpx(1000);
-
-  CalFit out;
-  out.func = scaled;
-  out.npar = npar;
-  out.p0 = scaled->GetParameter(0);
-  out.p1 = scaled->GetParameter(1);
-  out.var_p0 = ref.var_p0;
-  out.var_p1 = ref.var_p1 / (b * b);
-  out.cov_p0p1 = ref.cov_p0p1 / b;
-  if (npar >= 3) {
-    Double_t b2 = b * b;
-    out.var_p2 = ref.var_p2 / (b2 * b2);
-    out.cov_p0p2 = ref.cov_p0p2 / b2;
-    out.cov_p1p2 = ref.cov_p1p2 / (b2 * b);
-  }
-  return out;
-}
-
-Double_t AffineTransferEnergyError(const CalFit &ref_cal, Double_t mu_raw,
-                                   const AffineResult &t) {
-  if (!ref_cal.func || !t.valid || t.b == 0)
-    return 0.0;
-  Double_t z = (mu_raw - t.a) / t.b;
-  Double_t fp = ref_cal.func->Derivative(z);
-  Double_t dda = -fp / t.b;
-  Double_t ddb = -fp * z / t.b;
-  Double_t var =
-      dda * dda * t.var_a + ddb * ddb * t.var_b + 2.0 * dda * ddb * t.cov_ab;
-  return (var > 0) ? std::sqrt(var) : 0.0;
 }
 
 struct GainResult {
@@ -1110,7 +1008,6 @@ PairCalResult ProcessPbAnchoredPair(
 
   CalFit calfit;
   GainResult gain;
-  AffineResult affine;
 
   if (transfer_mode) {
     std::vector<Float_t> mu_run = {(Float_t)pre.bkg_channel.peaks.at(0).mu,
@@ -1129,27 +1026,12 @@ PairCalResult ProcessPbAnchoredPair(
         ref_pb_errs ? *ref_pb_errs
                     : std::vector<Float_t>(ref_pb_mus->size(), 0.f);
 
-    if (USE_AFFINE_TRANSFER)
-      affine = PbAffineVsReference(mu_run, err_run, *ref_pb_mus, er);
-    if (affine.valid) {
-      calfit = AffineScaleCal(*ref_cal, affine, cal_label);
-      std::cout << "AFFINE-TRANSFER " << cal_label << ": a = " << std::fixed
-                << std::setprecision(6) << affine.a << " +/- "
-                << std::sqrt(std::max(0.0, affine.var_a))
-                << "   b = " << affine.b << " +/- "
-                << std::sqrt(std::max(0.0, affine.var_b))
-                << "  (n = " << affine.n
-                << ", chi2/ndf = " << std::setprecision(2) << affine.chi2_ndf
-                << ")" << std::endl;
-    } else {
-      gain = PbGainVsReferenceWithError(mu_run, err_run, *ref_pb_mus, er);
-      calfit = GainScaleCal(*ref_cal, gain.g, cal_label);
-      std::cout << "GAIN-TRANSFER (fallback) " << cal_label
-                << ": g = " << std::fixed << std::setprecision(6) << gain.g
-                << " +/- " << gain.sigma_g << "  (n = " << gain.n
-                << ", chi2/ndf = " << std::setprecision(2) << gain.chi2_ndf
-                << ")" << std::endl;
-    }
+    gain = PbGainVsReferenceWithError(mu_run, err_run, *ref_pb_mus, er);
+    calfit = GainScaleCal(*ref_cal, gain.g, cal_label);
+    std::cout << "GAIN-TRANSFER " << cal_label << ": g = " << std::fixed
+              << std::setprecision(6) << gain.g << " +/- " << gain.sigma_g
+              << "  (n = " << gain.n << ", chi2/ndf = " << std::setprecision(2)
+              << gain.chi2_ndf << ")" << std::endl;
   } else if (am_anchor_mode) {
     CalibrationData cal_am;
     AddCalPoint(cal_am, pair_tag + " Am-241 59.5", am.peaks.at(0).mu,
@@ -1191,9 +1073,7 @@ PairCalResult ProcessPbAnchoredPair(
 
     if (transfer_mode) {
       out.ge_gain_err =
-          affine.valid
-              ? AffineTransferEnergyError(*ref_cal, mu_ge, affine)
-              : GainTransferEnergyError(*ref_cal, mu_ge, gain.g, gain.sigma_g);
+          GainTransferEnergyError(*ref_cal, mu_ge, gain.g, gain.sigma_g);
       out.ge_cal_err = std::hypot(out.ge_cal_err, out.ge_gain_err);
 
       std::cout << "GAIN-CAL " << cal_label << ": transfer term " << std::fixed
