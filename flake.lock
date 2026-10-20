@@ -180,11 +180,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1790097080,
-        "narHash": "sha256-LIKh44WEGXSAWJuCGFu7vv/fuaAUYX8NA0g57v3cEeg=",
+        "lastModified": 1792509979,
+        "narHash": "sha256-ujSVXVzLRIID0madd+N3MQ5INLgLR7pcWA1xLIVqKI0=",
         "owner": "ewtodd",
         "repo": "Analysis-Utilities",
-        "rev": "a030519fea84914ecd5439d629f42aedf3424fa5",
+        "rev": "1d81c2937109ec3ab231bc123a3073a986d71666",
         "type": "github"
       },
       "original": {
