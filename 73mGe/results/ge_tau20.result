@@ -1,0 +1,8 @@
+# Ge-73m gamma energy results   tag=tau20
+# method  ge_mu  fit_err  cal_err  bkg_err  chi2  gain_err  cal_off  label
+insitu  68.776016  0.020100  0.004116  0.001297  1.584416  0.000000  0.003974  Cu_Shield_Signal_10%_(01/13)
+insitu  68.729073  0.030379  0.008128  0.002139  1.138549  0.007012  0.003974  Cd_Shield_Signal_10%_(01/13)
+insitu  68.759575  0.033252  0.008542  0.000527  1.493698  0.007486  0.003974  Cd_Shield_Signal_25%_(01/13)
+insitu  68.837509  0.019722  0.007356  0.004471  2.344126  0.006091  0.003974  Cu_Shield_Signal_10%_(01/14)
+ratesub  68.775909  0.034449  0.006335  0.000000  1.565128  0.000000  0.006022  No_Shield_Signal_5%_(01/15)_[rate-sub]
+ratesub  68.787735  0.057561  0.011343  0.000000  0.851262  0.000000  0.010251  Graphite_Castle_Signal_10%_(01/16)_[rate-sub]

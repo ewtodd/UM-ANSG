@@ -126,14 +126,6 @@ static Float_t WeightedPixelGain(Float_t x, Float_t y,
   return sum_wg / sum_w;
 }
 
-Bool_t IsOnPixelCenter(Float_t pos, const std::vector<Float_t> &centers) {
-  for (Int_t i = 0; i < (Int_t)centers.size(); i++) {
-    if (TMath::Abs(pos - centers[i]) <= Constants::PIXEL_ACCEPT_HALFWIDTH_MM)
-      return kTRUE;
-  }
-  return kFALSE;
-}
-
 Int_t GetPixelIndex(Float_t pos, const std::vector<Float_t> &centers) {
   for (Int_t i = 0; i < (Int_t)centers.size(); i++) {
     if (TMath::Abs(pos - centers[i]) <= Constants::PIXEL_ACCEPT_HALFWIDTH_MM)

@@ -30,12 +30,9 @@
 #include <sstream>
 #include <vector>
 
-// Which run to combine. Must match the RESULT_TAG the rows were written with.
-const TString RESULT_TAG = "amxfer";
-
 // Fit-quality cut on the in-situ fits. chi2/ndf carries no information about
-// where mu landed, so it cannot bias the result. A rejected run keeps its
-// rate-sub row: this removes a failed fit, not a dataset.
+// where mu landed, so it cannot bias the result. A rejected run drops out of
+// Method 1; no in-situ run also has a rate-sub row.
 const Double_t INSITU_CHI2_MAX = 3.0;
 
 struct Row {
@@ -351,13 +348,14 @@ Scheme ReportScheme(const TString &title, const std::vector<Row> &rows,
   return s;
 }
 
-void CombineGeResult() {
+// tag: the RESULT_TAG the rows were written with (results/ge_<tag>.result).
+void CombineGeResult(const char *tag = "tau20") {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   std::vector<Row> rows =
-      ReadResult(project_root + "/results/ge_" + RESULT_TAG + ".result");
+      ReadResult(project_root + "/results/ge_" + TString(tag) + ".result");
   if (rows.empty()) {
-    std::cerr << "No results for tag '" << RESULT_TAG
-              << "'; run CalibrationLow.cpp first." << std::endl;
+    std::cerr << "No results for tag '" << tag
+              << "'; run CalibrateAndFit.cpp first." << std::endl;
     return;
   }
 
@@ -386,11 +384,11 @@ void CombineGeResult() {
   Combination in_only = Combine(rows, 0, kept);
   if (in_only.valid)
     std::cout << "  Method 1  in-situ simultaneous fit    (" << in_only.n
-              << " datasets, 01/13)   : " << in_only.mean << " +/- "
+              << " datasets, 01/13-14): " << in_only.mean << " +/- "
               << in_only.err << " keV" << std::endl;
   if (rs.valid)
     std::cout << "  Method 2  live-time rate subtraction  (" << rs.n
-              << " datasets, 01/14-16): " << rs.mean << " +/- " << rs.err
+              << " datasets, 01/15-16): " << rs.mean << " +/- " << rs.err
               << " keV" << std::endl;
   if (in_only.valid && rs.valid) {
     Double_t diff = std::fabs(in_only.mean - rs.mean);
@@ -470,7 +468,7 @@ void CombineGeResult() {
   Double_t stat_ev = in_only.valid ? in_only.stat_part * 1000.0 : 0;
   Double_t off_ev = in_only.valid ? in_only.off_part * 1000.0 : 0;
   Double_t mult_ev = in_only.valid ? in_only.mult_part * 1000.0 : 0;
-  std::cout << std::left << std::setw(46) << "COMBINED (01/13 in-situ, BLUE)"
+  std::cout << std::left << std::setw(46) << "COMBINED (01/13-14 in-situ, BLUE)"
             << std::right << std::fixed << std::setprecision(5) << std::setw(10)
             << combined_mean << std::setprecision(2) << std::setw(8) << stat_ev
             << std::setw(8) << off_ev << std::setw(8) << mult_ev

@@ -29,6 +29,8 @@ const Int_t BAD_MIN_EVENTS = 1000;
 const Float_t SIGMA_HARD_MAX_KEV = 5.0;
 const Float_t SIGMA_MAD_CUT = 4.5;
 const Float_t MU_ERR_MAX_KEV = 1.0;
+const Float_t MU_WINDOW_KEV = 5.0;
+const Float_t CHI2_MAX = 5.0;
 
 const TString RUN_NAME =
     Constants::NOSHIELD_GRAPHITECASTLESIGNAL_10PERCENT_20260116;
@@ -54,6 +56,7 @@ struct PixelRow {
   Float_t mu = 0;
   Float_t mu_err = 0;
   Float_t sigma = 0;
+  Float_t chi2 = -1;
   Bool_t valid = kFALSE;
   Bool_t bad = kFALSE;
   TString reason;
@@ -151,6 +154,11 @@ void ClassifyBadPixels(std::vector<PixelRow> &rows) {
           Form("sigma=%.2f>%.2f", r.sigma, SIGMA_HARD_MAX_KEV));
     if (std::isfinite(r.mu_err) && r.mu_err > MU_ERR_MAX_KEV)
       reasons[i].push_back(Form("mu_err=%.3f>%.2f", r.mu_err, MU_ERR_MAX_KEV));
+    if (r.valid && std::isfinite(r.mu) &&
+        TMath::Abs(r.mu - E_CD558) > MU_WINDOW_KEV)
+      reasons[i].push_back(Form("mu_off=%+.1f", r.mu - E_CD558));
+    if (r.valid && r.chi2 > CHI2_MAX)
+      reasons[i].push_back(Form("chi2=%.1f>%.1f", r.chi2, CHI2_MAX));
   }
 
   std::map<Int_t, std::vector<Float_t>> sig_by_crystal;
@@ -293,6 +301,10 @@ void PrintSummary(const std::vector<PixelRow> &rows) {
         key = "sigma_outlier";
       else if (tag.BeginsWith("sigma"))
         key = "sigma_hard_cut";
+      else if (tag.BeginsWith("mu_off"))
+        key = "mu_off";
+      else if (tag.BeginsWith("chi2"))
+        key = "chi2";
       else if (tag.BeginsWith("mu_err"))
         key = "mu_err";
       else if (tag.BeginsWith("low_stats"))
@@ -441,6 +453,7 @@ void PixelCalibration() {
         row.mu = p.mu;
         row.mu_err = p.mu_error;
         row.sigma = p.sigma;
+        row.chi2 = result.reduced_chi2;
         row.valid = kTRUE;
       }
 

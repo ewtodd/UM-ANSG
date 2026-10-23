@@ -15,7 +15,7 @@ inline TString ProjectRootOf(const char *file) {
 } // namespace Paths
 
 namespace Constants {
-const Int_t BIN_WIDTH_EV = 250;
+const Int_t BIN_WIDTH_EV = 255;
 const Float_t BIN_WIDTH_KEV = BIN_WIDTH_EV / 1000.0;
 const Int_t HIST_XMIN = 0, HIST_XMAX = 1500;
 const Int_t ZOOMED_XMIN = 40, ZOOMED_XMAX = 110;
