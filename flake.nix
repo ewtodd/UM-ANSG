@@ -46,8 +46,7 @@
                     ];
                   });
                   torch-bin =
-                    (python-prev.torch-bin.override { cudaPackages = final.cudaPackages_13; })
-                    .overridePythonAttrs
+                    (python-prev.torch-bin.override { cudaPackages = final.cudaPackages_13; }).overridePythonAttrs
                       (old: {
                         pythonRelaxDeps = (old.pythonRelaxDeps or [ ]) ++ [
                           "setuptools"
@@ -61,6 +60,17 @@
         };
         au = utils.packages.${system};
         agenixPkg = agenix.packages.${system}.default;
+
+        # ---- 73mGe backend switch (one line) ----
+        # true  = CUDA: au.cuda + au.rootCuda, RooFit CUDA backend,
+        #         -DAU_ROOFIT_BACKEND_CUDA=1, the OpenGL/nvidia driver path.
+        # false = CPU:  au.default + au.root, RooFit CPU backend.
+        use73mGeCuda = true;
+        # CUDA-only shell setup, included only when use73mGeCuda is true.
+        cudaHook = ''
+          export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
+          export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        '';
 
         tools = with pkgs; [
           pkg-config
@@ -106,16 +116,15 @@
       in
       {
         devShells = {
-          # CUDA RooFit backend, ROOT built with CUDA, agenix-decrypted BEF
-          # reader sources. Decrypts with the user's ssh key on entry.
+          # 73mGe: backend toggled by use73mGeCuda (CUDA or CPU). Always decrypts
+          # the agenix BEF reader sources with the user's ssh key on entry.
           "73mGe" = analysisShell {
             project = "73mGe";
-            analysis-utils = au.cuda;
-            root = au.rootCuda;
+            analysis-utils = if use73mGeCuda then au.cuda else au.default;
+            root = if use73mGeCuda then au.rootCuda else au.root;
             extraInputs = [ agenixPkg ];
             extraHook = ''
-              export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
-              export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              ${if use73mGeCuda then cudaHook else ""}
               mkdir -p "$project_root/include" "$project_root/src" "$project_root/macros"
               (
                 cd "$project_root/secrets"
@@ -130,13 +139,13 @@
           "78mBr" = analysisShell {
             project = "78mBr";
             analysis-utils = au.default;
-            root = pkgs.root;
+            root = au.root;
           };
 
           "YAG-PreProcessing" = analysisShell {
             project = "YAG-PreProcessing";
             analysis-utils = au.default;
-            root = pkgs.root;
+            root = au.root;
             enterMacros = false;
             extraInputs = [
               (pkgs.python3.withPackages (ps: [
@@ -151,7 +160,7 @@
           "YAP-PSD" = analysisShell {
             project = "YAP-PSD";
             analysis-utils = au.default;
-            root = pkgs.root;
+            root = au.root;
             enterMacros = false;
             extraInputs = [
               (pkgs.python3.withPackages (

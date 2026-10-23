@@ -2,7 +2,7 @@
 <!---->
 ## Projects
 <!---->
-- **73mGe** — Precision gamma-ray measurements of 73mGe using a state-of-the-art position sensitive CZT detector.
+- **73mGe** — Precision gamma-ray measurements of 73mGe using a position sensitive CZT detector.
 - **78mBr** — Half-life measurement of 78mBr by self-coincidence analysis in a LaBr3 detector.  
   V. Fondement, E. Todd, I. Jovanovic, “Updated ⁷⁸ᵐBr 2⁻ → 1⁺ Lifetime from Isomeric Decay Cascade in Active Target,” *Nuclear Physics A* (2026), [doi:10.1016/j.nuclphysa.2026.123485](https://doi.org/10.1016/j.nuclphysa.2026.123485).
 - **YAG-PreProcessing** — Pre-processing of YAG detector data.
@@ -27,5 +27,6 @@ nix develop .#YAG-PreProcessing
 nix develop .#YAP-PSD
 ```
 <!---->
-Every shell pins the same Analysis-Utilities and the ROOT it was built against, and starts in the project directory (the `macros/` directory for 73mGe and 78mBr). The 73mGe shell decrypts its agenix secrets on entry and needs the matching ssh key.
+Every shell pins the same Analysis-Utilities and the ROOT it was built against, and starts in the project directory (the `macros/` directory for 73mGe and 78mBr).
+The 73mGe shell decrypts its agenix secrets on entry and needs the matching ssh key.
 Contact me for access to data.
