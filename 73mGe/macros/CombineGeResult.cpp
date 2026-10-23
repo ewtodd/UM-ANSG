@@ -241,8 +241,7 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
     } else {
       continue;
     }
-    Bool_t am_ref_group =
-        r.label.Contains("(01/13)") || r.label.Contains("(01/14)");
+    Bool_t am_ref_group = r.label.Contains("(01/13)");
     Double_t g = r.gain_err;
     Double_t ref2 = r.cal_err * r.cal_err - g * g;
     Double_t ref = (ref2 > 0) ? std::sqrt(ref2) : 0.0;
@@ -384,8 +383,8 @@ void CombineGeResult(const char *tag = "tau20") {
   Combination in_only = Combine(rows, 0, kept);
   if (in_only.valid)
     std::cout << "  Method 1  in-situ simultaneous fit    (" << in_only.n
-              << " datasets, 01/13-14): " << in_only.mean << " +/- "
-              << in_only.err << " keV" << std::endl;
+              << " datasets, 01/13): " << in_only.mean << " +/- " << in_only.err
+              << " keV" << std::endl;
   if (rs.valid)
     std::cout << "  Method 2  live-time rate subtraction  (" << rs.n
               << " datasets, 01/15-16): " << rs.mean << " +/- " << rs.err
@@ -468,7 +467,7 @@ void CombineGeResult(const char *tag = "tau20") {
   Double_t stat_ev = in_only.valid ? in_only.stat_part * 1000.0 : 0;
   Double_t off_ev = in_only.valid ? in_only.off_part * 1000.0 : 0;
   Double_t mult_ev = in_only.valid ? in_only.mult_part * 1000.0 : 0;
-  std::cout << std::left << std::setw(46) << "COMBINED (01/13-14 in-situ, BLUE)"
+  std::cout << std::left << std::setw(46) << "COMBINED (01/13 in-situ, BLUE)"
             << std::right << std::fixed << std::setprecision(5) << std::setw(10)
             << combined_mean << std::setprecision(2) << std::setw(8) << stat_ev
             << std::setw(8) << off_ev << std::setw(8) << mult_ev

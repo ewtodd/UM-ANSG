@@ -1,117 +1,130 @@
 # 73mGe — status and plan (2026-10-23)
 <!---->
-The measurement is the energy of the bare 73mGe isomeric gamma ray seen in the pixelated CZT detector.
-ENSDF gives 68.752 ± 0.007 keV for the gamma ray.
-The Ge-detector values (68.79–68.82 keV) include the recoil deposit that a CZT measurement of an external source does not see, so a CZT result there would mean a bias.
-The previously reported 68.7502 ± 0.0145 keV (c260617) came from a pol2 calibration that assigned 84.936 keV to the Pb Kβ1,3 blend; the change from it has to be explained step by step, not as one bug.
+The measurement is the energy of the bare 73mGe gamma ray seen in the pixelated CZT detector; ENSDF gives 68.752 ± 0.007 keV.
+Ge-detector values (68.79–68.82 keV) include a recoil deposit this measurement does not see, so a CZT result there would mean a bias.
+The previously reported 68.7502 ± 0.0145 keV (c260617) came from a pol2 that gave the Pb Kβ1,3 blend Kβ1's energy; that alone pulled Ge down by about 27 eV (Calibration, below).
 <!---->
-## Production pipeline
+## Current result (tau20, 01/14 dropped)
 <!---->
-`macros/CalibrateAndFit.cpp` with `macros/GainTransferFit.hpp` (replaces `CalibrationLow.cpp`):
+| Run | Method | Ge [keV] | fit [eV] | cal [eV] | χ²/ndf |
+|---|---|---|---|---|---|
+| Cu shield 10%, 01/13 | in-situ | 68.7788 | 20.7 | 6.3 | 1.72 |
+| Cd shield 10%, 01/13 | in-situ | 68.7537 | 30.7 | 12.9 | 1.08 |
+| Cd shield 25%, 01/13 | in-situ | 68.7584 | 33.0 | 12.1 | 1.48 |
+| No shield 5%, 01/15 | rate-sub | 68.7858 | 35.1 | 6.3 | 1.55 |
+| Graphite castle 10%, 01/16 | rate-sub | 68.7830 | 56.2 | 9.3 | 0.91 |
 <!---->
-- **Method 1, 01/13–14, in-situ.**
-  Simultaneous fit of each background run (Pb Kα2/Kα1) and its signal run (the same Pb lines plus Ge) in raw energy.
-  The reference pair (Cu 10%, 01/13) is calibrated with a pol1 through Am-241 (source run) and the background-run Pb Kα lines; the other pairs inherit it through a Pb gain factor.
-  Ge is read from the post-calibration fit of the signal run.
-- **Method 2, 01/15–16, rate subtraction.**
-  Pol1 through Am-241 and Ba-133 80.998 keV from the post-reactor source runs; Ge from the live-time-normalised signal minus background residual, with the tail interpolated between Am and Ba.
-  The 01/14 rate-subtracted row has been dropped: 01/14 is either fixed in the in-situ fit or dropped entirely.
-- **Lineshape.** Gaussian plus a low-side exponential tail, τ/σ ≤ 20, the tail amplitude a full-range yield ratio (Analysis-Utilities 7dc3ae8).
-  Testbed closure of the in-situ fit with physical truth: −1.7 ± 3.0 eV over 50 testbeds.
-- **Combiners.** `CombineGeResult(tag)` quotes Method 1 by BLUE and takes |Method 1 − Method 2| as the method systematic; `CombineGeResultAlt(tag)` is the paper-style mean with outlier removal.
+- Method 1 (BLUE, three in-situ runs): 68.7695 ± 0.0171 keV, χ²/ndf 0.26.
+- Method 2 (01/15–16): 68.7850 ± 0.0302 keV.
+- Quoted: **68.7695 ± 0.0231 keV**, the 15.5 eV method gap as a systematic: +17.5 eV, 0.7σ from ENSDF.
+- Paper-style: 68.7723 ± 0.0148 keV.
 <!---->
-Switches, fixed when the macro loads; each combination writes its own `root_files/calibrated_<tag>`, `plots/calibration_low_<tag>` and `results/ge_<tag>.result`:
+## Pipeline
+<!---->
+`macros/CalibrateAndFit.cpp` with `macros/GainTransferFit.hpp`, on Analysis-Utilities 5d7032b.
+<!---->
+- **Method 1, 01/13, in-situ.** Each background run (Pb Kα2/Kα1) is fitted together with its signal run (the same lines plus Ge) in raw energy: one Pb shape and one low tail, each run's Pb centroids free.
+  The Cu 10% pair is calibrated with a pol1 through Am-241 and its background-run Pb Kα; the two Cd pairs inherit it through their own Pb Kα.
+- **Method 2, 01/15–16, rate subtraction.** A pol1 through Am-241 and Ba-133 80.998 keV from the source runs; Ge from the live-time-normalised signal-minus-background residual (62–71.5 keV, 255 eV bins, linear residual background, tail interpolated between Am and Ba).
+  The Ba doublet is fitted with one width, one tail and ENSDF's 2.65 / 32.9 yield ratio.
+- **01/14 is not used.** The detector was probably unbiased overnight and re-biased that morning, and there was no Am run, so no transfer from 01/13 applies. It read +40 to +99 eV in every configuration. Its three fit states are still tracked, unused.
+- **Lineshape.** Gaussian plus a low exponential tail, τ/σ ≤ 20; testbed closure of the in-situ fit −1.7 ± 3.0 eV.
+- **Combiners.** `CombineGeResult(tag)`: BLUE of Method 1, |Method 1 − Method 2| as the method systematic. `CombineGeResultAlt(tag)`: paper-style mean with outlier removal.
+<!---->
+Switches, read when the macro loads; each combination writes its own `root_files/calibrated_<tag>`, `plots/calibration_low_<tag>` and `results/ge_<tag>.result`:
 <!---->
 | Variable | Tag part | Effect |
 |---|---|---|
 | (none) | `tau20` | production |
-| `LINESHAPE=legacy` | `tau8` | lineshape before 2026-10-22 (τ/σ ≤ 8, Gaussian rate-sub) |
+| `LINESHAPE=legacy` | `tau8` | lineshape before 2026-10-22 |
 | `FIT_HARD=1` | `_hard` | Minuit strategy 2, final HESSE, 200k calls |
-| `PB_ANCHOR=signal` | `_sigpb` | each signal run calibrated on its own Pb Kα (see below) |
+| `PB_ANCHOR=signal` | `_sigpb` | each signal run calibrated on its own Pb Kα (the pair calibration plus an offset) |
+| `TRANSFER=offset` | `_oxfer` | the Cd pairs inherit the reference calibration shifted, not scaled |
+| `FIDUCIAL=interior` | `_int` | every run keeps only each crystal's 9 × 9 interior pixels |
+| `BKG=linear` | `_linbkg` | a sloped continuum in the in-situ fit |
 <!---->
-A new tag needs saved fit states in `plots/calibration_low_<tag>/fits`, copied from `tau20`'s; without them the fitter opens the interactive editor.
-Only the `tau20` result and its fit states are tracked, besides `results/ge_amxfer.result` from the removed amxfer configuration.
+A new tag needs fit states in `plots/calibration_low_<tag>/fits` copied from `tau20`'s, or the fitter opens the editor; for `BKG=linear`, free the copied `BkgSlope` (`0 0.0001 0`).
+Only `tau20`'s result and states are tracked.
 <!---->
-## Current result (tau20)
+## Configuration matrix (01/14 dropped)
 <!---->
-| Run | Method | Ge [keV] | fit [eV] | cal [eV] | χ²/ndf |
-|---|---|---|---|---|---|
-| Cu shield 10%, 01/13 | in-situ | 68.7760 | 20.1 | 4.1 | 1.58 |
-| Cd shield 10%, 01/13 | in-situ | 68.7291 | 30.4 | 8.1 | 1.14 |
-| Cd shield 25%, 01/13 | in-situ | 68.7596 | 33.3 | 8.5 | 1.49 |
-| Cu shield 10%, 01/14 | in-situ | 68.8375 | 19.7 | 7.4 | 2.34 |
-| No shield 5%, 01/15 | rate-sub | 68.7759 | 34.4 | 6.3 | 1.57 |
-| Graphite castle 10%, 01/16 | rate-sub | 68.7877 | 57.6 | 11.3 | 0.85 |
+Ge − 68.752 keV in eV per in-situ row; σ counts the ENSDF error. The rate-sub rows are +34 / +31 eV with all pixels and +76 / −10 eV with interior pixels.
 <!---->
-- Method 1 (BLUE, the four in-situ runs): 68.7887 ± 0.0256 keV, χ²/ndf 3.71.
-- Method 2 (01/15–16): 68.7790 ± 0.0301 keV.
-- Quoted: **68.7887 ± 0.0274 keV**, with the 9.7 eV method gap as a systematic.
-- Without 01/14 (`results/ge_tau20_no0114.result`, untracked): Method 1 68.7621 ± 0.0158 keV, quoted 68.7621 ± 0.0232 keV with a 16.9 eV method gap.
+| Tag | Cu 01/13 | Cd 10% | Cd 25% | Method 1 (χ²/ndf) | Gap | Quoted | Paper-style |
+|---|---|---|---|---|---|---|---|
+| `tau20` | +27 | +2 | +6 | 68.7695 ± 0.0171 (0.26) | 15 | 68.7695 ± 0.0231 (0.7σ) | 68.7723 ± 0.0148 |
+| `tau20_oxfer` | +27 | +13 | +18 | 68.7742 ± 0.0172 (0.07) | 11 | 68.7742 ± 0.0203 (1.0σ) | 68.7762 ± 0.0145 |
+| `tau20_sigpb` | +22 | −32 | +10 | 68.7582 ± 0.0184 (1.09) | 27 | 68.7582 ± 0.0325 (0.2σ) | 68.7639 ± 0.0182 |
+| `tau20_sigpb_oxfer` | +22 | −22 | +22 | 68.7625 ± 0.0177 (0.77) | 22 | 68.7625 ± 0.0286 (0.4σ) | 68.7676 ± 0.0172 |
+| `tau20_int` | +38 | −16 | +22 | 68.7762 ± 0.0185 (0.89) | 25 | 68.7762 ± 0.0312 (0.8σ) | 68.7805 ± 0.0181 |
+| `tau20_oxfer_int` | +38 | −8 | +33 | 68.7802 ± 0.0186 (0.67) | 21 | 68.7802 ± 0.0281 (1.0σ) | 68.7839 ± 0.0172 |
+| `tau20_sigpb_int` | +36 | −44 | +4 | 68.7632 ± 0.0284 (2.16) | 38 | 68.7632 ± 0.0475 (0.2σ) | 68.7705 ± 0.0226 |
+| `tau20_sigpb_oxfer_int` | +36 | −33 | +17 | 68.7675 ± 0.0244 (1.59) | 34 | 68.7675 ± 0.0417 (0.4σ) | 68.7744 ± 0.0213 |
+| `tau20_linbkg` | +29 | +5 | −14 | 68.7684 ± 0.0170 (0.60) | 17 | 68.7684 ± 0.0238 (0.7σ) | 68.7709 ± 0.0154 |
+| `tau20_sigpb_oxfer_int_linbkg` | +44 | −33 | +24 | 68.7736 ± 0.0270 (1.80) | 28 | 68.7736 ± 0.0387 (0.6σ) | 68.7793 ± 0.0220 |
 <!---->
-None of these is final: 01/14 and 01/16 are in doubt (below), and the in-situ fit has had the signal and background Pb centroids tied.
+Every quoted value is within 1σ of ENSDF (+6 to +28 eV). Only the `tau20`, `tau20_oxfer`, `tau20_sigpb` and `tau20_sigpb_oxfer` plot directories are kept; the others are rebuilt when needed.
 <!---->
-## Findings, 2026-10-22/23
+## Open choices
 <!---->
-### The detector reading moves with count rate
+- **Pb anchor.** `PB_ANCHOR=signal` moves essentially only Cd 10% (−34 eV).
+  The a priori case: in the same crystal, pixel ring and depth slice, that signal run's Pb reads +36 ± 11 eV above its background run's, so the shift is run-wide (where the Pb lands contributes +0.2 eV), and Ge in the same run should share it. Cu 01/13 and Cd 25% show no such shift (+5 ± 12, +11 ± 25 eV).
+  The cause is unknown; the rate law predicts the opposite sign.
+  It cannot be chosen because it lands closest to ENSDF.
+- **Transfer.** Gain against offset cannot be decided inside the calibrated range: Pb Kβ lies 10 keV above it, and the Cd background runs' in-run Kα1 → Kβ1 slopes split between the two. It moves Method 1 by 4–5 eV and the Cd rows by 8–13 eV; a systematic.
+- **Interior pixels.** Found while chasing 01/14; with 01/14 gone it mostly widens the method gap.
+- **Method 2's binning and residual background.** The summed spectra carry a 264 eV comb (raw energy, every day, aligned between signal and background runs to 1 eV), and production's 255 eV bins beat against it: shifting the bins moves Ge by 13–16 eV rms, 8–10 eV with bins of the comb period, which also lower 01/15 by 15 eV. A quadratic residual background instead of the linear one moves Ge −19 (01/15) and −24 eV (01/16) with no χ² preference. Neither effect is in the error budget.
 <!---->
-- Within one data-taking session, Pb Kα reads 8–11 eV lower per 1000 counts/s per crystal: −77 eV from 10% to 90% power on 01/14 (2.4k → 9.4k /s), −140 eV from the 5% to the 90% test run on 01/13 (1.2k → 19.8k /s).
-- Pb Kα (75 keV) and Pb Kβ (85 keV) move together, so over 75–85 keV the shift is an offset, not a gain change; an offset reaches the Ge line at full size.
-- The 01/13 Cd-shield runs, taken before the Cu-shield runs, sit 110–140 eV below them at the same rate: a drift over time, the shield change, or both.
-- At fixed conditions a run is flat to ±20 eV (01/14 Cu 10%, 3.9 h); the 90% run settles by about 20 eV after its first quarter.
-- The Am-241 and Ba-133 source runs ran at 33–1440 counts/s per crystal, the beam runs at 1k–33k.
+## Findings
 <!---->
-### The 95.902 keV 113Cd(n,γ) line
+### Calibration
 <!---->
-- ENSDF 95.902 ± 0.003 keV, E2, α(K) = 1.22, 1.25 per 100 captures; present in every beam run with up to 1.6 million counts.
-- Read through each day's production calibration: 01/15 −11 / −4 eV (signal / background); 01/16 −80 eV in the 0.5% runs and −270 eV in the 10% graphite-castle runs, on the same calibration.
-- It is not a clean probe of the detector.
-  With the Cd shield (captures in the shield, gammas entering from outside) it tracks Pb; without it (captures in the CZT) it reads 31–67 eV low relative to Pb, more at higher rate, and drifts −70 eV through the 01/14 90% run while Pb drifts −20 eV.
-- Its Cd-Kα escape at 72.79 keV is too weak to anchor anything (±100–150 eV) and sits under Pb Kα2.
-- Every line reads higher deeper in the crystal: +140 to +380 eV at Z = 8.0–8.5 mm against the top 0.25 mm, for Am, Ba and the 96 keV line alike.
-  The 96 keV events are not uniform in reconstructed depth; on 01/15 45% sit in the top 0.25 mm, as for Am.
+- **The old pol2.** With the Kβ1,3 blend given 84.936 keV (its centroid is about 84.770 with Kβ3 at 0.52 of Kβ1), a pol2 through Am, Pb Kα and Kβ puts Cu 01/13's Ge 27.4 eV below the pol1; with the blend's centroid, 5.4 eV above.
+- **Curvature, 01/13.** The in-run Kα1 → Kβ1 slope over 75–85 keV (eight runs, 0.98817 ± 0.00052) matches Am → Kα over 59.5–75 keV (0.98822): a quadratic of that size moves Ge by about 1 eV. Both lines lie outside the anchors, so this bounds a curvature across the range, not structure between Am and Pb.
+- **Curvature, 01/15–16.** Ba-133 53.16 keV reads −5.6 ± 16.7 eV on the 01/15 calibration; a pol2 through Ba 53 + Am + Ba 81 moves Ge −3.6 (01/15) and +17 eV (01/16, Ba 53 at ±52 eV). The 81 keV line's Te-Kα escape (53.53 / 53.80 keV) can pull Ba 53. The response is strongly nonlinear above 81 keV: the low pol1 misses Ba 276–384 keV by 1.8–3.9 keV, a pol2 cannot span 53–384 keV, and a pol3 through everything moves Ge −10 and −13 eV; those lines do not usefully constrain curvature near Ge.
+- **No Pb in the source runs**, so 01/15–16 have no anchor between Am and Ba 81.
+- **Depth.** Lines read higher deeper in the crystal, and not as a pure offset: across four depth slices Am moves 220 eV and Pb Kα1 130 eV, so the slope varies 0.984–0.992. A per-depth calibration is statistically possible for Cu and Cd 10% (marginal for Cd 25%, whose signal-run Pb is 6–11k per slice) and, in throwaway TF1 fits, leaves Method 1 near 68.763 keV. Ge sits in slightly different depth cells than Pb; Pb measured on Ge's cells reads 10.6 ± 5.0 eV lower.
+- **Edge pixels.** In each crystal's outer ring and its ring along the gap, Pb Kα1 reads 7–155 eV off its all-pixel value.
+- **The ~43 keV "peak"** is the threshold: split by each pixel's turn-on (40–45 keV), it moves with it (42.14 / 42.94 / 43.75 keV for turn-ons at 40.13 / 41.12 / 42.19). Not a line, not an anchor.
 <!---->
-### 01/15 and 01/16
+### Lineshape and fit model
 <!---->
-- Pb is too weak in these beam runs to fit, so there is no clean in-situ line.
-- 01/16: the castle runs (27–33k /s) are 100–130 times the rate of the 254 /s calibration run; on the Pb slope that is a shift of a few hundred eV, the size of the 96 keV line's −270 eV.
-- 01/15: the 96 keV line reads within about 10 eV of its energy, but only that line checks it.
-- A template fit (signal = Ge + smooth factor × background run, background-run noise in the χ²) gives 01/15 68.7533 ± 0.0358 and 01/16 68.7978 ± 0.0532 keV with production's tails; with one tail shared by both Ba lines, 68.763 and 68.807 keV.
+- **Pb Kα2/Kα1.** ENSDF gives 0.595; the background runs fit 0.595 ± 0.015 (Cu), 0.567 ± 0.013 (Cd 10%) and 0.577 ± 0.013 (Cd 25%), as Pb and Cd absorb 72.8 keV more than 75.0 keV. Fixing it moves both lines together by ≤ 6 eV and Method 1 by about −1.5 eV; not adopted.
+- **High-side tail (pileup).** Background runs never take one; shared by a pair it is zero in three of four; per run, the signal runs take a 3–5% tail at the τ/σ = 1 bound (a high-side widening), Cd 25% rails at τ/σ = 20 (a pedestal) and Cd 10% fails. Where sensible it moves Ge up 5–8 eV. Not adopted.
+- **Signal-run-only in-situ fit** (a one-channel `FitSimultaneous`, no library change): the signal runs' own tails come out shorter, moving Ge −3 (Cu) and −16 eV (Cd 10%); Cd 25%'s signal run is too weak to fix its shape alone.
+- **Ba doublet.** With free yields the weak line takes 0.0866 (01/15) and 0.1066 (01/16) of the strong one against 0.0805; fixing it leaves χ²/ndf unchanged.
 <!---->
-### Signal and background runs were forced to one Pb centroid
+### Runs and rates
 <!---->
-- `RooFitUtils::LinkPeakShape` links `Mu` with the shape parameters, contrary to its documentation, since AU bb1721d (2026-05).
-  `RunBkgGeSim` uses it to share the Pb shape between the channels, so every in-situ fit has fitted one compromise Pb centroid to both runs; the printed signal and background centroids agree to 0.1 eV in all four pairs.
-- With the centroid freed (`PB_ANCHOR=signal`, which links the other eight shape parameters one by one) the signal runs read +4 ± 6 (Cu 01/13), +31 ± 6 (Cd 10%), −4 ± 20 (Cd 25%) and +16 ± 4 eV (Cu 01/14) above their background runs, as independent fits found.
-- Ge moves by only −9 to +2 eV, because the background run's Pb, no longer pulled toward the signal run, moves the pair calibration the other way; Method 1 goes from 68.7887 to 68.7891 keV.
-- Open: the 01/14 in-situ χ²/ndf rose from 2.34 to 2.62, which a freed parameter should not do.
-  Either the fit starts the freed centroid from a default about 0.35 keV away (the saved states come from the tied fit) and lands in a worse minimum, or the signal run's Pb Kα has a component that does not follow the detector (for example fluorescence excited by the activated sample, from elsewhere and at other depths).
+- 01/13 start times: Test 5% 07:04, Cd bkg 25% 07:32, Test 90% 08:09, Cd sig 25% 08:32, Cd sig 10% 08:52, Cd bkg 10% 10:04, Cu sig 10% 11:41, Cu bkg 10% 13:45, Am-241 15:43.
+- From the two 01/13 test runs Pb Kα reads −7.5 eV per 1000 counts/s per crystal; corrected for that it is flat to 10:04 and 130–137 eV higher from 11:41, at the Cd → Cu shield change.
+- The rate law does not carry over to signal runs: at 1.7–2.5 times their background runs' rates (filtered 1.0–12k counts/s per crystal) they read 12–57 eV above it.
+- Rates against the calibration runs: 01/13 Am 33 counts/s per crystal; 01/15 Am 86, Ba 1393, beam 5.8–7.5k; 01/16 Am + Ba 254, castle 26.5–33.5k.
+- In template fits Ge − Pb within a signal run is the same in the Cd and Cu runs (±45 eV) while Pb moves up to 213 eV between them.
 <!---->
-### The 01/14 outlier
+### Method 2 checks
 <!---->
-- In raw energy, 01/14's Ge sits 99 ± 42 eV higher relative to the Pb of its own run than on 01/13: the outlier, seen without any calibration.
-  It is not a gain change: the Pb Kα–Kβ spacing agrees with 01/13 to about 15 eV over 10 keV, at most 10 eV at Ge.
-- It is confined to the cathode surface.
-  01/14 − 01/13 in (Ge − Pb): +24 ± 70 eV at Z = 8–9 mm, −25 ± 74 at 9–9.5 mm, **+240 ± 73 at 9.5–10 mm**.
-  On 01/13, Ge reads 200–250 eV lower at the surface than deeper, as Pb does; on 01/14 it does not (+13 ± 77 eV), while Pb does.
-- The Pb depth profile is the same on both days, the top-slice residuals show no extra line with the Ge width fixed to Pb's, and the Ge illumination per crystal is unchanged.
-  The excess appears in crystals 0–2 and not in crystal 3 (2σ).
+- **Fits without subtraction** read +91 (01/15) and +134 eV (01/16) on comb-period bins, and a template with a free scale degenerates (it fits 0.3–1.3 against live-time ratios of 3.6 and 1.8): the subtraction removes real structure near Ge. Pb is not visible in these beam runs, and the 95.9 keV line, whose escapes fall under Ge, is 1.2 times stronger in the signal runs than live time predicts.
+- **The isomer's 53.440(9) keV line** is not cleanly visible in the residuals (a shelf at 51–54 keV); no use as an in-run anchor.
+- **Unbinned fits are not viable.** Every pixel's energies sit on their own discrete 1–8 eV grid (the 264 eV comb is the coarse imprint), and the signal and background runs populate those grids differently. Signal − α × background on the continuum below Ge is overdispersed 12–16 (01/15) and 7–12 times (01/16) at 0.5–10 eV bins, about 4 at 50 eV and 1.4–1.7 at 255 eV, with an additive or a multiplicative smooth residual alike. A parametric two-run fit and an on/off likelihood with the background profiled per bin both fail below ~20 eV; from there up the on/off likelihood (per-crystal live time and residual) agrees with rate-sub: 68.76–68.81 keV on 01/15 and 68.77–68.80 keV on 01/16 at 255 and 262 eV bins.
+- **Rate-sub errors** are not scaled for the residual's overdispersion (χ²/ndf 1.4–1.9 at 255 eV): they are about 20–35% too small.
+<!---->
+### Ruled out
+<!---->
+- **95.9 keV escapes under Ge in the in-situ runs**: at the measured 0.5% (Te) and 2.5% (Cd) of the line, Ge moves ≤ 7 eV, and unmodelled escapes pull it low.
+- **The 95.9 keV line as a probe**: in Cu runs it reads 31–67 eV low against Pb, and −270 eV in the 01/16 castle runs.
+<!---->
+### Analysis-Utilities
+<!---->
+- `FitResult::cov_qual`'s comment in `include/FittingUtils.hpp` has Minuit's scale inverted (since 27d7022); the code reads it correctly.
+- The retry recovers the 01/15 Ba refit (status 0, χ²/ndf 1.488).
 <!---->
 ## Plan
 <!---->
-1. **Analysis-Utilities (in progress).**
-   `LinkPeakShape` stops tying `Mu`, and old saved states start the freed centroid from the source's; `FitDoublePeak(..., link_sigma, link_tails)` (written, under review); the `PlottingUtils::LegendWidthPx` regression under ROOT 6.41.
-   Then `nix flake lock --update-input utils`.
-2. **After the pin.**
-   Remove the explicit links in `RunBkgGeSim`; rerun `tau20`, `tau20_hard` and `tau20_sigpb`, and check that the 01/14 χ² recovers under the hard fit.
-   Decide whether the signal run is calibrated on its own Pb.
-3. **Ba-133 anchors.**
-   Fit the 79.6/81.0 keV doublet with one shared σ and tail (yield ratio fixed at 0.0805 if needed); fit Am together with Ba 53.16 keV in the 01/16 combined source run; keep 53.16 keV as a validation line.
-4. **01/14.**
-   Find what moves the surface Ge events (per pixel, Ge − Pb against depth, the detector bias log and the run order); fix the in-situ fit or drop 01/14.
-5. **01/15–16.**
-   Decide: drop 01/16 for the rate gap, and keep 01/15 with a calibration-transfer systematic of about ±50 eV, unless an in-situ handle turns up.
-   The 96 keV line's Te-Kα and Cd-Kβ escapes (68.4–68.7 and 69.3–69.8 keV) sit under and next to Ge and are not yet in the template fit.
-6. **Injection sweep.**
-   `InjectionTest.cpp` still requires the `gaintransfer` tag, production does not save fit endpoints for it to draw truth from, and trial plots are kept by default.
-7. **Write-up.**
-   Account for the move from 68.7502 keV step by step: the RooFit fix (≤ 4 eV), fit convergence (Offset, up to 36 eV), the lineshape, the calibration anchors, and the Pb centroid link.
+1. **Configuration**, on grounds that do not use the expected energy: Pb anchor (the run-wide Cd 10% shift argues for the signal run), transfer model (a systematic), interior cut. Make the choice the default and track its states and result.
+2. **The Cd pairs** inherit the Cu reference across the 130 eV step at the Cd → Cu change; if the bias was cycled then, they have 01/14's problem.
+3. **Method 2**: settle the binning (comb period or the on/off fit) and carry the residual-background shape as a systematic; decide on 01/16.
+4. **Per-depth calibration** with production-quality fits, if wanted.
+5. **Analysis-Utilities**: report the `cov_qual` comment; review the five checklists.
+6. **Injection sweep**: `InjectionTest.cpp` still requires the `gaintransfer` tag and lists the 01/14 pair.
+7. **Write-up**: the move from 68.7502 keV step by step — the Kβ blend in the old pol2 (−27 eV), the RooFit fix (≤ 4 eV), fit convergence (up to 36 eV), the lineshape, the Pb centroid link, dropping 01/14, and the configuration choices.

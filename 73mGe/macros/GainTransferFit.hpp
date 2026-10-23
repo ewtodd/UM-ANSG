@@ -36,6 +36,8 @@
 const Float_t E_AM241 = 59.5409;
 const Float_t E_BA133_79 = 79.6142;
 const Float_t E_BA133_81 = 80.9979;
+// ENSDF intensities, 2.65(5) and 32.9(3) per 100 decays.
+const Double_t BA133_79_OVER_81 = 2.65 / 32.9;
 const Float_t E_PB_KA2 = 72.8042;
 const Float_t E_PB_KA1 = 74.9694;
 
@@ -59,7 +61,14 @@ const Float_t RATESUB_HI = 71.5;
 
 const Bool_t LINK_PB_KA_SIGMA = kTRUE;
 
-const Bool_t USE_FLAT_BKG = kTRUE;
+// BKG=linear: a sloped continuum in the in-situ fit. With the flat one the
+// 01/14 signal residuals run from -2 sigma at 65 keV to +2 sigma at 80 keV.
+inline Bool_t LinearBkgRequested() {
+  const char *env = getenv("BKG");
+  return env && TString(env) == "linear";
+}
+
+const Bool_t USE_FLAT_BKG = !LinearBkgRequested();
 
 // LINESHAPE=legacy reproduces the lineshape used before 2026-10-22 (tail
 // capped at 8 sigma, Gaussian rate-sub fit) under its own tag, so the effect
@@ -83,16 +92,48 @@ inline Bool_t SignalPbAnchorRequested() {
   return env && TString(env) == "signal";
 }
 
+// TRANSFER=offset: the pairs without their own Am run inherit the reference
+// calibration shifted by their Pb K-alpha offset from the reference run, not
+// scaled by the Pb ratio. At Ge the two differ by ~7% of the Pb shift. No line
+// inside the calibrated range resolves them (Pb K-beta lies above it), so the
+// choice is a systematic, not a measurement.
+inline Bool_t OffsetTransferRequested() {
+  const char *env = getenv("TRANSFER");
+  return env && TString(env) == "offset";
+}
+
+// FIDUCIAL=interior: every run, calibration and source runs included, keeps
+// only the 9 x 9 interior pixels of each crystal, dropping its outer ring and
+// the ring along the gap between crystals. Pb K-alpha1 reads 7-155 eV away
+// from its all-pixel value in those rings, and 01/14's Ge excess is largest
+// there.
+inline Bool_t InteriorPixelsRequested() {
+  const char *env = getenv("FIDUCIAL");
+  return env && TString(env) == "interior";
+}
+
+// Pixel centres sit at |x|, |y| = 1.743 ... 20.769 mm on a 1.9 mm pitch.
+inline Bool_t InInteriorPixels(Float_t x_mm, Float_t y_mm) {
+  const Float_t inner_edge = Constants::PIXEL_CENTERS_X_MM[11] + 0.5;
+  const Float_t outer_edge = Constants::PIXEL_CENTERS_X_MM[21] - 0.5;
+  Float_t ax = TMath::Abs(x_mm), ay = TMath::Abs(y_mm);
+  return ax > inner_edge && ax < outer_edge && ay > inner_edge &&
+         ay < outer_edge;
+}
+
 // At 8 the low-exp tail railed on every line. Up to 20 it settles inside
 // (tau/sigma 9.5 Am, 10.5 Ba, 10.7 Pb in-situ) and the Pb Ka chi2 drops from
 // 2.6 to 1.1 per degree of freedom.
 const Double_t TAIL_RATIO_MAX = LegacyLineshape() ? 8.0 : 20.0;
 
-// Fixed when the macro loads, from the three switches above, so each
+// Fixed when the macro loads, from the switches above, so each
 // configuration writes its own calibrated trees, plots and results.
 const TString RESULT_TAG = TString(LegacyLineshape() ? "tau8" : "tau20") +
                            (HardFitRequested() ? "_hard" : "") +
-                           (SignalPbAnchorRequested() ? "_sigpb" : "");
+                           (SignalPbAnchorRequested() ? "_sigpb" : "") +
+                           (OffsetTransferRequested() ? "_oxfer" : "") +
+                           (InteriorPixelsRequested() ? "_int" : "") +
+                           (LinearBkgRequested() ? "_linbkg" : "");
 const TString OUT_SUBDIR = "calibrated_" + RESULT_TAG;
 
 // Which result set this run writes. RESULT_TAG names the default one;
@@ -220,13 +261,15 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
   std::vector<Bool_t> sig_step(n_bkg + 1, kTRUE);
   sig_step[n_bkg] = kFALSE;
 
+  // The slope is held only for the flat model; a linear one fits it.
   sim.AddChannel("bkg", bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
                  Constants::BIN_WIDTH_KEV, n_bkg, bkg_peak_mus, kFlatBkg, kStep,
-                 kLowExp, kLowLin, kHighExp, bkg_fixed, kFALSE, kTRUE, kFALSE);
+                 kLowExp, kLowLin, kHighExp, bkg_fixed, kFALSE, kFlatBkg,
+                 kFALSE);
   sim.AddChannel("sig", sig_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
                  Constants::BIN_WIDTH_KEV, n_bkg + 1, sig_mus, kFlatBkg, kStep,
-                 kLowExp, kLowLin, kHighExp, sig_fixed, kFALSE, kTRUE, kFALSE,
-                 sig_step);
+                 kLowExp, kLowLin, kHighExp, sig_fixed, kFALSE, kFlatBkg,
+                 kFALSE, sig_step);
   // Share ONE low-side tail (LowExp + LowLin) across both Pb-Ka lines and the
   // Ge peak, tied to bkg:Ka1. Fit independently, Ka1 inflates its own tail to
   // absorb the inter-peak fill so neither Ka tail is trustworthy, and the Ge
@@ -254,27 +297,10 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
   if (LINK_PB_KA_SIGMA && n_bkg == 2)
     sim.LinkParameter("bkg:Sigma2", "bkg:Sigma1");
 
-  // LinkPeakShape ties Mu along with the shape. With PB_ANCHOR=signal the
-  // signal run's Pb lines need their own centroids, so the same links are made
-  // one by one without Mu.
-  const char *shape_without_mu[8] = {"Sigma",
-                                     "StepAmplitude",
-                                     "LowExpTailAmplitude",
-                                     "LowExpTailRatio",
-                                     "LowLinTailAmplitude",
-                                     "LowLinTailSlope",
-                                     "HighExpTailAmplitude",
-                                     "HighExpTailRatio"};
-  for (Int_t i = 0; i < n_bkg; i++) {
-    if (!SignalPbAnchorRequested()) {
-      sim.LinkPeakShape("sig", i, "bkg", i);
-      continue;
-    }
-    TString idx = TString::Format("%d", i + 1);
-    for (Int_t p = 0; p < 8; p++)
-      sim.LinkParameter(TString("sig:") + shape_without_mu[p] + idx,
-                        TString("bkg:") + shape_without_mu[p] + idx);
-  }
+  // The signal run's Pb lines keep their own centroids: the two runs of a pair
+  // sit at different rates, and the reading moves with rate by tens of eV.
+  for (Int_t i = 0; i < n_bkg; i++)
+    sim.LinkPeakShape("sig", i, "bkg", i);
 
   sim.SeedChannel("bkg", seed);
   if (precomputed_sig_seed)

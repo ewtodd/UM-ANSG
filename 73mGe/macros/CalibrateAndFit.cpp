@@ -86,6 +86,22 @@ struct LineCalConfig {
   TString ge_label;
 };
 
+std::vector<Double_t> LoadInteriorEnergies(TTree *tree) {
+  std::vector<Double_t> energies;
+  Float_t energy = 0, x = 0, y = 0;
+  tree->SetBranchAddress("energykeV", &energy);
+  tree->SetBranchAddress("xmm", &x);
+  tree->SetBranchAddress("ymm", &y);
+  Long64_t n = tree->GetEntries();
+  for (Long64_t i = 0; i < n; i++) {
+    tree->GetEntry(i);
+    if (InInteriorPixels(x, y))
+      energies.push_back(energy);
+  }
+  tree->ResetBranchAddresses();
+  return energies;
+}
+
 std::vector<Double_t> LoadFiltered(const TString &input_name) {
   std::vector<Double_t> events;
   TFile *file = IO::OpenForReading("filtered/" + input_name + ".root");
@@ -100,7 +116,9 @@ std::vector<Double_t> LoadFiltered(const TString &input_name) {
     if (!tree)
       continue;
     std::vector<Double_t> ch =
-        RooFitUtils::LoadEventsFromTree(tree, "energykeV");
+        InteriorPixelsRequested()
+            ? LoadInteriorEnergies(tree)
+            : RooFitUtils::LoadEventsFromTree(tree, "energykeV");
     events.insert(events.end(), ch.begin(), ch.end());
   }
   file->Close();
@@ -108,19 +126,43 @@ std::vector<Double_t> LoadFiltered(const TString &input_name) {
   return events;
 }
 
+void PrintAnchorFitStatus(const TString &peak_name, const TString &input_name,
+                          const FitResult &fr) {
+  std::cout << "ANCHOR-FIT " << peak_name << " " << input_name << ": status "
+            << fr.fit_status << "  covQual " << fr.cov_qual << "  retried "
+            << (fr.fit_retried ? "yes" : "no") << "  chi2/ndf " << std::fixed
+            << std::setprecision(3) << fr.reduced_chi2;
+  if (fr.peaks.size() == 2 && fr.peaks[1].gaus_amplitude > 0)
+    std::cout << "  yield ratio " << std::setprecision(4)
+              << fr.peaks[0].gaus_amplitude / fr.peaks[1].gaus_amplitude
+              << "  tau/sigma " << std::setprecision(2)
+              << fr.peaks[1].low_exp_tail_ratio;
+  std::cout << std::endl;
+  if (fr.fit_status >= RooFitUtils::kFirstInvalidMinimumStatus)
+    std::cerr << "WARNING: " << peak_name << " " << input_name
+              << " ended without a valid minimum" << std::endl;
+}
+
 FitResult FitCalPeak(const std::vector<Double_t> &events,
                      const TString &input_name, const TString &peak_name,
                      Float_t fit_low, Float_t fit_high, Bool_t double_peak,
-                     Double_t mu1, Double_t mu2, Bool_t link_sigma = kFALSE) {
+                     Double_t mu1, Double_t mu2, Bool_t link_sigma = kFALSE,
+                     Bool_t link_tails = kFALSE,
+                     Double_t gaus_yield_ratio = 0.0) {
   if (events.empty())
     return {};
   RooFitUtils fitter(events, fit_low, fit_high, Constants::BIN_WIDTH_KEV, kTRUE,
                      kFALSE, kTRUE, kFALSE, kFALSE);
   fitter.SetTailRatioMax(TAIL_RATIO_MAX);
   fitter.SetInteractive();
+  FitResult fr;
   if (double_peak)
-    return fitter.FitDoublePeak(input_name, peak_name, mu1, mu2, link_sigma);
-  return fitter.FitSinglePeak(input_name, peak_name);
+    fr = fitter.FitDoublePeak(input_name, peak_name, mu1, mu2, link_sigma,
+                              link_tails, gaus_yield_ratio);
+  else
+    fr = fitter.FitSinglePeak(input_name, peak_name);
+  PrintAnchorFitStatus(peak_name, input_name, fr);
+  return fr;
 }
 
 void AddCalPoint(CalibrationData &cal_data, const TString &name, Float_t mu,
@@ -350,6 +392,72 @@ Double_t GainTransferEnergyError(const CalFit &ref_cal, Double_t mu_raw,
   return std::fabs(-mu_raw / (g * g) * fprime) * sigma_g;
 }
 
+struct OffsetResult {
+  Double_t delta = 0; // raw run - raw reference, keV
+  Double_t sigma = 0;
+  Double_t chi2_ndf = 0;
+  Int_t n = 0;
+};
+
+OffsetResult PbOffsetVsReference(const std::vector<Float_t> &mu_run,
+                                 const std::vector<Float_t> &err_run,
+                                 const std::vector<Float_t> &mu_ref,
+                                 const std::vector<Float_t> &err_ref) {
+  OffsetResult out;
+  Double_t sw = 0, swd = 0;
+  std::vector<Double_t> ds, ws;
+  size_t n = std::min(mu_run.size(), mu_ref.size());
+  for (size_t i = 0; i < n; i++) {
+    if (mu_run[i] <= 0 || mu_ref[i] <= 0)
+      continue;
+    Double_t d = (Double_t)mu_run[i] - (Double_t)mu_ref[i];
+    Double_t var =
+        (Double_t)err_run[i] * err_run[i] + (Double_t)err_ref[i] * err_ref[i];
+    Double_t w = (var > 0) ? 1.0 / var : 1e18;
+    sw += w;
+    swd += w * d;
+    ds.push_back(d);
+    ws.push_back(w);
+  }
+  if (sw <= 0)
+    return out;
+  out.delta = swd / sw;
+  out.sigma = std::sqrt(1.0 / sw);
+  out.n = (Int_t)ds.size();
+  if (out.n > 1) {
+    Double_t chi2 = 0;
+    for (size_t i = 0; i < ds.size(); i++)
+      chi2 += ws[i] * (ds[i] - out.delta) * (ds[i] - out.delta);
+    out.chi2_ndf = chi2 / (out.n - 1);
+    if (out.chi2_ndf > 1.0)
+      out.sigma *= std::sqrt(out.chi2_ndf);
+  }
+  return out;
+}
+
+// E(x) = ref(x - delta) for the pol1 reference: the slope and its error stay,
+// and the intercept moves by -p1 delta, its covariance with it.
+CalFit OffsetShiftCal(const CalFit &ref, Double_t delta, const TString &label) {
+  Double_t lo = 0, hi = 0;
+  ref.func->GetRange(lo, hi);
+  TF1 *shifted = new TF1("cal_low_" + label, "pol1", lo, hi);
+  CalFit out;
+  out.func = shifted;
+  out.npar = 2;
+  out.p0 = ref.p0 - ref.p1 * delta;
+  out.p1 = ref.p1;
+  out.var_p1 = ref.var_p1;
+  out.var_p0 =
+      ref.var_p0 + delta * delta * ref.var_p1 - 2.0 * delta * ref.cov_p0p1;
+  out.cov_p0p1 = ref.cov_p0p1 - delta * ref.var_p1;
+  shifted->SetParameter(0, out.p0);
+  shifted->SetParameter(1, out.p1);
+  shifted->SetParError(0, std::sqrt(std::max(0.0, out.var_p0)));
+  shifted->SetParError(1, std::sqrt(std::max(0.0, out.var_p1)));
+  shifted->SetNpx(1000);
+  return out;
+}
+
 Float_t LoadRunStartTime(const TString &input_name) {
   TFile *file = IO::OpenForReading("filtered/" + input_name + ".root");
   if (!file || file->IsZombie()) {
@@ -405,11 +513,15 @@ void ApplyPol1Cal(const std::vector<TString> &input_names, TF1 *cal,
           in_file->Get(Form("crystal%d_filtered_tree", c)));
       if (!tree)
         continue;
-      Float_t energy = 0;
+      Float_t energy = 0, x = 0, y = 0;
       tree->SetBranchAddress("energykeV", &energy);
+      tree->SetBranchAddress("xmm", &x);
+      tree->SetBranchAddress("ymm", &y);
       Int_t n_entries = tree->GetEntries();
       for (Int_t j = 0; j < n_entries; j++) {
         tree->GetEntry(j);
+        if (InteriorPixelsRequested() && !InInteriorPixels(x, y))
+          continue;
         deposited_energy = cal->Eval(energy);
         cal_tree->Fill();
       }
@@ -480,11 +592,15 @@ TH1F *BuildRateHist(const TString &input_name, TF1 *cal, const TString &hname,
     TH1F *ch = new TH1F(hname + Form("_c%d", c), "", nbins, lo, hi);
     ch->SetDirectory(nullptr);
     ch->Sumw2();
-    Float_t energy = 0;
+    Float_t energy = 0, x = 0, y = 0;
     tree->SetBranchAddress("energykeV", &energy);
+    tree->SetBranchAddress("xmm", &x);
+    tree->SetBranchAddress("ymm", &y);
     Int_t n = (Int_t)tree->GetEntries();
     for (Int_t j = 0; j < n; j++) {
       tree->GetEntry(j);
+      if (InteriorPixelsRequested() && !InInteriorPixels(x, y))
+        continue;
       ch->Fill(cal->Eval(energy));
     }
     ch->Scale(1.0 / lt);
@@ -636,11 +752,11 @@ struct SignalPbAnchor {
 };
 
 // The pair calibration shifted by a constant so that the signal run's own Pb
-// Ka lines land on their energies, weighted by their centroid errors. Pb Ka and
-// Pb Kb move together between runs at different rates, so what differs between
-// the two runs of a pair is an offset: the slope stays the pair's, and its
-// error only acts over the few keV from the Pb lines down to Ge. The
-// covariance is set so that var E(x) = offset_err^2 + var_p1 (x - x_pb)^2.
+// Ka lines land on their energies, weighted by their centroid errors. The
+// slope stays the pair's, and its error only acts over the few keV from the Pb
+// lines down to Ge; applied as a gain instead, the shift (at most ~30 eV)
+// would move Ge by at most ~2 eV. The covariance is set so that
+// var E(x) = offset_err^2 + var_p1 (x - x_pb)^2.
 SignalPbAnchor AnchorOnSignalPb(const CalFit &pair_cal,
                                 const FitResult &sig_channel,
                                 const std::vector<Double_t> &pb_mus,
@@ -770,8 +886,27 @@ ProcessPbAnchoredPair(const TString &bkg_run, const TString &sig_run,
 
   CalFit calfit;
   GainResult gain;
+  OffsetResult offset;
 
-  if (transfer_mode) {
+  if (transfer_mode && OffsetTransferRequested()) {
+    std::vector<Float_t> mu_run = {(Float_t)pre.bkg_channel.peaks.at(0).mu,
+                                   (Float_t)pre.bkg_channel.peaks.at(1).mu};
+    std::vector<Float_t> err_run = {
+        (Float_t)GuardedMuError(pair_tag + " Pb-Ka2",
+                                pre.bkg_channel.peaks.at(0), pre.bkg_channel),
+        (Float_t)GuardedMuError(pair_tag + " Pb-Ka1",
+                                pre.bkg_channel.peaks.at(1), pre.bkg_channel)};
+    std::vector<Float_t> er =
+        ref_pb_errs ? *ref_pb_errs
+                    : std::vector<Float_t>(ref_pb_mus->size(), 0.f);
+    offset = PbOffsetVsReference(mu_run, err_run, *ref_pb_mus, er);
+    calfit = OffsetShiftCal(*ref_cal, offset.delta, cal_label);
+    std::cout << "OFFSET-TRANSFER " << cal_label << ": delta = " << std::fixed
+              << std::setprecision(1) << offset.delta * 1000.0 << " +/- "
+              << offset.sigma * 1000.0 << " eV raw  (n = " << offset.n
+              << ", chi2/ndf = " << std::setprecision(2) << offset.chi2_ndf
+              << ")" << std::endl;
+  } else if (transfer_mode) {
     std::vector<Float_t> mu_run = {(Float_t)pre.bkg_channel.peaks.at(0).mu,
                                    (Float_t)pre.bkg_channel.peaks.at(1).mu};
     std::vector<Float_t> err_run = {
@@ -849,7 +984,9 @@ ProcessPbAnchoredPair(const TString &bkg_run, const TString &sig_run,
 
     if (transfer_mode) {
       out.ge_gain_err =
-          GainTransferEnergyError(*ref_cal, mu_ge, gain.g, gain.sigma_g);
+          OffsetTransferRequested()
+              ? calfit.p1 * offset.sigma
+              : GainTransferEnergyError(*ref_cal, mu_ge, gain.g, gain.sigma_g);
       out.ge_cal_err = std::hypot(out.ge_cal_err, out.ge_gain_err);
 
       std::cout << "GAIN-CAL " << cal_label << ": transfer term " << std::fixed
@@ -1052,10 +1189,17 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
     AddCalPoint(cal_data, "Am-241 59.5", am.peaks.at(0).mu,
                 am.peaks.at(0).mu_error, E_AM241, am.reduced_chi2, dE_AM241);
 
+  // 79.61 and 81.00 keV are 1.4 keV apart at sigma 0.82: two free tails are
+  // degenerate (the weak line's railed, the strong line's came out at
+  // tau/sigma 13.7 +/- 15.3), so the doublet carries one width and one tail.
+  // With the yields free as well, the weak line takes 8% (01/15) and 33%
+  // (01/16) more than the intensity ratio allows, trading against the shared
+  // tail; the fixed ratio leaves chi2/ndf where it was.
   std::vector<Double_t> ba_events = LoadFiltered(cfg.ba_run);
   const Float_t ba_lo = 75, ba_hi = 90;
-  FitResult ba81 = FitCalPeak(ba_events, cfg.ba_run, "Ba_80.98keV", ba_lo,
-                              ba_hi, kTRUE, E_BA133_79, E_BA133_81, kTRUE);
+  FitResult ba81 =
+      FitCalPeak(ba_events, cfg.ba_run, "Ba_80.98keV", ba_lo, ba_hi, kTRUE,
+                 E_BA133_79, E_BA133_81, kTRUE, kTRUE, BA133_79_OVER_81);
   if (ba81.valid)
     AddCalPoint(cal_data, "Ba-133 80.98", ba81.peaks.at(1).mu,
                 ba81.peaks.at(1).mu_error, E_BA133_81, ba81.reduced_chi2,
@@ -1144,8 +1288,8 @@ DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
       ref_idx = i;
     }
   }
-  std::cout << "Reference pair for 13/14 drift: " << pairs[ref_idx].tag
-            << " (Am from " << am_run << ")" << std::endl;
+  std::cout << "Reference pair: " << pairs[ref_idx].tag << " (Am from "
+            << am_run << ")" << std::endl;
 
   std::vector<PairCalResult> results(pairs.size());
 
@@ -1174,18 +1318,6 @@ DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
     ptrs.push_back(&results[i]);
   PrintPrecalPbComparison("20260113", ptrs);
   ref_pair_out = results[ref_idx];
-  return result;
-}
-
-DayResult ProcessDay_20260114(const PairCalResult &ref_pair) {
-  DayResult result;
-  const CalFit *ref_cal = ref_pair.has_ref_cal ? &ref_pair.ref_calfit : nullptr;
-  PairCalResult cu = ProcessPbAnchoredPair(
-      Constants::CUSHIELDBACKGROUND_10PERCENT_20260114,
-      Constants::CUSHIELDSIGNAL_10PERCENT_20260114, "20260114", "CuShield10",
-      "", kFALSE, ref_cal, &ref_pair.pb_mus_precal,
-      &ref_pair.pb_mu_errs_precal);
-  AppendPairToDay(result, cu, "20260114", "Cu Shield Signal 10% (01/14)");
   return result;
 }
 
@@ -1250,36 +1382,31 @@ void CalibrateAndFit() {
             << "tau/sigma <= " << TAIL_RATIO_MAX << "   hard fit "
             << (HardFitRequested() ? "on" : "off") << "   Pb anchor "
             << (SignalPbAnchorRequested() ? "signal run" : "background run")
+            << "   transfer " << (OffsetTransferRequested() ? "offset" : "gain")
+            << "   pixels "
+            << (InteriorPixelsRequested() ? "interior 9 x 9" : "all")
+            << "   in-situ background " << (USE_FLAT_BKG ? "flat" : "linear")
             << "   ROOT " << gROOT->GetVersion() << std::endl;
   InitUtils::SetROOTPreferences(
       PlotSaveFormat::kPNG, project_root + "/plots/calibration_low_" + out_tag,
       project_root + "/root_files");
   PairCalResult ref_pair;
   DayResult d13 = ProcessDay_20260113(ref_pair);
-  DayResult d14 = ProcessDay_20260114(ref_pair);
   DayResult d15 = ProcessDay_20260115();
   DayResult d16 = ProcessDay_20260116();
 
   PrintDayCals(d13);
-  PrintDayCals(d14);
   PrintDayCals(d15);
   PrintDayCals(d16);
 
   // 15th/16th: line-cal (Am + Ba-133) days measured by rate subtraction.
-  // Independent of the 13th/14th in both calibration source and background
+  // Independent of the 13th in both calibration source and background
   // treatment, which is what makes the method systematic meaningful.
   // One .result row per run; no budget math here.
-  // 01/14 is the only cross-day gain transfer (no Am on the 14th) and its Ge
-  // reads high against its own Pb in the surface events; it has an in-situ row
-  // only, and stays in until that is understood or it is dropped
-  // (73mGe/STATUS.md).
-  const Bool_t INCLUDE_20260114 = kTRUE;
-
-  std::vector<DayResult *> day_vec = {&d13};
-  if (INCLUDE_20260114)
-    day_vec.push_back(&d14);
-  day_vec.push_back(&d15);
-  day_vec.push_back(&d16);
+  // The 01/14 Cu 10% pair is not used. The detector was probably unbiased
+  // overnight and re-biased that morning, and there was no Am run on the 14th,
+  // so neither a gain nor an offset carries the 01/13 calibration across.
+  std::vector<DayResult *> day_vec = {&d13, &d15, &d16};
   DayResult **days = day_vec.data();
   const Int_t n_days = (Int_t)day_vec.size();
 
