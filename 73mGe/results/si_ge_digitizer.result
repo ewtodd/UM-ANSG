@@ -1,0 +1,12 @@
+# Si (PSI) Ge energy, SiGeBudget.cpp, digitizer energy; summed main runs, Am + Pb Ka calibration; keV
+ge 68.769787
+total 0.019598
+fit 0.016970
+calibration 0.002234
+background 0.009333
+window 0.002007
+# alternatives
+ge_cal_b 68.771561
+ge_cal_c 68.771315
+ge_days_cal_b 68.769763
+ge_days_cal_b_err 0.016664

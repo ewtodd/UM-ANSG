@@ -1,0 +1,12 @@
+# Si (PSI) Ge energy, SiGeBudget.cpp, trapezoid energy; summed main runs, Am + Pb Ka calibration; keV
+ge 68.764824
+total 0.020538
+fit 0.017242
+calibration 0.002207
+background 0.010644
+window 0.002528
+# alternatives
+ge_cal_b 68.769761
+ge_cal_c 68.768811
+ge_days_cal_b 68.763394
+ge_days_cal_b_err 0.016477
