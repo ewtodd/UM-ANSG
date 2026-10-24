@@ -47,10 +47,14 @@ struct DayResult {
   // correctly instead of assuming the whole calibration is correlated or none
   // of it is.
   std::vector<Float_t> ge_gain_errs;
+  // With the signal-run Pb anchor: the error of that run's own offset, also
+  // inside ge_cal_errs. It comes from the run's own Pb fit, so it is
+  // independent between runs, unlike the transfer.
+  std::vector<Float_t> ge_anchor_errs;
   std::vector<Float_t> ge_bkg_errs;
   std::vector<TString> rs_labels;
   std::vector<Float_t> rs_mus, rs_errs, rs_chi2s, rs_cal_errs, rs_gain_errs;
-  std::vector<Float_t> rs_cal_offs;
+  std::vector<Float_t> rs_cal_offs, rs_sys_errs;
 };
 
 struct CalFit {
@@ -73,6 +77,7 @@ struct PairCalResult {
   CalFit ref_calfit;
   Bool_t has_ref_cal = kFALSE;
   Double_t ge_gain_err = 0;
+  Double_t ge_anchor_err = 0;
 };
 
 struct LineCalConfig {
@@ -540,8 +545,8 @@ void ApplyPol1Cal(const std::vector<TString> &input_names, TF1 *cal,
 
 void AddGeResult(DayResult &result, const BkgGeSimResult &r,
                  const TString &label, Float_t cal_err = 0,
-                 Float_t gain_err = 0, Float_t bkg_err = 0,
-                 Float_t cal_off = 0) {
+                 Float_t gain_err = 0, Float_t bkg_err = 0, Float_t cal_off = 0,
+                 Float_t anchor_err = 0) {
   if (!r.valid || r.sig_channel.peaks.empty())
     return;
   const PeakFitResult &ge = r.sig_channel.peaks.back();
@@ -552,6 +557,7 @@ void AddGeResult(DayResult &result, const BkgGeSimResult &r,
   result.ge_cal_errs.push_back(cal_err);
   result.ge_cal_offs.push_back(cal_off);
   result.ge_gain_errs.push_back(gain_err);
+  result.ge_anchor_errs.push_back(anchor_err);
   result.ge_bkg_errs.push_back(bkg_err);
 }
 
@@ -566,20 +572,31 @@ Float_t LoadCrystalLiveTime(TFile *file, Int_t crystal) {
   return p->GetVal();
 }
 
-TH1F *BuildRateHist(const TString &input_name, TF1 *cal, const TString &hname,
-                    Float_t lo, Float_t hi) {
+// Rate histograms (each crystal's counts over its live time, summed) with
+// bins of width bin starting at n_phases points spaced bin / n_phases apart,
+// all filled in one pass over the run. Histogram k covers
+// [lo + k bin / n_phases, hi + k bin / n_phases).
+std::vector<TH1F *> BuildRateHists(const TString &input_name, TF1 *cal,
+                                   const TString &hname, Double_t lo,
+                                   Double_t hi, Double_t bin, Int_t n_phases) {
+  std::vector<TH1F *> sums;
   TFile *file = IO::OpenForReading("filtered/" + input_name + ".root");
   if (!file || file->IsZombie()) {
     std::cerr << "ERROR: Cannot open filtered/" << input_name << ".root"
               << std::endl;
     delete file;
-    return nullptr;
+    return sums;
   }
-  Int_t nbins = (Int_t)std::lround((hi - lo) / Constants::BIN_WIDTH_KEV);
-  TH1F *sum = new TH1F(hname, ";Deposited Energy [keV]; Rate [counts/s]", nbins,
-                       lo, hi);
-  sum->SetDirectory(nullptr);
-  sum->Sumw2();
+  Int_t nbins = (Int_t)std::lround((hi - lo) / bin);
+  for (Int_t k = 0; k < n_phases; k++) {
+    Double_t start = lo + k * bin / n_phases;
+    TH1F *h = new TH1F(hname + Form("_phase%d", k),
+                       ";Deposited Energy [keV]; Rate [counts/s]", nbins, start,
+                       start + nbins * bin);
+    h->SetDirectory(nullptr);
+    h->Sumw2();
+    sums.push_back(h);
+  }
 
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
     TTree *tree =
@@ -589,27 +606,24 @@ TH1F *BuildRateHist(const TString &input_name, TF1 *cal, const TString &hname,
     Float_t lt = LoadCrystalLiveTime(file, c);
     if (lt <= 0)
       continue;
-    TH1F *ch = new TH1F(hname + Form("_c%d", c), "", nbins, lo, hi);
-    ch->SetDirectory(nullptr);
-    ch->Sumw2();
     Float_t energy = 0, x = 0, y = 0;
     tree->SetBranchAddress("energykeV", &energy);
     tree->SetBranchAddress("xmm", &x);
     tree->SetBranchAddress("ymm", &y);
-    Int_t n = (Int_t)tree->GetEntries();
-    for (Int_t j = 0; j < n; j++) {
+    Long64_t n = tree->GetEntries();
+    for (Long64_t j = 0; j < n; j++) {
       tree->GetEntry(j);
       if (InteriorPixelsRequested() && !InInteriorPixels(x, y))
         continue;
-      ch->Fill(cal->Eval(energy));
+      Double_t e = cal->Eval(energy);
+      for (Int_t k = 0; k < n_phases; k++)
+        sums[k]->Fill(e, 1.0 / lt);
     }
-    ch->Scale(1.0 / lt);
-    sum->Add(ch);
-    delete ch;
+    tree->ResetBranchAddresses();
   }
   file->Close();
   delete file;
-  return sum;
+  return sums;
 }
 
 // Line-cal day: the Ge tail interpolated linearly in energy between the
@@ -641,60 +655,175 @@ void PrintRateSubShape(const TString &tag, const RateSubShape &s) {
             << s.ge_tau_over_sigma << std::endl;
 }
 
+// The 95.902 keV line is 1.2 times stronger in the signal runs than live time
+// predicts, so the residual keeps a share of it and of its escapes. Its
+// Gaussian yield and centroid in the residual, comb-period bins over 88-104
+// keV at the rate-sub fit's starting points, with the Ge tail.
+void SetResidualCaptureLine(const TString &sig_run, const TString &bkg_run,
+                            TF1 *cal, Double_t bin, const TString &tag,
+                            RateSubShape &shape) {
+  std::vector<TH1F *> sig = BuildRateHists(sig_run, cal, "capture_sig_" + tag,
+                                           88.0, 104.0, bin, N_RATESUB_PHASES);
+  std::vector<TH1F *> bkg = BuildRateHists(bkg_run, cal, "capture_bkg_" + tag,
+                                           88.0, 104.0, bin, N_RATESUB_PHASES);
+  if (sig.size() == bkg.size() && !sig.empty()) {
+    for (size_t k = 0; k < sig.size(); k++)
+      sig[k]->Add(bkg[k], -1.0);
+    CaptureLine line =
+        AverageCaptureLine(sig, shape.ge_tail_height_ratio,
+                           shape.ge_tau_over_sigma, kFALSE, "ratesub_" + tag);
+    if (line.valid) {
+      shape.capture_rate = line.gaus_yield;
+      shape.capture_mu = line.mu;
+    } else {
+      std::cerr << "WARNING: no residual 95.902 keV line for " << tag
+                << "; the rate-sub fit carries no escapes" << std::endl;
+    }
+  }
+  for (size_t k = 0; k < sig.size(); k++)
+    delete sig[k];
+  for (size_t k = 0; k < bkg.size(); k++)
+    delete bkg[k];
+}
+
+// The live-time residual, signal minus background, in bins one comb period
+// wide at N_RATESUB_PHASES starting points. The linear residual background is
+// the central model and the quadratic one its systematic. The residual is
+// overdispersed (chi2/ndf 1.4-1.9 here: the pixels' discrete energy grids,
+// which the two runs fill differently), so the fit error is scaled by
+// sqrt(chi2/ndf).
 RateSubResult FitRateSubtractedGe(const TString &sig_run,
                                   const TString &bkg_run, TF1 *cal,
                                   const TString &tag,
-                                  const RateSubShape &shape) {
+                                  const RateSubShape &tail_shape) {
   RateSubResult out;
   const Float_t lo = RATESUB_LO, hi = RATESUB_HI;
-  PrintRateSubShape(tag, shape);
+  PrintRateSubShape(tag, tail_shape);
 
-  TH1F *sig = BuildRateHist(sig_run, cal, "rate_sig_" + tag, lo, hi);
-  TH1F *bkg = BuildRateHist(bkg_run, cal, "rate_bkg_" + tag, lo, hi);
-  if (!sig || !bkg) {
-    delete sig;
-    delete bkg;
+  const Double_t bin = COMB_PERIOD_RAW_KEV * cal->GetParameter(1);
+  RateSubShape shape = tail_shape;
+  if (EscapeLinesRequested())
+    SetResidualCaptureLine(sig_run, bkg_run, cal, bin, tag, shape);
+  std::vector<TH1F *> sigs =
+      BuildRateHists(sig_run, cal, "rate_sig_" + tag, lo - bin, hi + bin, bin,
+                     N_RATESUB_PHASES);
+  std::vector<TH1F *> bkgs =
+      BuildRateHists(bkg_run, cal, "rate_bkg_" + tag, lo - bin, hi + bin, bin,
+                     N_RATESUB_PHASES);
+  if ((Int_t)sigs.size() != N_RATESUB_PHASES ||
+      (Int_t)bkgs.size() != N_RATESUB_PHASES) {
+    for (size_t k = 0; k < sigs.size(); k++)
+      delete sigs[k];
+    for (size_t k = 0; k < bkgs.size(); k++)
+      delete bkgs[k];
     return out;
   }
-  TH1F *res = static_cast<TH1F *>(sig->Clone("rate_residual_" + tag));
-  res->SetDirectory(nullptr);
-  res->Add(bkg, -1.0);
 
+  Double_t sum_mu = 0, sum_mu2 = 0, sum_err = 0, sum_chi2 = 0, sum_quad = 0;
+  Int_t n_linear = 0, n_quadratic = 0;
+  RateSubResult fit;
+  TF1 *model = nullptr;
+  TH1F *res = nullptr;
+  for (Int_t k = 0; k < N_RATESUB_PHASES; k++) {
+    TString phase_tag = tag + Form("_phase%d", k);
+    TH1F *phase_res =
+        static_cast<TH1F *>(sigs[k]->Clone("rate_residual_" + phase_tag));
+    phase_res->SetDirectory(nullptr);
+    phase_res->Add(bkgs[k], -1.0);
+    TF1 *phase_model = nullptr;
+    RateSubResult linear =
+        FitRateSubHistShaped(phase_res, shape, phase_tag, &phase_model, kFALSE);
+    RateSubResult quadratic = FitRateSubHistShaped(
+        phase_res, shape, phase_tag + "_quadratic", nullptr, kTRUE);
+    std::cout << "RATESUB-PHASE " << tag << " " << k << ": linear "
+              << std::fixed << std::setprecision(4) << linear.mu << " +/- "
+              << linear.mu_err << " (chi2/ndf " << std::setprecision(2)
+              << linear.chi2 << ")   quadratic " << std::setprecision(4)
+              << quadratic.mu << " +/- " << quadratic.mu_err << std::endl;
+    if (linear.valid) {
+      sum_mu += linear.mu;
+      sum_mu2 += linear.mu * linear.mu;
+      sum_err += linear.mu_err;
+      sum_chi2 += linear.chi2;
+      n_linear++;
+    }
+    if (quadratic.valid) {
+      sum_quad += quadratic.mu;
+      n_quadratic++;
+    }
+    if (k == 0 && linear.valid && phase_model) {
+      fit = linear;
+      model = phase_model;
+      res = phase_res;
+    } else {
+      delete phase_model;
+      delete phase_res;
+    }
+  }
+  for (Int_t k = 0; k < N_RATESUB_PHASES; k++) {
+    delete sigs[k];
+    delete bkgs[k];
+  }
+  if (n_linear == 0 || !model) {
+    std::cerr << "WARNING: rate-sub chi2 fit failed for " << tag << std::endl;
+    delete model;
+    delete res;
+    return out;
+  }
+
+  Double_t mean = sum_mu / n_linear;
+  Double_t chi2 = sum_chi2 / n_linear;
+  out = fit;
+  out.mu = mean;
+  out.chi2 = chi2;
+  out.mu_err = (sum_err / n_linear) * TMath::Sqrt(TMath::Max(chi2, 1.0));
+  out.phase_rms =
+      TMath::Sqrt(TMath::Max(sum_mu2 / n_linear - mean * mean, 0.0));
+  out.shape_shift =
+      (n_quadratic > 0) ? TMath::Abs(sum_quad / n_quadratic - mean) : 0.0;
+  out.sys_err = TMath::Sqrt(
+      out.phase_rms * out.phase_rms + out.shape_shift * out.shape_shift +
+      RATESUB_TRANSFER_SYS_KEV * RATESUB_TRANSFER_SYS_KEV);
+  std::cout << "RATESUB-FIT " << tag << ": mu = " << std::fixed
+            << std::setprecision(4) << out.mu << " +/- " << out.mu_err
+            << " (fit, scaled by sqrt(chi2/ndf " << std::setprecision(2) << chi2
+            << ")) +/- " << std::setprecision(4) << out.sys_err
+            << " (sys: bin phase " << out.phase_rms << ", quadratic "
+            << out.shape_shift << ", transfer " << RATESUB_TRANSFER_SYS_KEV
+            << ") keV   sigma = " << out.sigma << std::endl;
+
+  res->GetYaxis()->SetTitle(
+      Form("Counts/s / %.0f eV", 1000.0 * res->GetBinWidth(1)));
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDrawHistogram(res, kBlack);
   PlottingUtils::SaveFigure(canvas, "rate_residual_" + tag, "fits",
                             PlotSaveOptions::kLINEAR);
 
-  TF1 *model = nullptr;
-  RateSubResult fit = FitRateSubHistShaped(res, shape, tag, &model);
-  out = fit;
-  if (!fit.valid || !model) {
-    std::cerr << "WARNING: rate-sub chi2 fit failed for " << tag << std::endl;
-    delete model;
-    delete sig;
-    delete bkg;
-    delete res;
-    return out;
-  }
-  std::cout << "RATESUB-FIT " << tag << ": mu = " << std::fixed
-            << std::setprecision(4) << fit.mu << " +/- " << fit.mu_err
-            << " keV   sigma = " << fit.sigma << "   bkg0 = " << fit.bkg0
-            << "   slope = " << fit.slope
-            << "   chi2/ndf = " << std::setprecision(2) << fit.chi2
-            << std::endl;
-
   const Int_t kNPts = 400;
   Double_t xstep = (hi - lo) / (kNPts - 1);
   TGraph *total_graph = new TGraph(kNPts);
   TGraph *bkg_graph = new TGraph(kNPts);
+  TGraph *escape_graph = new TGraph(kNPts);
   for (Int_t i = 0; i < kNPts; i++) {
     Double_t xv = lo + i * xstep;
+    Double_t bkg_v =
+        model->GetParameter(5) + model->GetParameter(6) * (xv - 68.75);
     total_graph->SetPoint(i, xv, model->Eval(xv));
-    bkg_graph->SetPoint(
-        i, xv, model->GetParameter(5) + model->GetParameter(6) * (xv - 68.75));
+    bkg_graph->SetPoint(i, xv, bkg_v);
+    escape_graph->SetPoint(i, xv,
+                           bkg_v + model->GetParameter(8) *
+                                       EscapeDensity(xv, model->GetParameter(9),
+                                                     model->GetParameter(2),
+                                                     model->GetParameter(3),
+                                                     model->GetParameter(4),
+                                                     ESCAPES_INSIDE));
   }
   bkg_graph->SetLineStyle(2);
+  escape_graph->SetLineColor(kRed);
+  escape_graph->SetLineStyle(2);
   std::vector<TGraph *> components = {bkg_graph};
+  if (model->GetParameter(8) != 0)
+    components.push_back(escape_graph);
 
   res->GetXaxis()->SetRangeUser(lo, hi);
   Double_t ymin = 1e30, ymax = -1e30;
@@ -712,8 +841,6 @@ RateSubResult FitRateSubtractedGe(const TString &sig_run,
   PlottingUtils::PlotFitWithResiduals(res, total_graph, components, lo, hi,
                                       "ratesub_fit_" + tag, "fits",
                                       "Rate-subtracted " + tag, kFALSE);
-  delete sig;
-  delete bkg;
   delete res;
   return out;
 }
@@ -812,13 +939,13 @@ SignalPbAnchor AnchorOnSignalPb(const CalFit &pair_cal,
   return out;
 }
 
-PairCalResult
-ProcessPbAnchoredPair(const TString &bkg_run, const TString &sig_run,
-                      const TString &date_label, const TString &pair_tag,
-                      const TString &am_run, Bool_t is_reference,
-                      const CalFit *ref_cal = nullptr,
-                      const std::vector<Float_t> *ref_pb_mus = nullptr,
-                      const std::vector<Float_t> *ref_pb_errs = nullptr) {
+// escapes: the pair's 95.902 keV escape fractions, null to leave them out.
+PairCalResult ProcessPbAnchoredPair(
+    const TString &bkg_run, const TString &sig_run, const TString &date_label,
+    const TString &pair_tag, const TString &am_run, Bool_t is_reference,
+    const EscapeFractions *escapes, const CalFit *ref_cal = nullptr,
+    const std::vector<Float_t> *ref_pb_mus = nullptr,
+    const std::vector<Float_t> *ref_pb_errs = nullptr) {
   PairCalResult out;
   out.pair_tag = pair_tag;
 
@@ -847,8 +974,13 @@ ProcessPbAnchoredPair(const TString &bkg_run, const TString &sig_run,
                 << "; reference line will use Pb peaks only" << std::endl;
   }
 
-  BkgGeSimResult pre = RunBkgGeSim(bkg_events, sig_events, pb_mus, bkg_run,
-                                   sig_run, "PreCal_" + pair_tag);
+  InSituEscapes raw_escapes;
+  raw_escapes.fractions = escapes;
+  raw_escapes.units_per_kev = 1.0 / RAW_KEV_PER_UNIT_0113;
+  raw_escapes.comb_period = COMB_PERIOD_RAW_KEV;
+  BkgGeSimResult pre =
+      RunBkgGeSim(bkg_events, sig_events, pb_mus, bkg_run, sig_run,
+                  "PreCal_" + pair_tag, nullptr, nullptr, raw_escapes);
   if (!pre.valid)
     return out;
 
@@ -967,16 +1099,18 @@ ProcessPbAnchoredPair(const TString &bkg_run, const TString &sig_run,
 
   if (!pre.sig_channel.peaks.empty() && sig_anchor.valid) {
     // The signal run sets its own offset, so it inherits no reference offset
-    // (cal_off 0); the gain column carries the signal-run Pb offset error, and
-    // the rest of cal_err is the pair slope over the Pb-to-Ge distance.
+    // (cal_off 0) and no transfer (gain 0); the anchor column carries the
+    // signal-run Pb offset error, and the rest of cal_err is the pair slope
+    // over the Pb-to-Ge distance.
     Double_t mu_ge = pre.sig_channel.peaks.back().mu;
     out.ge_cal_err = CalEnergyError(sig_calfit, mu_ge);
-    out.ge_gain_err = sig_anchor.offset_err;
+    out.ge_gain_err = 0;
+    out.ge_anchor_err = sig_anchor.offset_err;
     out.ge_cal_off = 0;
     std::cout << "SIGPB-CAL " << cal_label << ": at Ge, offset term "
-              << std::fixed << std::setprecision(1) << out.ge_gain_err * 1000.0
-              << " eV   total cal " << out.ge_cal_err * 1000.0 << " eV"
-              << std::endl;
+              << std::fixed << std::setprecision(1)
+              << out.ge_anchor_err * 1000.0 << " eV   total cal "
+              << out.ge_cal_err * 1000.0 << " eV" << std::endl;
   } else if (!pre.sig_channel.peaks.empty()) {
     Double_t mu_ge = pre.sig_channel.peaks.back().mu;
     out.ge_cal_err = CalEnergyError(calfit, mu_ge);
@@ -1119,10 +1253,14 @@ ProcessPbAnchoredPair(const TString &bkg_run, const TString &sig_run,
   // lands is a blind check at the energy of interest. The whole chain (precal
   // -> cal -> postcal) uses one shared tail model, so this run is internally
   // consistent.
+  InSituEscapes calibrated_escapes;
+  calibrated_escapes.fractions = escapes;
+  calibrated_escapes.units_per_kev = 1.0;
+  calibrated_escapes.comb_period = COMB_PERIOD_RAW_KEV * cal_p1;
   out.postcal =
       RunBkgGeSim(bc, sc, pb_mus, bkg_run + "_postcal_" + pair_tag,
                   sig_run + "_postcal_" + pair_tag, "PostCal_" + pair_tag,
-                  &bkg_seed_post, &sig_seed_post);
+                  &bkg_seed_post, &sig_seed_post, calibrated_escapes);
 
   if (out.postcal.valid) {
     std::cout << "Post-cal FREE Pb mu for " << cal_label << ":" << std::endl;
@@ -1156,7 +1294,7 @@ void AppendPairToDay(DayResult &result, const PairCalResult &p,
     result.cal_funcs.push_back(p.cal_func);
   }
   AddGeResult(result, p.postcal, ge_label, p.ge_cal_err, p.ge_gain_err,
-              p.ge_bkg_err, p.ge_cal_off);
+              p.ge_bkg_err, p.ge_cal_off, p.ge_anchor_err);
 }
 
 void PrintPrecalPbComparison(const TString &date_label,
@@ -1239,10 +1377,12 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
     result.rs_cal_errs.push_back(ge_cal_err);
     result.rs_cal_offs.push_back(ge_cal_off);
     result.rs_gain_errs.push_back(0.0f);
+    result.rs_sys_errs.push_back(rs.sys_err);
     std::cout << "Rate-sub Ge mu for " << cfg.date_label << ": " << std::fixed
               << std::setprecision(4) << rs.mu << " +/- " << rs.mu_err
-              << " keV (chi2/ndf = " << std::setprecision(3) << rs.chi2 << ")"
-              << std::endl;
+              << " (fit) +/- " << rs.sys_err
+              << " (sys) keV (chi2/ndf = " << std::setprecision(3) << rs.chi2
+              << ")" << std::endl;
   }
   return result;
 }
@@ -1252,7 +1392,14 @@ struct ShieldPair {
   TString sig_run;
   TString tag;
   TString ge_label;
+  // Where the 95.902 keV line comes from: captures inside the crystal, or in
+  // the Cd shield.
+  const EscapeFractions *escapes = nullptr;
 };
+
+const EscapeFractions *PairEscapes(const ShieldPair &pair) {
+  return EscapeLinesRequested() ? pair.escapes : nullptr;
+}
 
 DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
   DayResult result;
@@ -1263,18 +1410,21 @@ DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
   cu.sig_run = Constants::CUSHIELDSIGNAL_10PERCENT_20260113;
   cu.tag = "CuShield10";
   cu.ge_label = "Cu Shield Signal 10% (01/13)";
+  cu.escapes = &ESCAPES_INSIDE;
   pairs.push_back(cu);
   ShieldPair cd10;
   cd10.bkg_run = Constants::CDSHIELDBACKGROUND_10PERCENT_20260113;
   cd10.sig_run = Constants::CDSHIELDSIGNAL_10PERCENT_20260113;
   cd10.tag = "CdShield10";
   cd10.ge_label = "Cd Shield Signal 10% (01/13)";
+  cd10.escapes = &ESCAPES_OUTSIDE;
   pairs.push_back(cd10);
   ShieldPair cd25;
   cd25.bkg_run = Constants::CDSHIELDBACKGROUND_25PERCENT_20260113;
   cd25.sig_run = Constants::CDSHIELDSIGNAL_25PERCENT_20260113;
   cd25.tag = "CdShield25";
   cd25.ge_label = "Cd Shield Signal 25% (01/13)";
+  cd25.escapes = &ESCAPES_OUTSIDE;
   pairs.push_back(cd25);
 
   TString am_run = Constants::POSTREACTOR_AM241_20260113;
@@ -1293,9 +1443,9 @@ DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
 
   std::vector<PairCalResult> results(pairs.size());
 
-  results[ref_idx] =
-      ProcessPbAnchoredPair(pairs[ref_idx].bkg_run, pairs[ref_idx].sig_run,
-                            "20260113", pairs[ref_idx].tag, am_run, kTRUE);
+  results[ref_idx] = ProcessPbAnchoredPair(
+      pairs[ref_idx].bkg_run, pairs[ref_idx].sig_run, "20260113",
+      pairs[ref_idx].tag, am_run, kTRUE, PairEscapes(pairs[ref_idx]));
 
   const CalFit *ref_cal =
       results[ref_idx].has_ref_cal ? &results[ref_idx].ref_calfit : nullptr;
@@ -1305,9 +1455,9 @@ DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
   for (Int_t i = 0; i < (Int_t)pairs.size(); i++) {
     if (i == ref_idx)
       continue;
-    results[i] = ProcessPbAnchoredPair(pairs[i].bkg_run, pairs[i].sig_run,
-                                       "20260113", pairs[i].tag, "", kFALSE,
-                                       ref_cal, ref_mus, ref_errs);
+    results[i] = ProcessPbAnchoredPair(
+        pairs[i].bkg_run, pairs[i].sig_run, "20260113", pairs[i].tag, "",
+        kFALSE, PairEscapes(pairs[i]), ref_cal, ref_mus, ref_errs);
   }
 
   for (Int_t i = 0; i < (Int_t)pairs.size(); i++)
@@ -1386,7 +1536,9 @@ void CalibrateAndFit() {
             << "   pixels "
             << (InteriorPixelsRequested() ? "interior 9 x 9" : "all")
             << "   in-situ background " << (USE_FLAT_BKG ? "flat" : "linear")
-            << "   ROOT " << gROOT->GetVersion() << std::endl;
+            << "   95.902 keV escapes "
+            << (EscapeLinesRequested() ? "on" : "off") << "   ROOT "
+            << gROOT->GetVersion() << std::endl;
   InitUtils::SetROOTPreferences(
       PlotSaveFormat::kPNG, project_root + "/plots/calibration_low_" + out_tag,
       project_root + "/root_files");
@@ -1416,7 +1568,7 @@ void CalibrateAndFit() {
   std::ofstream out(result_path.Data());
   out << "# Ge-73m gamma energy results   tag=" << out_tag << std::endl;
   out << "# method  ge_mu  fit_err  cal_err  bkg_err  chi2  gain_err  cal_off  "
-         "label"
+         "sys_err  anchor_err  label"
       << std::endl;
   out << std::fixed << std::setprecision(6);
 
@@ -1433,10 +1585,12 @@ void CalibrateAndFit() {
           i < days[d]->ge_gain_errs.size() ? days[d]->ge_gain_errs[i] : 0;
       Float_t co =
           i < days[d]->ge_cal_offs.size() ? days[d]->ge_cal_offs[i] : 0;
+      Float_t ae =
+          i < days[d]->ge_anchor_errs.size() ? days[d]->ge_anchor_errs[i] : 0;
       out << "insitu  " << days[d]->ge_mus[i] << "  " << days[d]->ge_errs[i]
           << "  " << ce << "  " << be << "  " << days[d]->ge_chi2s[i] << "  "
-          << gz << "  " << co << "  " << SanitizeLabel(days[d]->ge_labels[i])
-          << std::endl;
+          << gz << "  " << co << "  " << 0.0 << "  " << ae << "  "
+          << SanitizeLabel(days[d]->ge_labels[i]) << std::endl;
       std::cout << std::left << std::setw(50) << days[d]->ge_labels[i] << ": "
                 << std::fixed << std::setprecision(4) << days[d]->ge_mus[i]
                 << " +/- " << days[d]->ge_errs[i] << " (fit) +/- " << ce
@@ -1452,17 +1606,20 @@ void CalibrateAndFit() {
     for (size_t i = 0; i < days[d]->rs_labels.size(); i++) {
       Float_t ce =
           i < days[d]->rs_cal_errs.size() ? days[d]->rs_cal_errs[i] : 0;
+      Float_t se =
+          i < days[d]->rs_sys_errs.size() ? days[d]->rs_sys_errs[i] : 0;
       out << "ratesub  " << days[d]->rs_mus[i] << "  " << days[d]->rs_errs[i]
           << "  " << ce << "  " << 0.0 << "  " << days[d]->rs_chi2s[i] << "  "
           << (i < days[d]->rs_gain_errs.size() ? days[d]->rs_gain_errs[i]
                                                : 0.0f)
           << "  "
           << (i < days[d]->rs_cal_offs.size() ? days[d]->rs_cal_offs[i] : 0.0f)
-          << "  " << SanitizeLabel(days[d]->rs_labels[i]) << std::endl;
+          << "  " << se << "  " << 0.0 << "  "
+          << SanitizeLabel(days[d]->rs_labels[i]) << std::endl;
       std::cout << std::left << std::setw(50) << days[d]->rs_labels[i] << ": "
                 << std::fixed << std::setprecision(4) << days[d]->rs_mus[i]
                 << " +/- " << days[d]->rs_errs[i] << " (fit) +/- " << ce
-                << " (cal) keV" << std::endl;
+                << " (cal) +/- " << se << " (sys) keV" << std::endl;
     }
   }
   out.close();
