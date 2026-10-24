@@ -1,6 +1,6 @@
 # 73mGe — status and plan (2026-10-23)
 <!---->
-The measurement is the energy of the bare 73mGe gamma ray seen in the pixelated CZT detector; ENSDF gives 68.752 ± 0.007 keV.
+The measurement is the energy of the bare 73mGe gamma ray seen in the pixelated CZT detector (`czt/`), and in the PSI CdTe (`cdte/`, PSI CdTe below); ENSDF gives 68.752 ± 0.007 keV.
 Ge-detector values (68.79–68.82 keV) include a recoil deposit this measurement does not see, so a CZT result there would mean a bias.
 The previously reported 68.7502 ± 0.0145 keV (c260617) came from a pol2 that gave the Pb Kβ1,3 blend Kβ1's energy; that alone pulled Ge down by about 27 eV (Calibration, below).
 <!---->
@@ -77,6 +77,37 @@ Ge − 68.752 keV per in-situ row in eV; the rate-sub rows are +23.9 (01/15) and
 | `tau20_sigpb_esc_oxfer` | +10.7 | −22.6 | +20.9 | 68.7556 ± 0.0166 | 68.7582 ± 0.0154 | 8.5 | 68.7582 ± 0.0176 |
 <!---->
 The interior-pixel and sloped-continuum variants (under the earlier combination) are in the matrix of d3e02d7; with 01/14 gone the interior cut mostly widened the method gap, and the sloped continuum moved Method 1 by −1 to +6 eV.
+<!---->
+## PSI CdTe (cdte/)
+<!---->
+The same line in the PSI CdTe (Amptek, DT5780 channel 1, BOA beamline, October 2025), from our own trapezoid energies, calibrated in each run by the lines around Ge.
+<!---->
+- Result: **68.7448 ± 0.0242 keV** (−7.2 eV from ENSDF), the rise-time slices up to 320 ns. The collaborator's CdTe value is 68.7484 ± 0.0189 keV.
+<!---->
+| Term | eV | |
+|---|---|---|
+| statistics | 13.9 | weighted mean of five slices, 6.6 eV, × √(χ²/ndf) 2.11 of the slices ≤ 300 ns (13.4/3) |
+| outlier removal | 2.1 | largest shift without the highest, the lowest, or both slices |
+| lineshape | 5.1 | Ge's tail fitted on its own |
+| escapes | 4.5 | Te Kα/Cd Kβ ± its error and per slice; Cd Kβ/Kα 0.324 (no-Ge runs) against Geant4's 0.275 |
+| Pb Kβ blend | 1.3 | Kβ3/Kβ1 (and K-N2/K-N3) ± 10%; Kβ5, K-N4,5, K-O2,3 ± 20% |
+| extrapolation | 13.9 | the scale's curvature free (Ge lies below the lines that fix the scale) |
+| slice range | 1.4 | slices ≤ 300 ns instead (statistical spread 1.1 eV) |
+| slice combination | 6.1 | a random-effects mean of the slices (between-slice spread 27.8 eV) |
+<!---->
+- **Extrapolation** is the full shift with the curvature free, +13.9 eV, not the 7.1 eV the curvature adds to the error in quadrature, because the shift is twice that. Most of it comes from the 0–270 ns slice (+165 eV, its Cd Kβ escape yield dropping from 0.19 to 0.05 of Ge, its error shrinking) and the 290–300 ns slice (+43 eV): the curvature is nearly degenerate with the escapes there, so this is conservative; charging the quadrature cost instead gives ± 0.0210 keV.
+- **Pipeline** (each macro's header has the details):
+  - `Trapezoid.cpp`: the raw CoMPASS waveforms in `/labdata/PSI/CdTe` (read only) to one tree per run in `/labdata/ANSG/PSI/processed/CdTe/trap`: trigger, baseline, pole-zero deconvolution (τ = 325 samples), trapezoid energies for four shapings, 10–90% rise time.
+  - `CdTeAnalysis.hpp`: runs, rise slices, the EMG lineshape, the 95.902 keV line's fit, and the in-run fit: every line at its true energy on a free scale x = a + b E (Pb Kα2/Kα1, the Pb Kβ1′ and Kβ2′ groups, the 95.902 keV line's Cd and Te escapes at its measured position minus the X-ray energies, Ge free), one EMG with linear width, linear continuum, 62–89 keV, on the five Ge beam runs.
+  - `GeBudget.cpp`: the slices, the budget above, `results/cdte_ge.result`, the plots in `plots/studies/psi_cdte/ge_rise_slices`.
+  - `NoGeEscapes.cpp`: the escape tie from the beam runs without Ge (Te Kα/Cd Kβ 0.333 ± 0.042 at rise < 300 ns, per slice, and Cd Kβ/Kα 0.324 with Pb Kα2/Kα1 fixed), which `GeBudget.cpp` takes as constants.
+  - `RiseTime.cpp` (charge loss against rise time) and `DraftComparison.cpp` (our spectra in the draft's format) draw the supporting figures.
+- The import reproduces the /tmp study's numbers to the printed digits (68.7448, 13.9, 2.1, 5.1, 4.5, 10.3 eV; the escape tie). The reprocessed trapezoid trees agree with the study's to float rounding, about 1 in 10⁹.
+- Line energies and the escape tables are `include/ReferenceLines.hpp`, shared with the CZT code (a production rerun on it is byte-identical).
+<!---->
+### CZT + CdTe
+<!---->
+`CombineGeResult.cpp`'s `COMBINE_WITH_CDTE` (off until the CdTe analysis is final) adds the error-weighted mean of the quoted CZT value and `results/cdte_ge.result`, taken as independent (different detectors, beam times, calibrations and escape inputs; they share only the reference line energies and Geant4's Te Kβ/Kα ratio, below an eV here). Now: **68.7498 ± 0.0157 keV** (CZT weight 0.58), the two differing by 8.5 ± 31.8 eV.
 <!---->
 ## Findings
 <!---->

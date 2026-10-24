@@ -1,18 +1,11 @@
 #ifndef CONSTANTS_HPP
 #define CONSTANTS_HPP
+#include "ProjectPaths.hpp"
+
 #include <TROOT.h>
 #include <TString.h>
 #include <TSystem.h>
 #include <vector>
-
-namespace Paths {
-inline TString ProjectRootOf(const char *file) {
-  TString path = file;
-  path.ReplaceAll("/./", "/");
-  TString macros_dir = gSystem->DirName(path);
-  return gSystem->DirName(macros_dir);
-}
-} // namespace Paths
 
 namespace Constants {
 const Int_t BIN_WIDTH_EV = 255;

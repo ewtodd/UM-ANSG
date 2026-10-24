@@ -10,6 +10,7 @@
 #include "Constants.hpp"
 #include "FittingUtils.hpp"
 #include "IOUtils.hpp"
+#include "ReferenceLines.hpp"
 #include "RooFitPhotopeakPdfs.hpp"
 #include "RooFitUtils.hpp"
 
@@ -30,13 +31,13 @@
 
 // ---------------------------------------------------------------- constants
 
-const Float_t E_AM241 = 59.5409;
-const Float_t E_BA133_79 = 79.6142;
-const Float_t E_BA133_81 = 80.9979;
+const Float_t E_AM241 = ReferenceLines::AM241;
+const Float_t E_BA133_79 = ReferenceLines::BA133_79;
+const Float_t E_BA133_81 = ReferenceLines::BA133_81;
 // ENSDF intensities, 2.65(5) and 32.9(3) per 100 decays.
 const Double_t BA133_79_OVER_81 = 2.65 / 32.9;
-const Float_t E_PB_KA2 = 72.8042;
-const Float_t E_PB_KA1 = 74.9694;
+const Float_t E_PB_KA2 = ReferenceLines::PB_KA2;
+const Float_t E_PB_KA1 = ReferenceLines::PB_KA1;
 
 const Float_t E_NEAR_GE = 69;
 
@@ -233,19 +234,12 @@ inline Double_t TailHeightRatio(const PeakFitResult &pk) {
 // minus the X-ray energy, which is where the beam background runs put them
 // (the line itself reads up to 270 eV low), with the run's 95.902 keV
 // Gaussian yield times the fractions below and the lineshape of the lines
-// they sit among.
-const Int_t N_ESCAPE_LINES = 8;
-// Cd Ka1, Ka2, Kb1', Kb2', Te Ka1, Ka2, Kb1', Kb2', in keV; Kb1' and Kb2' at
-// their groups' intensity-weighted energies.
-const Double_t ESCAPE_XRAY_KEV[N_ESCAPE_LINES] = {
-    23.1739, 22.9843, 26.092, 26.650, 27.4726, 27.202, 30.988, 31.720};
-// Series of each line: 0 Cd K-alpha, 1 Cd K-beta, 2 Te K-alpha, 3 Te K-beta.
-const Int_t ESCAPE_SERIES[N_ESCAPE_LINES] = {0, 0, 1, 1, 2, 2, 3, 3};
-// Each line's share of its series: DDEP emission intensities times the
-// probability of escaping through the face of a slab.
-const Double_t ESCAPE_SERIES_SHARE[N_ESCAPE_LINES] = {
-    1.0 / 1.5242, 0.5242 / 1.5242, 0.3394 / 0.4035, 0.0641 / 0.4035,
-    1.0 / 1.5275, 0.5275 / 1.5275, 0.3548 / 0.4349, 0.0801 / 0.4349};
+// they sit among. The X-ray energies, series and shares are
+// ReferenceLines.hpp's, which the CdTe analysis uses too.
+using ReferenceLines::ESCAPE_SERIES;
+using ReferenceLines::ESCAPE_SERIES_SHARE;
+using ReferenceLines::ESCAPE_XRAY_KEV;
+using ReferenceLines::N_ESCAPE_LINES;
 
 // Escapes of each series over the 95.902 keV line's Gaussian yield.
 struct EscapeFractions {
