@@ -24,7 +24,7 @@ The previously reported 68.7502 ± 0.0145 keV (c260617) came from a pol2 that ga
 <!---->
 ## Pipeline
 <!---->
-`macros/CalibrateAndFit.cpp` with `macros/GainTransferFit.hpp`; `macros/CombineGeResult.cpp` combines.
+`czt/CalibrateAndFit.cpp` with `czt/GainTransferFit.hpp`; `czt/CombineGeResult.cpp` combines.
 The escapes need `RooFitUtils::AddFixedLines`, on Analysis-Utilities branch `review/simultaneous-fixed-lines` (47ac109; 6ceba20 also draws the pulls of a residual's negative bins; on 5d7032b), which is not pushed: the lock still pins 5d7032b, so until it is pushed and the lock bumped, enter the shell with `nix develop .#73mGe --override-input utils 'git+file:///home/e-work/Analysis-Utilities?ref=review/simultaneous-fixed-lines'`.
 <!---->
 - **Method 1, 01/13, in-situ.** Each background run (Pb Kα2/Kα1) is fitted together with its signal run (the same lines plus Ge) in raw energy: one Pb shape and one low tail, each run's Pb centroids free.
@@ -36,14 +36,14 @@ The escapes need `RooFitUtils::AddFixedLines`, on Analysis-Utilities branch `rev
 - **95.902 keV escapes.** Both methods carry the line's Cd and Te K X-ray escapes as fixed lines, at the run's own 95.902 keV centroid minus the X-ray energy, with that line's Gaussian yield times the escape fractions (95.902 keV escapes, below): fractions for captures inside the crystal in the no-shield and Cu-shield runs, for photons from the Cd shield in the Cd-shield runs.
   In the in-situ fits each channel gets its own run's lines, drawn with the Pb Kα1 shape; the line's yield and centroid come from its fits in comb-period bins at five starting points over a fixed 91.5–100.5 window (in the events' units), with the in-situ fit's converged shared tail, for which the raw fit first runs once without the escapes.
   In the rate-sub fit they are a fixed term with Ge's width and tail, scaled by the residual's own 95.902 keV line, which is 1.2 times stronger in the signal runs than live time predicts.
-- **01/14 is not used.** The detector was probably unbiased overnight and re-biased that morning, and there was no Am run, so no transfer from 01/13 applies. Its three fit states are still tracked in `calibration_low_tau20`, unused.
+- **01/14 is not used.** The detector was probably unbiased overnight and re-biased that morning, and there was no Am run, so no transfer from 01/13 applies. Its fit states and its testbed pair are removed.
 - **Lineshape.** Gaussian plus a low exponential tail, τ/σ ≤ 20; testbed closure of the in-situ fit −1.7 ± 3.0 eV.
-- **Combination**, `CombineGeResult(tag = "tau20_sigpb_esc", alt_tag = "tau20_sigpb_esc_oxfer", peak_sel_eV = 0, escape_tag = "tau20_sigpb")` (the defaults): a BLUE of every run of both methods.
+- **Combination**, `CombineGeResult(tag = "tau20_sigpb_esc", alt_tag = "tau20_sigpb_esc_oxfer", escape_tag = "tau20_sigpb")` (the defaults): a BLUE of every run of both methods.
   The correlated blocks are the Am reference (shared by the 01/13 rows), the gain transfer, the transfer model (each run's Ge under `alt_tag` minus under `tag`), and the escape correction (each run's Ge under `tag` minus under `escape_tag`) in two blocks, the Cd-shield runs and the rest.
   `escape_tag` must be the same configuration without the escapes; pass `""` when combining any other tag.
   Fit errors, the signal-run anchor errors and the rate-sub systematics are independent, on the diagonal.
-  On top, in quadrature: the published budget's outlier removal (the BLUE without its highest run, its lowest, and both; the largest shift) and, when given, its calibration-peak-selection term.
-  Method 1 alone, the uncorrelated mean and the earlier scheme (Method 1 with the gap to Method 2 as a systematic) are printed for comparison.
+  On top, in quadrature: the published budget's outlier removal (the BLUE without its highest run, its lowest, and both; the largest shift).
+  Method 1 alone and the uncorrelated mean are printed for comparison.
 <!---->
 Result columns: `method ge_mu fit_err cal_err bkg_err chi2 gain_err cal_off sys_err anchor_err label`; `bkg_err` is a diagnostic, and files without the later columns read them as 0.
 <!---->
@@ -55,10 +55,10 @@ Switches, read when the macro loads; each combination writes its own `root_files
 | `ESCAPES=off` | drops `_esc` | no 95.902 keV escapes; `tau20_sigpb` is production without them |
 | `PB_ANCHOR=background` | drops `_sigpb` | signal runs keep their background run's calibration |
 | `TRANSFER=offset` | `…_oxfer` | the Cd pairs inherit the reference shifted, not scaled; `tau20_sigpb_esc_oxfer` is production's transfer-model partner |
-| `LINESHAPE=legacy` | `tau8…` | lineshape before 2026-10-22 |
 | `FIT_HARD=1` | `…_hard` | Minuit strategy 2, final HESSE, 200k calls |
 | `FIDUCIAL=interior` | `…_int` | every run keeps only each crystal's 9 × 9 interior pixels |
 | `BKG=linear` | `…_linbkg` | a sloped continuum in the in-situ fit |
+| `RESULT_TAG_OVERRIDE=<name>` | `<name>` | plots and results land under `<name>`; the calibrated trees are still read from the switches' tag |
 <!---->
 Tracked: the `tau20_sigpb_esc`, `tau20_sigpb_esc_oxfer`, `tau20_sigpb`, `tau20_sigpb_oxfer` and `tau20` results, and the fit states of `tau20_sigpb_esc`, `tau20_sigpb` and `tau20` (identical files; the escapes add no fitted parameter).
 A new tag needs fit states in `plots/calibration_low_<tag>/fits` copied from `tau20_sigpb_esc`'s, or the fitter opens the editor; for `BKG=linear`, free the copied `BkgSlope` (`0 0.0001 0`).
@@ -131,6 +131,18 @@ The interior-pixel and sloped-continuum variants (under the earlier combination)
 ### Ruled out
 <!---->
 - **The 95.9 keV line as a probe**: in Cu runs it reads 31–67 eV low against Pb, and −270 eV in the 01/16 castle runs.
+<!---->
+### Removed (2026-10-23)
+<!---->
+Code that no longer fed the result, cut so it cannot be mistaken for part of it:
+<!---->
+- **`LINESHAPE=legacy`** (`tau8`, τ/σ ≤ 8): its tail bound railed (2026-10-22 lineshape tests), so that lineshape was set by the bound, not fitted; τ/σ ≤ 20 replaced it.
+- **The earlier combination scheme** in `CombineGeResult` (Method 1 with the gap to Method 2 as a systematic, and its split of the error without calibration): superseded by the BLUE of both methods (Choices made).
+- **The calibration-peak-selection term** (`peak_sel_eV`): the quoted result took the default, 0.
+- **`RateSubAlpha.cpp`**, a subtraction-scale scan and Gaussian-against-tail test on Gaussian-fitted 255 eV residuals, and **`AdditionalLevels.cpp`**, a likelihood-ratio search for other sample lines (73Ge, 77Ge, 77As) in the beam runs: one-off studies on the earlier rate-sub fit and calibration, superseded by the shared-lineshape, comb-period fit.
+- **01/14**: its fit states in `calibration_low_tau20` and its pair in `InjectionTest.cpp`.
+- **Diagnostics in `CalibrateAndFit`**: the Ge/Pb rate-ratio printout, the Am-plus-Kα variant of the validation (the Pb-only validation and the linearity check stay), the unit check and the pre-cal Pb comparison table. In `GainTransferFit.hpp`: the in-situ path with one Pb line and the rate-sub fit's free-tail model, unreachable since the two-line model and the shared lineshape; the single-histogram rate binning gave way to the five-phase binning, which `CalibrateAndFit` and `InjectionTest` now share with the phase-averaged rate-sub fit.
+- **`Filter.cpp`'s `GetTrimmedPixelCenters`**: never called.
 <!---->
 ### Analysis-Utilities
 <!---->

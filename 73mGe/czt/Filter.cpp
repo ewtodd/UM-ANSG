@@ -146,25 +146,6 @@ Int_t GetCrystalIndex(Float_t x, Float_t y) {
   return -1; // on boundary
 }
 
-std::vector<Float_t> GetTrimmedPixelCenters(const std::vector<Float_t> &centers,
-                                            Int_t nEdgeSkip) {
-  // centers is sorted. First half (negative values) is one crystal,
-  // second half (positive values) is the other. Skip nEdgeSkip from
-  // each end of each half.
-  std::vector<Float_t> trimmed;
-  Int_t halfSize = (Int_t)centers.size() / 2; // 11
-  for (Int_t i = 0; i < halfSize; i++) {
-    if (i >= nEdgeSkip && i < halfSize - nEdgeSkip)
-      trimmed.push_back(centers[i]);
-  }
-  for (Int_t i = halfSize; i < (Int_t)centers.size(); i++) {
-    Int_t j = i - halfSize;
-    if (j >= nEdgeSkip && j < halfSize - nEdgeSkip)
-      trimmed.push_back(centers[i]);
-  }
-  return trimmed;
-}
-
 void FilterDemo(std::vector<TString> filenames) {
   Int_t n_files = filenames.size();
 

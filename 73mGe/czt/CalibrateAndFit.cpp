@@ -69,7 +69,7 @@ struct PairCalResult {
   Double_t ge_cal_err = 0; // calibration sigma propagated to the Ge energy
   Double_t ge_cal_off = 0; // its value at the best-constrained energy
 
-  Double_t ge_bkg_err = 0; // |cal(precal Ge) - postcal Ge|; see file-top note
+  Double_t ge_bkg_err = 0; // |cal(precal Ge) - postcal Ge|, a diagnostic only
   BkgGeSimResult postcal;
   TString pair_tag;
   std::vector<Float_t> pb_mus_precal;
@@ -655,142 +655,51 @@ void PrintRateSubShape(const TString &tag, const RateSubShape &s) {
             << s.ge_tau_over_sigma << std::endl;
 }
 
-// The 95.902 keV line is 1.2 times stronger in the signal runs than live time
-// predicts, so the residual keeps a share of it and of its escapes. Its
-// Gaussian yield and centroid in the residual, comb-period bins over 88-104
-// keV at the rate-sub fit's starting points, with the Ge tail.
-void SetResidualCaptureLine(const TString &sig_run, const TString &bkg_run,
-                            TF1 *cal, Double_t bin, const TString &tag,
-                            RateSubShape &shape) {
-  std::vector<TH1F *> sig = BuildRateHists(sig_run, cal, "capture_sig_" + tag,
-                                           88.0, 104.0, bin, N_RATESUB_PHASES);
-  std::vector<TH1F *> bkg = BuildRateHists(bkg_run, cal, "capture_bkg_" + tag,
-                                           88.0, 104.0, bin, N_RATESUB_PHASES);
-  if (sig.size() == bkg.size() && !sig.empty()) {
-    for (size_t k = 0; k < sig.size(); k++)
-      sig[k]->Add(bkg[k], -1.0);
-    CaptureLine line =
-        AverageCaptureLine(sig, shape.ge_tail_height_ratio,
-                           shape.ge_tau_over_sigma, kFALSE, "ratesub_" + tag);
-    if (line.valid) {
-      shape.capture_rate = line.gaus_yield;
-      shape.capture_mu = line.mu;
-    } else {
-      std::cerr << "WARNING: no residual 95.902 keV line for " << tag
-                << "; the rate-sub fit carries no escapes" << std::endl;
-    }
-  }
-  for (size_t k = 0; k < sig.size(); k++)
-    delete sig[k];
-  for (size_t k = 0; k < bkg.size(); k++)
-    delete bkg[k];
-}
-
-// The live-time residual, signal minus background, in bins one comb period
-// wide at N_RATESUB_PHASES starting points. The linear residual background is
-// the central model and the quadratic one its systematic. The residual is
-// overdispersed (chi2/ndf 1.4-1.9 here: the pixels' discrete energy grids,
-// which the two runs fill differently), so the fit error is scaled by
-// sqrt(chi2/ndf).
+// Method 2 for one day: the residual's 95.902 keV line (for its escapes) and
+// the phase-averaged rate-sub fit of the live-time residual, signal minus
+// background, from each run's rate histograms (FitRateSubPhases in
+// GainTransferFit.hpp), then the plot of the first starting point's fit.
 RateSubResult FitRateSubtractedGe(const TString &sig_run,
                                   const TString &bkg_run, TF1 *cal,
                                   const TString &tag,
                                   const RateSubShape &tail_shape) {
-  RateSubResult out;
   const Float_t lo = RATESUB_LO, hi = RATESUB_HI;
   PrintRateSubShape(tag, tail_shape);
 
   const Double_t bin = COMB_PERIOD_RAW_KEV * cal->GetParameter(1);
   RateSubShape shape = tail_shape;
-  if (EscapeLinesRequested())
-    SetResidualCaptureLine(sig_run, bkg_run, cal, bin, tag, shape);
+  if (EscapeLinesRequested()) {
+    std::vector<TH1F *> capture_sigs = BuildRateHists(
+        sig_run, cal, "capture_sig_" + tag, 88.0, 104.0, bin, N_RATESUB_PHASES);
+    std::vector<TH1F *> capture_bkgs = BuildRateHists(
+        bkg_run, cal, "capture_bkg_" + tag, 88.0, 104.0, bin, N_RATESUB_PHASES);
+    SetResidualCaptureLine(capture_sigs, capture_bkgs, tag, shape);
+    for (size_t k = 0; k < capture_sigs.size(); k++)
+      delete capture_sigs[k];
+    for (size_t k = 0; k < capture_bkgs.size(); k++)
+      delete capture_bkgs[k];
+  }
   std::vector<TH1F *> sigs =
       BuildRateHists(sig_run, cal, "rate_sig_" + tag, lo - bin, hi + bin, bin,
                      N_RATESUB_PHASES);
   std::vector<TH1F *> bkgs =
       BuildRateHists(bkg_run, cal, "rate_bkg_" + tag, lo - bin, hi + bin, bin,
                      N_RATESUB_PHASES);
-  if ((Int_t)sigs.size() != N_RATESUB_PHASES ||
-      (Int_t)bkgs.size() != N_RATESUB_PHASES) {
-    for (size_t k = 0; k < sigs.size(); k++)
-      delete sigs[k];
-    for (size_t k = 0; k < bkgs.size(); k++)
-      delete bkgs[k];
-    return out;
-  }
-
-  Double_t sum_mu = 0, sum_mu2 = 0, sum_err = 0, sum_chi2 = 0, sum_quad = 0;
-  Int_t n_linear = 0, n_quadratic = 0;
-  RateSubResult fit;
+  RateSubResult out;
   TF1 *model = nullptr;
   TH1F *res = nullptr;
-  for (Int_t k = 0; k < N_RATESUB_PHASES; k++) {
-    TString phase_tag = tag + Form("_phase%d", k);
-    TH1F *phase_res =
-        static_cast<TH1F *>(sigs[k]->Clone("rate_residual_" + phase_tag));
-    phase_res->SetDirectory(nullptr);
-    phase_res->Add(bkgs[k], -1.0);
-    TF1 *phase_model = nullptr;
-    RateSubResult linear =
-        FitRateSubHistShaped(phase_res, shape, phase_tag, &phase_model, kFALSE);
-    RateSubResult quadratic = FitRateSubHistShaped(
-        phase_res, shape, phase_tag + "_quadratic", nullptr, kTRUE);
-    std::cout << "RATESUB-PHASE " << tag << " " << k << ": linear "
-              << std::fixed << std::setprecision(4) << linear.mu << " +/- "
-              << linear.mu_err << " (chi2/ndf " << std::setprecision(2)
-              << linear.chi2 << ")   quadratic " << std::setprecision(4)
-              << quadratic.mu << " +/- " << quadratic.mu_err << std::endl;
-    if (linear.valid) {
-      sum_mu += linear.mu;
-      sum_mu2 += linear.mu * linear.mu;
-      sum_err += linear.mu_err;
-      sum_chi2 += linear.chi2;
-      n_linear++;
-    }
-    if (quadratic.valid) {
-      sum_quad += quadratic.mu;
-      n_quadratic++;
-    }
-    if (k == 0 && linear.valid && phase_model) {
-      fit = linear;
-      model = phase_model;
-      res = phase_res;
-    } else {
-      delete phase_model;
-      delete phase_res;
-    }
-  }
-  for (Int_t k = 0; k < N_RATESUB_PHASES; k++) {
+  if ((Int_t)sigs.size() == N_RATESUB_PHASES &&
+      (Int_t)bkgs.size() == N_RATESUB_PHASES)
+    out = FitRateSubPhases(sigs, bkgs, shape, tag, &model, &res);
+  for (size_t k = 0; k < sigs.size(); k++)
     delete sigs[k];
+  for (size_t k = 0; k < bkgs.size(); k++)
     delete bkgs[k];
-  }
-  if (n_linear == 0 || !model) {
-    std::cerr << "WARNING: rate-sub chi2 fit failed for " << tag << std::endl;
+  if (!out.valid || !model || !res) {
     delete model;
     delete res;
     return out;
   }
-
-  Double_t mean = sum_mu / n_linear;
-  Double_t chi2 = sum_chi2 / n_linear;
-  out = fit;
-  out.mu = mean;
-  out.chi2 = chi2;
-  out.mu_err = (sum_err / n_linear) * TMath::Sqrt(TMath::Max(chi2, 1.0));
-  out.phase_rms =
-      TMath::Sqrt(TMath::Max(sum_mu2 / n_linear - mean * mean, 0.0));
-  out.shape_shift =
-      (n_quadratic > 0) ? TMath::Abs(sum_quad / n_quadratic - mean) : 0.0;
-  out.sys_err = TMath::Sqrt(
-      out.phase_rms * out.phase_rms + out.shape_shift * out.shape_shift +
-      RATESUB_TRANSFER_SYS_KEV * RATESUB_TRANSFER_SYS_KEV);
-  std::cout << "RATESUB-FIT " << tag << ": mu = " << std::fixed
-            << std::setprecision(4) << out.mu << " +/- " << out.mu_err
-            << " (fit, scaled by sqrt(chi2/ndf " << std::setprecision(2) << chi2
-            << ")) +/- " << std::setprecision(4) << out.sys_err
-            << " (sys: bin phase " << out.phase_rms << ", quadratic "
-            << out.shape_shift << ", transfer " << RATESUB_TRANSFER_SYS_KEV
-            << ") keV   sigma = " << out.sigma << std::endl;
 
   res->GetYaxis()->SetTitle(
       Form("Counts/s / %.0f eV", 1000.0 * res->GetBinWidth(1)));
@@ -1130,52 +1039,19 @@ PairCalResult ProcessPbAnchoredPair(
     }
   }
 
-  if (pre.bkg_channel.peaks.size() >= 2 && !pre.sig_channel.peaks.empty()) {
-    Double_t mu_pb1 = pre.bkg_channel.peaks[0].mu;
-    Double_t mu_pb2 = pre.bkg_channel.peaks[1].mu;
-    Double_t denom = mu_pb2 - mu_pb1;
-    if (std::fabs(denom) > 0) {
-      Double_t ge_raw = pre.sig_channel.peaks.back().mu;
-      Double_t r_ge_pb = (ge_raw - mu_pb1) / denom;
-      std::cout << "R_GEPB " << cal_label << ": raw Ka2 " << std::fixed
-                << std::setprecision(4) << mu_pb1 << "  raw Ka1 " << mu_pb2
-                << "  raw Ge " << ge_raw << "  R = " << std::setprecision(6)
-                << r_ge_pb << std::endl;
-    }
-  }
-
-  // Cross-checks on the pair that also has Am. All lines are evaluated at the
-  // SAME raw Ge centroid, so the fit cancels and only the calibration differs
-  // -- this is the one place the two effects are cleanly separable.
-  //
-  // The nominal line already contains Am, so the LINEARITY test is scored
-  // against a separately rebuilt Pb-only line: Am must play no part in the
-  // line whose Am prediction is being tested, or the check is circular.
+  // Cross-checks on the pair that also has Am, against a calibration through
+  // its Pb lines alone. Both are evaluated at the same raw Ge centroid, so only
+  // the calibrations differ; and the Pb-only line predicts Am, which plays no
+  // part in it, so the LINEARITY check is not circular.
   if (have_am && !pre.sig_channel.peaks.empty()) {
-    CalibrationData cal_am;
-    AddCalPoint(cal_am, pair_tag + " Am-241 59.5", am.peaks.at(0).mu,
-                GuardedMuError(pair_tag + " Am-241", am.peaks.at(0), am),
-                E_AM241, am.reduced_chi2, dE_AM241);
-    AddCalPoint(cal_am, pair_tag + " Pb-Ka2", pre.bkg_channel.peaks.at(0).mu,
-                GuardedMuError(pair_tag + " Pb-Ka2",
-                               pre.bkg_channel.peaks.at(0), pre.bkg_channel),
-                E_PB_KA2, -1, dE_PB_KA);
-    AddCalPoint(cal_am, pair_tag + " Pb-Ka1", pre.bkg_channel.peaks.at(1).mu,
-                GuardedMuError(pair_tag + " Pb-Ka1",
-                               pre.bkg_channel.peaks.at(1), pre.bkg_channel),
-                E_PB_KA1, -1, dE_PB_KA);
-    CalFit cal_check = CreateAndSavePol1Cal(cal_am, cal_label + "_AmCheck");
     Double_t ge_pre = pre.sig_channel.peaks.back().mu;
     Double_t e_nominal = cal->Eval(ge_pre);
     Double_t e_pbonly = pb_probe.func->Eval(ge_pre);
-    Double_t e_amka = cal_check.func->Eval(ge_pre);
     std::cout << "VALIDATION " << pair_tag << " (Ge precal " << std::fixed
               << std::setprecision(4) << ge_pre << "):  nominal -> "
               << e_nominal << " keV   Pb-only -> " << e_pbonly
-              << " keV   Am+Ka -> " << e_amka << " keV   (nominal - Pb-only) "
-              << std::setprecision(1) << (e_nominal - e_pbonly) * 1000.0
-              << " eV   (nominal - Am+Ka) " << (e_nominal - e_amka) * 1000.0
-              << " eV" << std::endl;
+              << " keV   (nominal - Pb-only) " << std::setprecision(1)
+              << (e_nominal - e_pbonly) * 1000.0 << " eV" << std::endl;
 
     Double_t am_raw = am.peaks.at(0).mu;
     Double_t am_pred = pb_probe.func->Eval(am_raw);
@@ -1228,27 +1104,6 @@ PairCalResult ProcessPbAnchoredPair(
   ConvertSeedPeaksToCalibrated(cal, pre.bkg_channel, bkg_seed_post);
   ConvertSeedPeaksToCalibrated(sig_cal, pre.sig_channel, sig_seed_post);
 
-  // Reports only. sigma and the tail parameters are fitted in RAW units and
-  // seeded into a fit of CALIBRATED data, so anything carrying units of energy
-  // is wrong by s = f'(mu), the local derivative: sigma scales by s and
-  // low_lin_tail_slope by 1/s. Tail ratios (tau/sigma) and amplitudes are
-  // dimensionless and carry over unchanged.
-  if (!pre.sig_channel.peaks.empty()) {
-    const PeakFitResult &ge_pre = pre.sig_channel.peaks.back();
-    Double_t s = cal->Derivative(ge_pre.mu);
-    std::cout << "UNIT-CHECK " << cal_label
-              << " (Ge peak, f'(mu) = " << std::fixed << std::setprecision(6)
-              << s << "):" << std::endl;
-    std::cout << "  sigma            raw " << std::setprecision(5)
-              << ge_pre.sigma << "   used " << ge_pre.sigma << "   should be "
-              << ge_pre.sigma * s << "   (delta "
-              << (ge_pre.sigma - ge_pre.sigma * s) * 1000.0 << " eV)"
-              << std::endl;
-    std::cout << "  lowLinTailSlope  raw " << ge_pre.low_lin_tail_slope
-              << "   used " << ge_pre.low_lin_tail_slope << "   should be "
-              << (s != 0 ? ge_pre.low_lin_tail_slope / s : 0.0) << std::endl;
-  }
-
   // Pb peaks left free post-cal: where the calibrated Pb doublet actually
   // lands is a blind check at the energy of interest. The whole chain (precal
   // -> cal -> postcal) uses one shared tail model, so this run is internally
@@ -1297,26 +1152,6 @@ void AppendPairToDay(DayResult &result, const PairCalResult &p,
               p.ge_bkg_err, p.ge_cal_off, p.ge_anchor_err);
 }
 
-void PrintPrecalPbComparison(const TString &date_label,
-                             const std::vector<PairCalResult *> &pairs) {
-  std::cout << "Pre-cal Pb mu comparison for " << date_label << std::endl;
-  std::cout << std::left << std::setw(14) << "Pair" << std::right
-            << std::setw(14) << "Pb-Ka2 mu" << std::setw(14) << "shift vs true"
-            << std::setw(14) << "Pb-Ka1 mu" << std::setw(14) << "shift vs true"
-            << std::endl;
-  for (size_t i = 0; i < pairs.size(); i++) {
-    const PairCalResult *p = pairs[i];
-    if (!p || p->pb_mus_precal.size() < 2)
-      continue;
-    Float_t mu1 = p->pb_mus_precal[0];
-    Float_t mu2 = p->pb_mus_precal[1];
-    std::cout << std::left << std::setw(14) << p->pair_tag << std::right
-              << std::fixed << std::setprecision(4) << std::setw(14) << mu1
-              << std::setw(14) << (mu1 - E_PB_KA2) << std::setw(14) << mu2
-              << std::setw(14) << (mu2 - E_PB_KA1) << std::endl;
-  }
-}
-
 DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
   CalibrationData cal_data;
 
@@ -1356,13 +1191,9 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
   result.cal_labels.push_back(cfg.date_label);
   result.cal_funcs.push_back(cal);
 
-  // Default-constructed shape = Gaussian over the production window, which is
-  // also the legacy lineshape.
+  // Without the Am and Ba tails the default shape, a Gaussian, is used.
   RateSubShape shape;
-  if (LegacyLineshape())
-    std::cout << "RATESUB " << cfg.date_label << ": legacy Gaussian"
-              << std::endl;
-  else if (am.valid && ba81.valid && ba81.peaks.size() > 1)
+  if (am.valid && ba81.valid && ba81.peaks.size() > 1)
     shape = RateSubShapeFromLines(am.peaks.at(0), ba81.peaks.at(1));
   else
     std::cerr << "WARNING: no Am/Ba tail for " << cfg.date_label
@@ -1463,10 +1294,6 @@ DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
   for (Int_t i = 0; i < (Int_t)pairs.size(); i++)
     AppendPairToDay(result, results[i], "20260113", pairs[i].ge_label);
 
-  std::vector<PairCalResult *> ptrs;
-  for (Int_t i = 0; i < (Int_t)pairs.size(); i++)
-    ptrs.push_back(&results[i]);
-  PrintPrecalPbComparison("20260113", ptrs);
   ref_pair_out = results[ref_idx];
   return result;
 }
@@ -1527,9 +1354,7 @@ void CalibrateAndFit() {
   std::cout << "OUTPUT-TAG " << out_tag
             << (out_tag == RESULT_TAG ? " (default)" : " (RESULT_TAG_OVERRIDE)")
             << std::endl;
-  std::cout << "CONFIG lineshape "
-            << (LegacyLineshape() ? "legacy" : "shared-tail") << "   tail "
-            << "tau/sigma <= " << TAIL_RATIO_MAX << "   hard fit "
+  std::cout << "CONFIG tail tau/sigma <= " << TAIL_RATIO_MAX << "   hard fit "
             << (HardFitRequested() ? "on" : "off") << "   Pb anchor "
             << (SignalPbAnchorRequested() ? "signal run" : "background run")
             << "   transfer " << (OffsetTransferRequested() ? "offset" : "gain")

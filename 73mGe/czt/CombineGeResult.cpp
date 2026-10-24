@@ -11,12 +11,10 @@
 // independent (gain transfer) parts, and the transfer model (gain against
 // offset, from a second result set) is a third correlated part. The 95.902 keV
 // escape correction (from a result set without it) is charged in full, in two
-// more correlated parts, one per set of escape fractions. On top come
-// the published budget's nuisance terms, in quadrature: outlier removal (the
-// BLUE without its highest and lowest runs) and, when given, calibration peak
-// selection. Method 1 alone, the uncorrelated weighted mean, and the earlier
-// scheme that charged the gap between the methods as a systematic are printed
-// for comparison.
+// more correlated parts, one per set of escape fractions. On top comes the
+// published budget's outlier removal, in quadrature: the largest shift of the
+// BLUE without its highest run, its lowest, or both. Method 1 alone and the
+// uncorrelated weighted mean are printed for comparison.
 //
 // The calibration term is reported as offset (+) multiplicative. Offset is the
 // calibration error at its best-constrained energy (cal_off, the intercept
@@ -120,7 +118,7 @@ Double_t WeightedMean(const std::vector<Double_t> &v,
 
 // Combined estimate; err already CONTAINS the calibration, never add it again.
 struct Blue {
-  Double_t mean = 0, err = 0, err_nocal = 0, cal_part = 0, chi2ndf = 0;
+  Double_t mean = 0, err = 0, chi2ndf = 0;
   Double_t scale = 1;
   std::vector<Double_t> w;
   Int_t n = 0;
@@ -204,16 +202,6 @@ Blue CombineBlueGen(const std::vector<Double_t> &x,
   Double_t scale = (b.chi2ndf > 1.0) ? std::sqrt(b.chi2ndf) : 1.0;
   b.scale = scale;
   b.err = std::sqrt(1.0 / A) * scale;
-  // Diagnostic: the same estimate with every correlated block switched off, so
-  // the correlated share of the total is visible rather than asserted.
-  Double_t S0 = 0;
-  for (Int_t i = 0; i < n; i++)
-    if (diag[i] > 0)
-      S0 += 1.0 / (diag[i] * diag[i]);
-  b.err_nocal = (S0 > 0) ? std::sqrt(1.0 / S0) * scale : 0.0;
-  b.cal_part = (b.err > b.err_nocal)
-                   ? std::sqrt(b.err * b.err - b.err_nocal * b.err_nocal)
-                   : 0.0;
   b.valid = kTRUE;
   return b;
 }
@@ -238,7 +226,7 @@ std::set<TString> KeptInsituLabels(const std::vector<Row> &rows) {
 // mode 0 = in-situ only, 1 = in-situ + rate-sub, 2 = rate-sub only.
 // err ALREADY CONTAINS the calibration; never add a calibration term again.
 struct Combination {
-  Double_t mean = 0, err = 0, err_nocal = 0, cal_part = 0, chi2ndf = 0;
+  Double_t mean = 0, err = 0, chi2ndf = 0;
   // Exact decomposition of err^2 with the BLUE weights:
   // stat^2 + offset^2 + mult^2 + sys^2 + model^2 + escape^2 = err^2.
   Double_t stat_part = 0, off_part = 0, mult_part = 0, sys_part = 0;
@@ -330,8 +318,6 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
   Blue b = CombineBlueGen(mu, diag, corr);
   v.mean = b.mean;
   v.err = b.err;
-  v.err_nocal = b.err_nocal;
-  v.cal_part = b.cal_part;
   v.chi2ndf = b.chi2ndf;
   v.n = b.n;
   v.valid = b.valid;
@@ -441,66 +427,15 @@ Double_t UncorrelatedMean(const std::vector<Row> &rows,
   return (sw > 0) ? swx / sw : 0;
 }
 
-struct Scheme {
-  Double_t central = 0, base = 0, method = 0, total = 0;
-  Bool_t valid = kFALSE;
-};
-
-// Print one scheme's FULL derivation, so the quoted number and the printed
-// budget come from the same arithmetic and the column can be added up.
-Scheme ReportScheme(const TString &title, const std::vector<Row> &rows,
-                    Int_t mode, const std::set<TString> &kept,
-                    Double_t ratesub_central, Bool_t have_ratesub) {
-  Scheme s;
-  Combination c = Combine(rows, mode, kept);
-  if (!c.valid)
-    return s;
-
-  std::cout << std::endl;
-  std::cout << "========== " << title << " ==========" << std::endl;
-  std::cout << std::fixed << std::setprecision(5);
-  std::cout << "  n=" << c.n << "  mean " << c.mean << "  err " << c.err
-            << "  (indep " << c.err_nocal << " (+) common-cal " << c.cal_part
-            << ")  chi2/ndf " << std::setprecision(2) << c.chi2ndf
-            << std::setprecision(5) << std::endl;
-  std::cout << "  split of err with the BLUE weights: stat " << c.stat_part
-            << " (+) cal offset " << c.off_part << " (+) cal multiplicative "
-            << c.mult_part << " (+) sys " << c.sys_part
-            << " (+) transfer model " << c.model_part << " (+) escapes "
-            << c.escape_part << std::endl;
-
-  s.central = c.mean;
-  s.base = c.err;
-  s.method = have_ratesub ? std::fabs(c.mean - ratesub_central) : 0;
-  s.total = std::sqrt(s.base * s.base + s.method * s.method);
-  s.valid = kTRUE;
-
-  std::cout << "  central   = " << s.central << std::endl;
-  std::cout << "  base      = " << s.base << "   (BLUE, fit (+) calibration)"
-            << std::endl;
-  if (have_ratesub)
-    std::cout << "  method    = " << s.method
-              << "   (MEASURED gap |M1 - M2|, M2 = " << ratesub_central << ")"
-              << std::endl;
-  std::cout << "  TOTAL     = sqrt(" << s.base << "^2 + " << s.method
-            << "^2) = " << s.total << std::endl;
-  std::cout << std::setprecision(4) << "  E = " << s.central << " +/- "
-            << s.total << " keV" << std::endl;
-  return s;
-}
-
 // tag: the RESULT_TAG the rows were written with (results/ge_<tag>.result).
 // alt_tag: the same analysis under the other transfer model (gain against
 // offset, which no line inside the calibrated range can decide); each run's
 // difference enters as a fully correlated systematic. "" leaves it out.
-// peak_sel_eV: the published budget's calibration-peak-selection term, added
-// in quadrature when given.
 // escape_tag: the same analysis without the 95.902 keV escapes; each run's
 // correction (its Ge with them minus without) is charged in full as a
 // systematic, correlated as EscapesFromShield() says. "" leaves it out.
 void CombineGeResult(const char *tag = "tau20_sigpb_esc",
                      const char *alt_tag = "tau20_sigpb_esc_oxfer",
-                     Double_t peak_sel_eV = 0.0,
                      const char *escape_tag = "tau20_sigpb") {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   std::vector<Row> rows =
@@ -545,9 +480,9 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
     std::cout << std::endl;
   }
 
-  // bkg_err is |cal(precal Ge) - postcal Ge|, a diagnostic only: with the
-  // unit bug fixed the post-cal fit returns its own seed, so it is a
-  // tautology rather than a systematic. Printed, never in the budget.
+  // bkg_err is |cal(precal Ge) - postcal Ge|, how far the calibrated in-situ
+  // fit moves Ge from the raw fit's value mapped through the calibration: a
+  // diagnostic, printed, never in the budget.
   std::vector<Double_t> all_be, all_fe;
   for (size_t i = 0; i < rows.size(); i++) {
     all_be.push_back(rows[i].bkg_err);
@@ -585,14 +520,6 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
   std::cout << "  [diag] |cal(pre)-post| = " << background_sys
             << "  (post-cal drift from seed; NOT in any budget)" << std::endl;
 
-  // The earlier scheme, printed for comparison: Method 1 quoted, the gap to
-  // Method 2 charged as a systematic. It used Method 2 only through a gap
-  // that is not significant, and only while Method 2's errors left out its
-  // own systematics.
-  Scheme previous = ReportScheme(
-      "Previous scheme: Method 1, the gap to Method 2 as a systematic", rows, 0,
-      kept, rs.mean, rs.valid);
-
   Combination both = Combine(rows, 1, kept);
   std::cout << std::endl;
   std::cout << "========== Both methods, BLUE ==========" << std::endl;
@@ -624,9 +551,7 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
   std::cout << "----- outlier removal (as in the published approach) -----"
             << std::endl;
   Double_t nuisance = both.valid ? OutlierNuisance(rows, kept, both.mean) : 0;
-  Double_t peak_sel = std::fabs(peak_sel_eV) / 1000.0;
-  Double_t quoted_err = std::sqrt(both.err * both.err + nuisance * nuisance +
-                                  peak_sel * peak_sel);
+  Double_t quoted_err = std::sqrt(both.err * both.err + nuisance * nuisance);
   Double_t plain_err = 0;
   Double_t plain = UncorrelatedMean(rows, kept, plain_err);
 
@@ -634,11 +559,10 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
   std::cout << "========== FINAL: Ge-73m gamma energy ==========" << std::endl;
   std::cout << std::setprecision(4);
   std::cout << "  QUOTED = BLUE of both methods' runs (+) the published "
-               "budget's nuisance terms"
+               "budget's outlier removal"
             << std::endl;
   std::cout << "  E = " << both.mean << " +/- " << both.err << " (BLUE) +/- "
-            << nuisance << " (outlier removal) +/- " << peak_sel
-            << " (calibration peak selection) keV" << std::endl;
+            << nuisance << " (outlier removal) keV" << std::endl;
   std::cout << "  E = " << both.mean << " +/- " << quoted_err
             << " keV  (combined)" << std::endl;
   std::cout << "  [uncorrelated weighted mean] " << plain << " +/- "
@@ -646,9 +570,6 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
   if (in_only.valid)
     std::cout << "  [Method 1 alone] " << in_only.mean << " +/- " << in_only.err
               << " keV" << std::endl;
-  if (previous.valid)
-    std::cout << "  [previous scheme] " << previous.central << " +/- "
-              << previous.total << " keV" << std::endl;
   std::cout << "  literature 68.752(7), collaborator 68.755" << std::endl;
 
   // Comparison table in the collaborator's format: Eg in keV, uncertainties in
@@ -703,6 +624,5 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
             << both.err * 1000.0 << std::endl;
   std::cout << "  quoted Total = sqrt(" << std::setprecision(1)
             << both.err * 1000.0 << "^2 + outlier removal " << nuisance * 1000.0
-            << "^2 + peak selection " << peak_sel * 1000.0
             << "^2) = " << quoted_err * 1000.0 << " eV" << std::endl;
 }

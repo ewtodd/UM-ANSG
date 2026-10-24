@@ -1,14 +1,11 @@
 #ifndef GAINTRANSFER_FIT_HPP
 #define GAINTRANSFER_FIT_HPP
 
-// Shared fitting core for the 73mGe gain-transfer analysis.
+// The fitting core of the CZT 73mGe analysis.
 //
-// Both CalibrateAndFit.cpp (the production pipeline) and InjectionTest.cpp (the
-// closure test) include this, so the injection test exercises the SAME
-// simultaneous-fit and rate-subtracted-fit code that produces the measurement.
-// Before this existed, InjectionTest.cpp carried its own copy in
-// CalibrationLow.cpp and the two could disagree for reasons unrelated to the
-// physics.
+// CalibrateAndFit.cpp (the measurement) and InjectionTest.cpp (its testbed
+// closure) both include this, so the testbed exercises the same in-situ and
+// rate-subtracted fits that produce the result.
 
 #include "Constants.hpp"
 #include "FittingUtils.hpp"
@@ -75,22 +72,14 @@ const Double_t RATESUB_TRANSFER_SYS_KEV = 0.020;
 
 const Bool_t LINK_PB_KA_SIGMA = kTRUE;
 
-// BKG=linear: a sloped continuum in the in-situ fit. With the flat one the
-// 01/14 signal residuals run from -2 sigma at 65 keV to +2 sigma at 80 keV.
+// BKG=linear: a sloped continuum in the in-situ fit instead of the flat one, a
+// check of the continuum shape.
 inline Bool_t LinearBkgRequested() {
   const char *env = getenv("BKG");
   return env && TString(env) == "linear";
 }
 
 const Bool_t USE_FLAT_BKG = !LinearBkgRequested();
-
-// LINESHAPE=legacy reproduces the lineshape used before 2026-10-22 (tail
-// capped at 8 sigma, Gaussian rate-sub fit) under its own tag, so the effect
-// of the lineshape change can be measured on its own.
-inline Bool_t LegacyLineshape() {
-  const char *env = getenv("LINESHAPE");
-  return env && TString(env) == "legacy";
-}
 
 // FIT_HARD=1: Minuit strategy 2, a final HESSE and 200k calls in RunBkgGeSim.
 inline Bool_t HardFitRequested() {
@@ -121,8 +110,7 @@ inline Bool_t OffsetTransferRequested() {
 // FIDUCIAL=interior: every run, calibration and source runs included, keeps
 // only the 9 x 9 interior pixels of each crystal, dropping its outer ring and
 // the ring along the gap between crystals. Pb K-alpha1 reads 7-155 eV away
-// from its all-pixel value in those rings, and 01/14's Ge excess is largest
-// there.
+// from its all-pixel value in those rings.
 inline Bool_t InteriorPixelsRequested() {
   const char *env = getenv("FIDUCIAL");
   return env && TString(env) == "interior";
@@ -147,14 +135,14 @@ inline Bool_t EscapeLinesRequested() {
 // At 8 the low-exp tail railed on every line. Up to 20 it settles inside
 // (tau/sigma 9.5 Am, 10.5 Ba, 10.7 Pb in-situ) and the Pb Ka chi2 drops from
 // 2.6 to 1.1 per degree of freedom.
-const Double_t TAIL_RATIO_MAX = LegacyLineshape() ? 8.0 : 20.0;
+const Double_t TAIL_RATIO_MAX = 20.0;
 
 // Fixed when the macro loads, from the switches above, so each
 // configuration writes its own calibrated trees, plots and results. The tag
 // names the Pb anchor and the escapes even though both are the default:
 // production is tau20_sigpb_esc, tau20_sigpb is it without the escapes, and
 // tau20 is the background-run anchor.
-const TString RESULT_TAG = TString(LegacyLineshape() ? "tau8" : "tau20") +
+const TString RESULT_TAG = TString("tau20") +
                            (HardFitRequested() ? "_hard" : "") +
                            (SignalPbAnchorRequested() ? "_sigpb" : "") +
                            (EscapeLinesRequested() ? "_esc" : "") +
@@ -194,21 +182,30 @@ inline std::vector<Double_t> LoadCalibrated(const TString &input_name) {
   return events;
 }
 
-// Counts-per-second histogram of an already-calibrated event list. Sumw2 so the
-// propagated errors survive the subtraction.
-inline TH1F *RateHistFromEvents(const std::vector<Double_t> &events,
-                                Double_t live_time, const TString &name,
-                                Double_t lo, Double_t hi) {
-  Int_t nbins = (Int_t)std::lround((hi - lo) / Constants::BIN_WIDTH_KEV);
-  TH1F *hist =
-      new TH1F(name, ";Deposited Energy [keV];Rate [counts/s]", nbins, lo, hi);
-  hist->SetDirectory(nullptr);
-  hist->Sumw2();
-  for (size_t i = 0; i < events.size(); i++)
-    hist->Fill(events[i]);
-  if (live_time > 0)
-    hist->Scale(1.0 / live_time);
-  return hist;
+// Rate histograms of an already-calibrated event list over its live time, in
+// bins of width bin at n_phases starting points bin / n_phases apart: the
+// event-list counterpart of CalibrateAndFit.cpp's BuildRateHists. Sumw2 so the
+// propagated errors survive a subtraction.
+inline std::vector<TH1F *>
+RateHistsFromEvents(const std::vector<Double_t> &events, Double_t live_time,
+                    const TString &name, Double_t lo, Double_t hi, Double_t bin,
+                    Int_t n_phases) {
+  std::vector<TH1F *> hists;
+  Int_t nbins = (Int_t)std::lround((hi - lo) / bin);
+  for (Int_t k = 0; k < n_phases; k++) {
+    Double_t start = lo + k * bin / n_phases;
+    TH1F *h = new TH1F(name + Form("_phase%d", k),
+                       ";Deposited Energy [keV];Rate [counts/s]", nbins, start,
+                       start + nbins * bin);
+    h->SetDirectory(nullptr);
+    h->Sumw2();
+    for (size_t i = 0; i < events.size(); i++)
+      h->Fill(events[i]);
+    if (live_time > 0)
+      h->Scale(1.0 / live_time);
+    hists.push_back(h);
+  }
+  return hists;
 }
 
 // Tail/Gaussian HEIGHT ratio, which the TF1 models need, from the tail's
@@ -547,9 +544,8 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
   const Int_t n_tp = INSITU_LOW_LIN ? 4 : 2;
   TString ge_idx = TString::Format("%d", n_bkg + 1);
   for (Int_t t = 0; t < n_tp; t++) {
-    if (n_bkg == 2)
-      sim.LinkParameter(TString("bkg:") + tp[t] + "2",
-                        TString("bkg:") + tp[t] + "1");
+    sim.LinkParameter(TString("bkg:") + tp[t] + "2",
+                      TString("bkg:") + tp[t] + "1");
     for (Int_t i = 1; i < n_bkg; i++)
       sim.LinkParameter(TString("sig:") + tp[t] + TString::Format("%d", i + 1),
                         TString("bkg:") + tp[t] + "1");
@@ -557,7 +553,7 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
                       TString("bkg:") + tp[t] + "1");
   }
 
-  if (LINK_PB_KA_SIGMA && n_bkg == 2)
+  if (LINK_PB_KA_SIGMA)
     sim.LinkParameter("bkg:Sigma2", "bkg:Sigma1");
 
   // The signal run's Pb lines keep their own centroids: the two runs of a pair
@@ -585,7 +581,7 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
   return out;
 }
 
-// bkg channel: the Pb Ka peaks (1 or 2). sig channel: the same peaks plus the
+// bkg channel: the Pb Ka2 and Ka1 peaks. sig channel: the same peaks plus the
 // Ge line at E_NEAR_GE. One low-side tail and one Pb shape are shared across
 // the two channels; see the comments in FitBkgGeSimFromSeed for why.
 //
@@ -606,7 +602,7 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
   BkgGeSimResult out;
   out.valid = kFALSE;
   Int_t n_bkg = (Int_t)bkg_peak_mus.size();
-  if (n_bkg < 1 || n_bkg > 2 || bkg_events.empty() || sig_events.empty())
+  if (n_bkg != 2 || bkg_events.empty() || sig_events.empty())
     return out;
 
   FitResult seed;
@@ -619,11 +615,8 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
     bkg_fitter.SetTailRatioMax(TAIL_RATIO_MAX);
     bkg_fitter.SetInteractive();
     TString seed_label = fit_label + "_BkgSeed";
-    if (n_bkg == 1)
-      seed = bkg_fitter.FitSinglePeak(bkg_label, seed_label);
-    else
-      seed = bkg_fitter.FitDoublePeak(bkg_label, seed_label, bkg_peak_mus[0],
-                                      bkg_peak_mus[1]);
+    seed = bkg_fitter.FitDoublePeak(bkg_label, seed_label, bkg_peak_mus[0],
+                                    bkg_peak_mus[1]);
     if (!seed.valid) {
       std::cerr << "ERROR: bkg-only seed fit failed for " << bkg_label
                 << std::endl;
@@ -662,49 +655,23 @@ struct RateSubResult {
   Bool_t valid = kFALSE;
 };
 
-// Gaussian core plus the library's low-energy exponential tail on a linear
-// background. Parameters: [0] gaussian height, [1] mu, [2] sigma, [3] tail
-// height, [4] tau/sigma, [5] linear-tail height, [6] linear-tail slope,
-// [7] bkg0, [8] bkg slope. Uses FittingFunctions, i.e. the same tail shape the
-// production peak fits use, so this is not a reimplementation.
-inline Double_t RateSubTailModel(Double_t *x, Double_t *p) {
-  Double_t gaus[3] = {p[1], p[2], p[0]};
-  Double_t tail[6] = {p[1], p[2], p[3], p[4], p[5], p[6]};
-  return FittingFunctions::Gaussian(x, gaus) +
-         FittingFunctions::LowTail(x, tail) + p[7] + p[8] * (x[0] - 68.75);
-}
-
-// Sentinel for "no background hint": compute it from the residual's left edge.
-const Double_t kNoBkgHint = -1e30;
-
-// Fit the ALREADY-SUBTRACTED residual histogram. Callers own the histogram and
-// the model: pass out_model to keep the TF1 for drawing (the production macro
-// does), otherwise it is deleted here.
+// A Gaussian on a linear background fitted to an already-subtracted residual,
+// the seed of the shaped fit below. Callers own the histogram; pass out_model
+// to keep the TF1, which is otherwise deleted here.
 //
 // chi2 fit, not FittingUtils: its Poisson option assumes integer counts, but
 // this histogram holds counts/second and goes negative after subtraction. The
 // histogram must have Sumw2 set so propagated errors exist.
-// Linear background: the 01/16 residual runs -2 to +2 counts/s across the
-// window and a flat model drags the centroid high.
 inline RateSubResult FitRateSubHist(TH1F *res, Double_t lo, Double_t hi,
                                     const TString &tag,
-                                    TF1 **out_model = nullptr,
-                                    Double_t mu_margin = 1.0,
-                                    Double_t bkg0_hint = kNoBkgHint,
-                                    Bool_t use_low_exp_tail = kFALSE) {
+                                    TF1 **out_model = nullptr) {
   RateSubResult out;
   if (!res)
     return out;
 
-  Double_t bkg0 = 0.0;
-  if (bkg0_hint > kNoBkgHint / 2) {
-    bkg0 = bkg0_hint;
-  } else {
-    Double_t edge_lo =
-        res->Integral(res->FindBin(lo + 0.2), res->FindBin(66.0));
-    Double_t nedge = res->FindBin(66.0) - res->FindBin(lo + 0.2) + 1;
-    bkg0 = (nedge > 0) ? edge_lo / nedge : 0.0;
-  }
+  Double_t edge_lo = res->Integral(res->FindBin(lo + 0.2), res->FindBin(66.0));
+  Double_t nedge = res->FindBin(66.0) - res->FindBin(lo + 0.2) + 1;
+  Double_t bkg0 = (nedge > 0) ? edge_lo / nedge : 0.0;
   Int_t pk_bin = res->GetMaximumBin();
   Double_t pk_val = res->GetBinContent(pk_bin) - bkg0;
   if (pk_val < 0)
@@ -712,33 +679,13 @@ inline RateSubResult FitRateSubHist(TH1F *res, Double_t lo, Double_t hi,
   Double_t sigma0 = 0.85;
   static Int_t model_counter = 0;
   TString mname = Form("ratesub_model_%s_%d", tag.Data(), ++model_counter);
-  TF1 *model = nullptr;
-  if (use_low_exp_tail) {
-    // Gaussian + library low-energy tail on a linear background.
-    //   [0] gaus height  [1] mu  [2] sigma  [3] tail height  [4] tau/sigma
-    //   [5] lin-tail height  [6] lin-tail slope  [7] bkg0  [8] bkg slope
-    model = new TF1(mname, RateSubTailModel, lo, hi, 9);
-    model->SetParNames("GausHeight", "Mu", "Sigma", "TailHeight",
-                       "TauOverSigma", "LinTailHeight", "LinTailSlope", "Bkg0",
-                       "BkgSlope");
-    model->SetParameters(pk_val, E_NEAR_GE, sigma0, 0.05 * pk_val, 5.0, 0.0,
-                         0.0, bkg0, 0.0);
-    model->FixParameter(5, 0.0);
-    model->FixParameter(6, 0.0);
-    model->SetParLimits(3, 0.0, 4.0 * (pk_val > 0 ? pk_val : 1.0));
-    model->SetParLimits(4, 1.0, TAIL_RATIO_MAX);
-  } else {
-    // Gaussian core on a linear background. The subtraction leaves a peak on a
-    // near-flat residual, so no tail is fitted here.
-    //   [0] area   [1] mu   [2] sigma   [3] bkg0   [4] bkg slope
-    const char *kGausLinBkg =
-        "[0]*TMath::Gaus(x,[1],[2],1) + [3] + [4]*(x-68.75)";
-    model = new TF1(mname, kGausLinBkg, lo, hi);
-    model->SetParNames("Area", "Mu", "Sigma", "Bkg0", "BkgSlope");
-    model->SetParameters(pk_val * sigma0 * 2.5066, E_NEAR_GE, sigma0, bkg0,
-                         0.0);
-  }
-  model->SetParLimits(1, lo + mu_margin, hi - mu_margin);
+  //   [0] area   [1] mu   [2] sigma   [3] bkg0   [4] bkg slope
+  const char *kGausLinBkg =
+      "[0]*TMath::Gaus(x,[1],[2],1) + [3] + [4]*(x-68.75)";
+  TF1 *model = new TF1(mname, kGausLinBkg, lo, hi);
+  model->SetParNames("Area", "Mu", "Sigma", "Bkg0", "BkgSlope");
+  model->SetParameters(pk_val * sigma0 * 2.5066, E_NEAR_GE, sigma0, bkg0, 0.0);
+  model->SetParLimits(1, lo + 1.0, hi - 1.0);
   model->SetParLimits(2, 0.2, 3.0);
   TFitResultPtr fr = res->Fit(model, "S Q R N");
   Bool_t ok = fr.Get() && fr->IsValid() && model->GetNDF() > 0;
@@ -747,15 +694,8 @@ inline RateSubResult FitRateSubHist(TH1F *res, Double_t lo, Double_t hi,
     out.mu_err = model->GetParError(1);
     out.chi2 = model->GetChisquare() / model->GetNDF();
     out.sigma = model->GetParameter(2);
-    if (use_low_exp_tail) {
-      out.tail_amp = model->GetParameter(3);
-      out.tail_ratio = model->GetParameter(4);
-      out.bkg0 = model->GetParameter(7);
-      out.slope = model->GetParameter(8);
-    } else {
-      out.bkg0 = model->GetParameter(3);
-      out.slope = model->GetParameter(4);
-    }
+    out.bkg0 = model->GetParameter(3);
+    out.slope = model->GetParameter(4);
     out.valid = kTRUE;
   }
   if (out_model)
@@ -873,6 +813,134 @@ inline RateSubResult FitRateSubHistShaped(TH1F *res, const RateSubShape &shape,
     *out_model = model;
   else
     delete model;
+  return out;
+}
+
+// The 95.902 keV line is 1.2 times stronger in the signal runs than live time
+// predicts, so the residual keeps a share of it and of its escapes. Its
+// Gaussian yield and centroid in the residual of rate histograms over 88-104
+// keV at the rate-sub fit's starting points, with the Ge tail, set shape's
+// capture line; without one the fit carries no escapes.
+inline void SetResidualCaptureLine(const std::vector<TH1F *> &sigs,
+                                   const std::vector<TH1F *> &bkgs,
+                                   const TString &tag, RateSubShape &shape) {
+  if (sigs.size() != bkgs.size() || sigs.empty())
+    return;
+  std::vector<TH1F *> residuals;
+  for (size_t k = 0; k < sigs.size(); k++) {
+    TH1F *res = static_cast<TH1F *>(sigs[k]->Clone(
+        TString::Format("capture_residual_%s_%d", tag.Data(), (Int_t)k)));
+    res->SetDirectory(nullptr);
+    res->Add(bkgs[k], -1.0);
+    residuals.push_back(res);
+  }
+  CaptureLine line =
+      AverageCaptureLine(residuals, shape.ge_tail_height_ratio,
+                         shape.ge_tau_over_sigma, kFALSE, "ratesub_" + tag);
+  if (line.valid) {
+    shape.capture_rate = line.gaus_yield;
+    shape.capture_mu = line.mu;
+  } else {
+    std::cerr << "WARNING: no residual 95.902 keV line for " << tag
+              << "; the rate-sub fit carries no escapes" << std::endl;
+  }
+  for (size_t k = 0; k < residuals.size(); k++)
+    delete residuals[k];
+}
+
+// The rate-sub fit of the residuals of pairs of rate histograms binned one comb
+// period wide at N_RATESUB_PHASES starting points, averaged over the starting
+// points. The linear residual background is the central model and the
+// quadratic one its systematic. The residual is overdispersed (chi2/ndf
+// 1.4-1.9 on 01/15-16: the pixels' discrete energy grids, which the two runs
+// fill differently), so the fit error is scaled by sqrt(chi2/ndf). The first
+// starting point's model and residual are handed back for drawing when the
+// pointers are given (the caller then owns them).
+inline RateSubResult FitRateSubPhases(const std::vector<TH1F *> &sigs,
+                                      const std::vector<TH1F *> &bkgs,
+                                      const RateSubShape &shape,
+                                      const TString &tag,
+                                      TF1 **out_model = nullptr,
+                                      TH1F **out_residual = nullptr) {
+  RateSubResult out;
+  if (sigs.size() != bkgs.size() || sigs.empty())
+    return out;
+  Double_t sum_mu = 0, sum_mu2 = 0, sum_err = 0, sum_chi2 = 0, sum_quad = 0;
+  Int_t n_linear = 0, n_quadratic = 0;
+  RateSubResult fit;
+  TF1 *model = nullptr;
+  TH1F *res = nullptr;
+  for (Int_t k = 0; k < (Int_t)sigs.size(); k++) {
+    TString phase_tag = tag + Form("_phase%d", k);
+    TH1F *phase_res =
+        static_cast<TH1F *>(sigs[k]->Clone("rate_residual_" + phase_tag));
+    phase_res->SetDirectory(nullptr);
+    phase_res->Add(bkgs[k], -1.0);
+    TF1 *phase_model = nullptr;
+    RateSubResult linear =
+        FitRateSubHistShaped(phase_res, shape, phase_tag, &phase_model, kFALSE);
+    RateSubResult quadratic = FitRateSubHistShaped(
+        phase_res, shape, phase_tag + "_quadratic", nullptr, kTRUE);
+    std::cout << "RATESUB-PHASE " << tag << " " << k << ": linear "
+              << std::fixed << std::setprecision(4) << linear.mu << " +/- "
+              << linear.mu_err << " (chi2/ndf " << std::setprecision(2)
+              << linear.chi2 << ")   quadratic " << std::setprecision(4)
+              << quadratic.mu << " +/- " << quadratic.mu_err << std::endl;
+    if (linear.valid) {
+      sum_mu += linear.mu;
+      sum_mu2 += linear.mu * linear.mu;
+      sum_err += linear.mu_err;
+      sum_chi2 += linear.chi2;
+      n_linear++;
+    }
+    if (quadratic.valid) {
+      sum_quad += quadratic.mu;
+      n_quadratic++;
+    }
+    if (k == 0 && linear.valid && phase_model) {
+      fit = linear;
+      model = phase_model;
+      res = phase_res;
+    } else {
+      delete phase_model;
+      delete phase_res;
+    }
+  }
+  if (n_linear == 0 || !model) {
+    std::cerr << "WARNING: rate-sub chi2 fit failed for " << tag << std::endl;
+    delete model;
+    delete res;
+    return out;
+  }
+
+  Double_t mean = sum_mu / n_linear;
+  Double_t chi2 = sum_chi2 / n_linear;
+  out = fit;
+  out.mu = mean;
+  out.chi2 = chi2;
+  out.mu_err = (sum_err / n_linear) * TMath::Sqrt(TMath::Max(chi2, 1.0));
+  out.phase_rms =
+      TMath::Sqrt(TMath::Max(sum_mu2 / n_linear - mean * mean, 0.0));
+  out.shape_shift =
+      (n_quadratic > 0) ? TMath::Abs(sum_quad / n_quadratic - mean) : 0.0;
+  out.sys_err = TMath::Sqrt(
+      out.phase_rms * out.phase_rms + out.shape_shift * out.shape_shift +
+      RATESUB_TRANSFER_SYS_KEV * RATESUB_TRANSFER_SYS_KEV);
+  std::cout << "RATESUB-FIT " << tag << ": mu = " << std::fixed
+            << std::setprecision(4) << out.mu << " +/- " << out.mu_err
+            << " (fit, scaled by sqrt(chi2/ndf " << std::setprecision(2) << chi2
+            << ")) +/- " << std::setprecision(4) << out.sys_err
+            << " (sys: bin phase " << out.phase_rms << ", quadratic "
+            << out.shape_shift << ", transfer " << RATESUB_TRANSFER_SYS_KEV
+            << ") keV   sigma = " << out.sigma << std::endl;
+  if (out_model)
+    *out_model = model;
+  else
+    delete model;
+  if (out_residual)
+    *out_residual = res;
+  else
+    delete res;
   return out;
 }
 

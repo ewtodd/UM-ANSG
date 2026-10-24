@@ -23,8 +23,10 @@ A line break
 <!---->
 - This is an umbrella repo: one flake, one dev shell per project. The
   projects are `73mGe`, `78mBr`, `YAG-PreProcessing`, and `YAP-PSD`.
-- The 73mGe and 78mBr shells start in `<Project>/macros`; the YAG and YAP
-  shells start in the project root. Each shell wires that project's
+- The 73mGe shell starts in `73mGe/czt`, the CZT analysis; the PSI CdTe
+  analysis of the same line is in `73mGe/cdte`, and header-only code both
+  use is in `73mGe/include`. The 78mBr shell starts in `78mBr/macros`; the
+  YAG and YAP shells start in the project root. Each shell wires that project's
   `include/` into `CPLUS_INCLUDE_PATH`/`ROOT_INCLUDE_PATH` and `lib/` into
   `LD_LIBRARY_PATH`.
 - Backend per project: `73mGe` uses the CUDA Analysis-Utilities build
@@ -36,7 +38,7 @@ A line break
 ## Secrets (agenix)
 <!---->
 - `73mGe/include/BEF.hpp`, `73mGe/src/BEF.cpp`, and
-  `73mGe/macros/ConvertBEF.cpp` are agenix-encrypted sources that the 73mGe
+  `73mGe/czt/ConvertBEF.cpp` are agenix-encrypted sources that the 73mGe
   shell decrypts into the tree on entry. They are gitignored by name.
 - Never print, stage, or commit them. Do not `git add .` in a shell where
   they have been decrypted.

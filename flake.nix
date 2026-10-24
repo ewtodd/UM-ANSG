@@ -96,7 +96,9 @@
             root,
             extraInputs ? [ ],
             extraHook ? "",
-            enterMacros ? true,
+            # Directory the shell starts in, under the project; "" is the
+            # project itself.
+            startDir ? "macros",
           }:
           pkgs.mkShell {
             nativeBuildInputs = tools;
@@ -110,7 +112,7 @@
               echo "${project}: Analysis-Utilities ${analysis-utils.version}"
               ${projectHook project}
               ${extraHook}
-              ${if enterMacros then ''cd "$project_root/macros"'' else ''cd "$project_root"''}
+              ${if startDir == "" then ''cd "$project_root"'' else ''cd "$project_root/${startDir}"''}
             '';
           };
       in
@@ -118,21 +120,23 @@
         devShells = {
           # 73mGe: backend toggled by use73mGeCuda (CUDA or CPU). Always decrypts
           # the agenix BEF reader sources with the user's ssh key on entry.
+          # Starts in czt/, the CZT analysis; the PSI CdTe analysis is in cdte/.
           "73mGe" = analysisShell {
             project = "73mGe";
             analysis-utils = if use73mGeCuda then au.cuda else au.default;
             root = if use73mGeCuda then au.rootCuda else au.root;
             extraInputs = [ agenixPkg ];
+            startDir = "czt";
             extraHook = ''
               ${if use73mGeCuda then cudaHook else ""}
-              mkdir -p "$project_root/include" "$project_root/src" "$project_root/macros"
+              mkdir -p "$project_root/include" "$project_root/src" "$project_root/czt"
               (
                 cd "$project_root/secrets"
                 ${agenixPkg}/bin/agenix -d BEF.hpp.age -i "$HOME/.ssh/id_ed25519" > "$project_root/include/BEF.hpp"
                 ${agenixPkg}/bin/agenix -d BEF.cpp.age -i "$HOME/.ssh/id_ed25519" > "$project_root/src/BEF.cpp"
-                ${agenixPkg}/bin/agenix -d ConvertBEF.cpp.age -i "$HOME/.ssh/id_ed25519" > "$project_root/macros/ConvertBEF.cpp"
+                ${agenixPkg}/bin/agenix -d ConvertBEF.cpp.age -i "$HOME/.ssh/id_ed25519" > "$project_root/czt/ConvertBEF.cpp"
               )
-              chmod 644 "$project_root/include/BEF.hpp" "$project_root/src/BEF.cpp" "$project_root/macros/ConvertBEF.cpp"
+              chmod 644 "$project_root/include/BEF.hpp" "$project_root/src/BEF.cpp" "$project_root/czt/ConvertBEF.cpp"
             '';
           };
 
@@ -146,7 +150,7 @@
             project = "YAG-PreProcessing";
             analysis-utils = au.default;
             root = au.root;
-            enterMacros = false;
+            startDir = "";
             extraInputs = [
               (pkgs.python3.withPackages (ps: [
                 ps.numpy
@@ -161,7 +165,7 @@
             project = "YAP-PSD";
             analysis-utils = au.default;
             root = au.root;
-            enterMacros = false;
+            startDir = "";
             extraInputs = [
               (pkgs.python3.withPackages (
                 ps: with ps; [
