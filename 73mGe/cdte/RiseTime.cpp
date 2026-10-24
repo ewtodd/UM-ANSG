@@ -27,23 +27,23 @@ struct Event {
 };
 
 std::vector<Event> LoadEvents(const std::vector<TString> &runs) {
-  TChain chain("trap");
+  TChain chain("features");
   for (size_t i = 0; i < runs.size(); i++)
-    chain.Add(TrapFile(runs[i]));
-  Float_t energy[4], rise = 0;
+    chain.Add(FeaturesFile(runs[i]));
+  Float_t height = 0, rise = 0;
   chain.SetBranchStatus("*", 0);
-  chain.SetBranchStatus("energy", 1);
-  chain.SetBranchStatus("rise", 1);
-  chain.SetBranchAddress("energy", energy);
-  chain.SetBranchAddress("rise", &rise);
+  chain.SetBranchStatus("trapezoid_height", 1);
+  chain.SetBranchStatus("rise_time", 1);
+  chain.SetBranchAddress("trapezoid_height", &height);
+  chain.SetBranchAddress("rise_time", &rise);
   std::vector<Event> out;
   const Long64_t n_entries = chain.GetEntries();
   for (Long64_t i = 0; i < n_entries; i++) {
     chain.GetEntry(i);
-    if (energy[SHAPE] <= 0 || rise <= 0)
+    if (height <= 0 || rise <= 0)
       continue;
     Event ev;
-    ev.e = energy[SHAPE] * KEV_PER_UNIT;
+    ev.e = height * KEV_PER_UNIT;
     ev.rise = rise;
     out.push_back(ev);
   }
@@ -56,7 +56,7 @@ void PlotRiseVsEnergy(const std::vector<TString> &runs, const TString &name) {
   Int_t n_e = (Int_t)((e_hi - e_lo) / bin_kev + 0.5);
   TH2D *h = new TH2D("rise_" + name, "", n_e, e_lo, e_hi, 90, 150, 600);
   for (size_t i = 0; i < events.size(); i++)
-    h->Fill(events[i].e, 10.0 * events[i].rise);
+    h->Fill(events[i].e, SAMPLE_NS * events[i].rise);
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDraw2DHistogram(
       h, canvas,
@@ -109,7 +109,7 @@ TGraphErrors *Ridge(const std::vector<Event> &events, Double_t e_line,
   }
   Double_t fast = swx / sw;
   for (Int_t i = 0; i < g->GetN(); i++) {
-    g->SetPoint(i, 10.0 * g->GetX()[i], g->GetY()[i] / fast);
+    g->SetPoint(i, SAMPLE_NS * g->GetX()[i], g->GetY()[i] / fast);
     g->SetPointError(i, 0, g->GetEY()[i] / fast);
     std::cout << "RIDGE " << tag << " rise " << g->GetX()[i]
               << " ns: relative height " << std::fixed << std::setprecision(4)
@@ -121,7 +121,7 @@ TGraphErrors *Ridge(const std::vector<Event> &events, Double_t e_line,
 // The relative height at a rise time (samples), flat outside the measured
 // slices.
 Double_t RelativeHeight(TGraphErrors *ridge, Double_t rise_samples) {
-  Double_t x = 10.0 * rise_samples;
+  Double_t x = SAMPLE_NS * rise_samples;
   if (x <= ridge->GetX()[0])
     return ridge->GetY()[0];
   if (x >= ridge->GetX()[ridge->GetN() - 1])
@@ -152,7 +152,7 @@ void DrawRiseEnergyPlane(const std::vector<Event> &events, TGraphErrors *ridge,
   for (size_t i = 0; i < events.size(); i++) {
     Double_t e = corrected ? events[i].e / RelativeHeight(ridge, events[i].rise)
                            : events[i].e;
-    h->Fill(e, 10.0 * events[i].rise);
+    h->Fill(e, SAMPLE_NS * events[i].rise);
   }
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDraw2DHistogram(

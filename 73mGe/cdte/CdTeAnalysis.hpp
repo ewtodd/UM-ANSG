@@ -2,10 +2,10 @@
 #define CDTE_ANALYSIS_HPP
 
 // The 73mGe line in the PSI CdTe (Amptek, DT5780 channel 1, BOA beamline,
-// October 2025), from our own trapezoid energies (Trapezoid.cpp), calibrated
-// in each run by the lines around it. What every cdte/ macro shares: the
-// paths and runs, the trapezoid trees, the EMG lineshape, and the in-run
-// self-calibrating fit.
+// October 2025), from our own trapezoid energies (ProcessWaveforms.cpp, through
+// Analysis-Utilities' PulseHeightProcessor), calibrated in each run by the
+// lines around it. What every cdte/ macro shares: the paths and runs, the
+// processed trees, the EMG lineshape, and the in-run self-calibrating fit.
 //
 // The in-run fit places every known line at its true energy on a free scale
 // x = a + b E (+ c (E - 70)^2 in the extrapolation check): Pb Ka2/Ka1 (free
@@ -40,20 +40,19 @@ namespace CdTe {
 
 // The raw CoMPASS files, read only.
 const char *const RAW_DIR = "/labdata/PSI/CdTe/";
-// Trapezoid.cpp's trees, one per raw file, under the same name.
-const char *const TRAP_DIR = "/labdata/ANSG/PSI/processed/CdTe/trap/";
+// ProcessWaveforms.cpp's trees (`features`), one per raw file, under the
+// same name.
+const char *const FEATURES_DIR = "/labdata/ANSG/PSI/processed/CdTe/features/";
 const char *const FILE_PREFIX = "Data_CH1@DT5780P_14068_";
 
-// The trapezoid the analysis uses: rise 200 samples, flat top 100
-// (Trapezoid.cpp's energy[1]).
-const Int_t SHAPE = 1;
+const Double_t SAMPLE_NS = 10.0;
 // Spectra are filled on the Am-only scale, 59.5409 keV at 5577 trapezoid
 // units; the in-run fit's own scale maps it to keV.
 const Double_t KEV_PER_UNIT = 59.5409 / 5577.0;
 const Double_t BIN = 0.05; // keV
 
-inline TString TrapFile(const TString &run) {
-  return TString(TRAP_DIR) + FILE_PREFIX + run + ".root";
+inline TString FeaturesFile(const TString &run) {
+  return TString(FEATURES_DIR) + FILE_PREFIX + run + ".root";
 }
 
 // The Ge beam runs: the CdTe behind the Ge target.
@@ -116,26 +115,26 @@ const Double_t RISE_SLICE_HI[N_RISE_SLICES] = {270, 280, 290, 300,
 // a 10-90% rise in [rise_lo_ns, rise_hi_ns).
 inline TH1D *FillRise(const std::vector<TString> &runs, const TString &name,
                       Double_t rise_lo_ns, Double_t rise_hi_ns) {
-  TChain chain("trap");
+  TChain chain("features");
   for (size_t i = 0; i < runs.size(); i++)
-    chain.Add(TrapFile(runs[i]));
+    chain.Add(FeaturesFile(runs[i]));
   TH1D *h = new TH1D(name, Form(";Energy [keV];Counts / %.0f eV", 1000.0 * BIN),
                      (Int_t)(120.0 / BIN + 0.5), 0, 120);
   h->SetDirectory(nullptr);
-  Float_t energy[4], rise = 0;
+  Float_t height = 0, rise = 0;
   chain.SetBranchStatus("*", 0);
-  chain.SetBranchStatus("energy", 1);
-  chain.SetBranchStatus("rise", 1);
-  chain.SetBranchAddress("energy", energy);
-  chain.SetBranchAddress("rise", &rise);
+  chain.SetBranchStatus("trapezoid_height", 1);
+  chain.SetBranchStatus("rise_time", 1);
+  chain.SetBranchAddress("trapezoid_height", &height);
+  chain.SetBranchAddress("rise_time", &rise);
   const Long64_t n_entries = chain.GetEntries();
   for (Long64_t i = 0; i < n_entries; i++) {
     chain.GetEntry(i);
-    Double_t rise_ns = 10.0 * rise;
-    if (energy[SHAPE] <= 0 || rise <= 0 || rise_ns < rise_lo_ns ||
+    Double_t rise_ns = SAMPLE_NS * rise;
+    if (height <= 0 || rise <= 0 || rise_ns < rise_lo_ns ||
         rise_ns >= rise_hi_ns)
       continue;
-    h->Fill(energy[SHAPE] * KEV_PER_UNIT);
+    h->Fill(height * KEV_PER_UNIT);
   }
   return h;
 }

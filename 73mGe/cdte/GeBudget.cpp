@@ -48,9 +48,9 @@ using namespace CdTe;
 // DDEP's 0.595, against Geant4's 0.275 for captures in CdTe. Above 320 ns
 // the per-slice fit is unphysical (Te Kb at 3-9% of the capture line), so
 // those slices keep the rise < 300 ns value.
-const Double_t TE_CDKB = 0.333, TE_CDKB_ERR = 0.042;
-const Double_t TE_CDKB_SLICE[N_RISE_SLICES] = {0.053, 0.294,   0.336,  0.706,
-                                               0.547, TE_CDKB, TE_CDKB};
+const Double_t TE_CDKB = 0.353, TE_CDKB_ERR = 0.043;
+const Double_t TE_CDKB_SLICE[N_RISE_SLICES] = {0.084, 0.319,   0.338,  0.657,
+                                               0.376, TE_CDKB, TE_CDKB};
 const Double_t KB_KA_NOMINAL = 0.275, KB_KA_ALT = 0.324;
 
 const Double_t KB3_VARIATION = 0.10;

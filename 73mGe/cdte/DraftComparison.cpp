@@ -22,7 +22,7 @@ using namespace CdTe;
 // and the offset in channels.
 const Double_t DPP_GAIN = 22.413, DPP_OFFSET = 6.1;
 
-Double_t DppEnergy(UShort_t dpp, TRandom3 &rng) {
+Double_t DppEnergy(Double_t dpp, TRandom3 &rng) {
   return (dpp + rng.Uniform(-0.5, 0.5) - DPP_OFFSET) / DPP_GAIN;
 }
 
@@ -30,13 +30,13 @@ void AllRuns() {
   std::vector<TString> runs = GeRuns();
   runs.push_back("PSI_Running_BeamTurnOn_20251009_1914_5");
   runs.push_back("PSI_Running_BeamTurnOn_20251009_1914_6");
-  TChain chain("trap");
+  TChain chain("features");
   for (size_t i = 0; i < runs.size(); i++)
-    chain.Add(TrapFile(runs[i]));
-  UShort_t dpp = 0;
+    chain.Add(FeaturesFile(runs[i]));
+  Double_t dpp = 0;
   chain.SetBranchStatus("*", 0);
-  chain.SetBranchStatus("dpp", 1);
-  chain.SetBranchAddress("dpp", &dpp);
+  chain.SetBranchStatus("digitizer_energy", 1);
+  chain.SetBranchAddress("digitizer_energy", &dpp);
   TH1D *h =
       new TH1D("like_draft", ";Energy [keV];Counts / 20 eV", 600, 64.0, 76.0);
   TRandom3 rng(7);
@@ -65,12 +65,12 @@ void PerRun() {
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kTRUE);
   TLegend *leg = PlottingUtils::AddLegend(0.18, 0.55, 0.62, 0.9);
   for (Int_t r = 0; r < 5; r++) {
-    TChain chain("trap");
-    chain.Add(TrapFile(runs[r]));
-    UShort_t dpp = 0;
+    TChain chain("features");
+    chain.Add(FeaturesFile(runs[r]));
+    Double_t dpp = 0;
     chain.SetBranchStatus("*", 0);
-    chain.SetBranchStatus("dpp", 1);
-    chain.SetBranchAddress("dpp", &dpp);
+    chain.SetBranchStatus("digitizer_energy", 1);
+    chain.SetBranchAddress("digitizer_energy", &dpp);
     TH1D *h = new TH1D(Form("run%d", r), "", 600, 64.0, 76.0);
     const Long64_t n_entries = chain.GetEntries();
     for (Long64_t i = 0; i < n_entries; i++) {
@@ -97,16 +97,16 @@ void PerRun() {
 
 void RiseCut() {
   const std::vector<TString> runs = GeRuns();
-  TChain chain("trap");
+  TChain chain("features");
   for (size_t i = 0; i < runs.size(); i++)
-    chain.Add(TrapFile(runs[i]));
-  UShort_t dpp = 0;
+    chain.Add(FeaturesFile(runs[i]));
+  Double_t dpp = 0;
   Float_t rise = 0;
   chain.SetBranchStatus("*", 0);
-  chain.SetBranchStatus("dpp", 1);
-  chain.SetBranchStatus("rise", 1);
-  chain.SetBranchAddress("dpp", &dpp);
-  chain.SetBranchAddress("rise", &rise);
+  chain.SetBranchStatus("digitizer_energy", 1);
+  chain.SetBranchStatus("rise_time", 1);
+  chain.SetBranchAddress("digitizer_energy", &dpp);
+  chain.SetBranchAddress("rise_time", &rise);
   const Int_t n_cuts = 3;
   const Double_t cut_ns[n_cuts] = {1e9, 290.0, 280.0};
   const char *labels[n_cuts] = {"No rise-time cut", "Rise time < 290 ns",
@@ -122,7 +122,7 @@ void RiseCut() {
     chain.GetEntry(i);
     Double_t e = DppEnergy(dpp, rng);
     for (Int_t k = 0; k < n_cuts; k++)
-      if (rise > 0 && 10.0 * rise < cut_ns[k])
+      if (rise > 0 && SAMPLE_NS * rise < cut_ns[k])
         h[k]->Fill(e);
   }
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kTRUE);

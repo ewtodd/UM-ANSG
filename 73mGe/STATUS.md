@@ -25,7 +25,7 @@ The previously reported 68.7502 ± 0.0145 keV (c260617) came from a pol2 that ga
 ## Pipeline
 <!---->
 `czt/CalibrateAndFit.cpp` with `czt/GainTransferFit.hpp`; `czt/CombineGeResult.cpp` combines.
-The escapes need `RooFitUtils::AddFixedLines`, on Analysis-Utilities branch `review/simultaneous-fixed-lines` (47ac109; 6ceba20 also draws the pulls of a residual's negative bins; on 5d7032b), which is not pushed: the lock still pins 5d7032b, so until it is pushed and the lock bumped, enter the shell with `nix develop .#73mGe --override-input utils 'git+file:///home/e-work/Analysis-Utilities?ref=review/simultaneous-fixed-lines'`.
+The escapes need `RooFitUtils::AddFixedLines`, on Analysis-Utilities branch `review/simultaneous-fixed-lines` (47ac109; 6ceba20 also draws the pulls of a residual's negative bins; on 5d7032b), and the PSI macros need `PulseHeightProcessor`, on `review/waveform-processor-variants` (f97de2c, 69098de), stacked on it. Neither is pushed: the lock still pins 5d7032b, so until they are pushed and the lock bumped, enter the shell with `nix develop .#73mGe --override-input utils 'git+file:///home/e-work/Analysis-Utilities?ref=review/waveform-processor-variants'`.
 <!---->
 - **Method 1, 01/13, in-situ.** Each background run (Pb Kα2/Kα1) is fitted together with its signal run (the same lines plus Ge) in raw energy: one Pb shape and one low tail, each run's Pb centroids free.
   The Cu 10% pair is calibrated with a pol1 through Am-241 and its background-run Pb Kα; the Cd pairs inherit it through their background-run Pb Kα as a gain (`TRANSFER=offset`: as an offset).
@@ -82,32 +82,51 @@ The interior-pixel and sloped-continuum variants (under the earlier combination)
 <!---->
 The same line in the PSI CdTe (Amptek, DT5780 channel 1, BOA beamline, October 2025), from our own trapezoid energies, calibrated in each run by the lines around Ge.
 <!---->
-- Result: **68.7448 ± 0.0242 keV** (−7.2 eV from ENSDF), the rise-time slices up to 320 ns. The collaborator's CdTe value is 68.7484 ± 0.0189 keV.
+- Result: **68.7501 ± 0.0331 keV** (−1.9 eV from ENSDF), the rise-time slices up to 320 ns. The collaborator's CdTe value is 68.7484 ± 0.0189 keV.
 <!---->
 | Term | eV | |
 |---|---|---|
-| statistics | 13.9 | weighted mean of five slices, 6.6 eV, × √(χ²/ndf) 2.11 of the slices ≤ 300 ns (13.4/3) |
-| outlier removal | 2.1 | largest shift without the highest, the lowest, or both slices |
-| lineshape | 5.1 | Ge's tail fitted on its own |
+| statistics | 16.4 | weighted mean of five slices, 6.6 eV, × √(χ²/ndf) 2.47 of the slices ≤ 300 ns (18.4/3) |
+| outlier removal | 10.7 | largest shift without the highest (0–270 ns), the lowest (290–300 ns), or both slices |
+| lineshape | 5.5 | Ge's tail fitted on its own |
 | escapes | 4.5 | Te Kα/Cd Kβ ± its error and per slice; Cd Kβ/Kα 0.324 (no-Ge runs) against Geant4's 0.275 |
-| Pb Kβ blend | 1.3 | Kβ3/Kβ1 (and K-N2/K-N3) ± 10%; Kβ5, K-N4,5, K-O2,3 ± 20% |
-| extrapolation | 13.9 | the scale's curvature free (Ge lies below the lines that fix the scale) |
-| slice range | 1.4 | slices ≤ 300 ns instead (statistical spread 1.1 eV) |
-| slice combination | 6.1 | a random-effects mean of the slices (between-slice spread 27.8 eV) |
+| Pb Kβ blend | 1.4 | Kβ3/Kβ1 (and K-N2/K-N3) ± 10%; Kβ5, K-N4,5, K-O2,3 ± 20% |
+| extrapolation | 22.8 | the scale's curvature free (Ge lies below the lines that fix the scale) |
+| slice range | 0.8 | slices ≤ 300 ns instead (statistical spread 1.1 eV) |
+| slice combination | 4.7 | a random-effects mean of the slices (between-slice spread 32.7 eV) |
 <!---->
-- **Extrapolation** is the full shift with the curvature free, +13.9 eV, not the 7.1 eV the curvature adds to the error in quadrature, because the shift is twice that. Most of it comes from the 0–270 ns slice (+165 eV, its Cd Kβ escape yield dropping from 0.19 to 0.05 of Ge, its error shrinking) and the 290–300 ns slice (+43 eV): the curvature is nearly degenerate with the escapes there, so this is conservative; charging the quadrature cost instead gives ± 0.0210 keV.
-- **Pipeline** (each macro's header has the details):
-  - `Trapezoid.cpp`: the raw CoMPASS waveforms in `/labdata/PSI/CdTe` (read only) to one tree per run in `/labdata/ANSG/PSI/processed/CdTe/trap`: trigger, baseline, pole-zero deconvolution (τ = 325 samples), trapezoid energies for four shapings, 10–90% rise time.
+- **Extrapolation** is the full shift with the curvature free, +22.8 eV, not the 6.8 eV the curvature adds to the error in quadrature. Most of it comes from the 0–270 ns slice (+155 eV, its Cd Kβ escape yield dropping from 0.15 to 0.05 of Ge, its error shrinking) and the 300–320 ns slice (+62 eV): the curvature is nearly degenerate with the escapes there, so this is conservative; charging the quadrature cost instead gives ± 0.0249 keV.
+- **Waveform processing moves the result.** Moving from the study's own trapezoid code to Analysis-Utilities' `PulseHeightProcessor` (2026-10-24) changed the trigger (15% of the peak instead of 100 ADC above the first samples), the baseline (the first 350 samples instead of 500 ending 20 before the trigger), the pole-zero (exact discrete instead of 1/τ), the peaking point and the rise-time windows. Ge moved +5.3 eV (from 68.7448), single slices by up to 26 eV, the outlier term from 2.1 to 10.7 eV and the extrapolation term from 13.9 to 22.8 eV; the escape tie moved from 0.333 to 0.353 (Cd Kβ/Kα 0.324 unchanged). The shift is not a systematic, because the differences are not alternatives that can each be defended. The old pole-zero was the continuous approximation, with a 1/(2τ) gain error and a tilt on the step, which the exact one corrects. Trigger, baseline window and peaking point read the same flat top for a pulse that collects its charge, and for slow, charge-losing pulses the per-slice calibration on the slice's own lines absorbs the deficit.
+- **The reprocessing shift is scatter** (`ReprocessingComparison.cpp`, event by event on the five Ge runs, 2026-10-24). Every new record pairs with an old one; in the budget's window 99.1% of the old and 97.5% of the new records are common.
+  - **Per event.** The new heights are the old ones times 0.9993–0.9995 per slice, flat in energy (a gain the per-slice calibration absorbs), plus a random 76 eV (robust σ; 0–270 ns 78–85 eV, with keV-scale tails in 2–8% of its records). The rise times differ by −0.3 ± 0.9 ns, and that moves 7–15% of each slice's records into a neighbour, mostly downward: the 10–90% rise has a 2-sample sawtooth with peaks at 280, 300 and 320 ns, on the slice edges.
+  - **Where the +5.4 eV comes from.** Escape tie +0.4, records only the old processing kept +0.1, the same records reprocessed +3.0 (new energies −0.1, new rise slicing +3.5), records only the new processing keeps +1.9.
+  - **Replicas.** The old common records, each moved by the measured residual and to a new slice with the measured migration probabilities (104 replicas), shift Ge by +3.2 ± 3.1 eV: the common records' +3.0 eV sits at the centre, the full +5.4 eV at +0.7 rms. Every slice's change lies within 1.3 rms of the replicas' (300–320 ns: +24.7 against −0.4 ± 20.0 eV). Drawing each record's residual and slice jointly from a random record of the same slice and energy gives +5.0 ± 2.8 eV.
+  - **The outlier term** (2.1 → 10.6 eV) is a rank flip: 300–320 ns rose 25 eV, so 290–300 ns became the lowest slice, and dropping it moves the mean 10.6 eV (9.7 eV in the old budget too). In the replicas the term is bimodal, 8.0 ± 4.7 eV, at least 10.6 in 40%.
+  - **The extrapolation term** (13.9 → 22.7 eV) follows the 280–290 ns slice (57% of the weight), whose curvature-free shift went from +0.8 to +24.1 eV; the replicas give +22 ± 17 eV there and the term 20.6 ± 9.5 eV, so the old value was the low fluctuation. The curvature-free fits are themselves unstable: 280–290 ns gives the same value with an error of 9 eV in one fit and 23 eV in another.
+  - So neither the shift nor the two terms' growth is a processing effect to charge; what the study does show is that the full-shift extrapolation term is a noisy statistic (Plan).
+- **Pipeline** (each macro's header has the details; it needs Analysis-Utilities `review/waveform-processor-variants`, see Pipeline above):
+  - `ProcessWaveforms.cpp`: the raw CoMPASS waveforms in `/labdata/PSI/CdTe` (read only) through `PulseHeightProcessor` to one tree `features` per run in `/labdata/ANSG/PSI/processed/CdTe/features`: baseline from the first 350 samples, trigger at 15% of the peak, pole-zero (τ = 325 samples), trapezoid of rise 200 and flat top 100 read at 90% of the flat top (`trapezoid_height`), 10–90% rise (`rise_time`).
   - `CdTeAnalysis.hpp`: runs, rise slices, the EMG lineshape, the 95.902 keV line's fit, and the in-run fit: every line at its true energy on a free scale x = a + b E (Pb Kα2/Kα1, the Pb Kβ1′ and Kβ2′ groups, the 95.902 keV line's Cd and Te escapes at its measured position minus the X-ray energies, Ge free), one EMG with linear width, linear continuum, 62–89 keV, on the five Ge beam runs.
   - `GeBudget.cpp`: the slices, the budget above, `results/cdte_ge.result`, the plots in `plots/studies/psi_cdte/ge_rise_slices`.
-  - `NoGeEscapes.cpp`: the escape tie from the beam runs without Ge (Te Kα/Cd Kβ 0.333 ± 0.042 at rise < 300 ns, per slice, and Cd Kβ/Kα 0.324 with Pb Kα2/Kα1 fixed), which `GeBudget.cpp` takes as constants.
+  - `NoGeEscapes.cpp`: the escape tie from the beam runs without Ge (Te Kα/Cd Kβ 0.353 ± 0.043 at rise < 300 ns, per slice, and Cd Kβ/Kα 0.324 with Pb Kα2/Kα1 fixed), which `GeBudget.cpp` takes as constants.
   - `RiseTime.cpp` (charge loss against rise time) and `DraftComparison.cpp` (our spectra in the draft's format) draw the supporting figures.
-- The import reproduces the /tmp study's numbers to the printed digits (68.7448, 13.9, 2.1, 5.1, 4.5, 10.3 eV; the escape tie). The reprocessed trapezoid trees agree with the study's to float rounding, about 1 in 10⁹.
+  - `ReprocessingComparison.cpp`: the old trapezoid trees (`/labdata/ANSG/PSI/processed/CdTe/trap`) against the `features` trees, event by event; its cache, budgets and replicas in `/labdata/ANSG/PSI/processed/CdTe/reprocessing_comparison`, plots in `plots/studies/psi_cdte/reprocessing_comparison`.
 - Line energies and the escape tables are `include/ReferenceLines.hpp`, shared with the CZT code (a production rerun on it is byte-identical).
 <!---->
 ### CZT + CdTe
 <!---->
-`CombineGeResult.cpp`'s `COMBINE_WITH_CDTE` (off until the CdTe analysis is final) adds the error-weighted mean of the quoted CZT value and `results/cdte_ge.result`, taken as independent (different detectors, beam times, calibrations and escape inputs; they share only the reference line energies and Geant4's Te Kβ/Kα ratio, below an eV here). Now: **68.7498 ± 0.0157 keV** (CZT weight 0.58), the two differing by 8.5 ± 31.8 eV.
+`CombineGeResult.cpp`'s `COMBINE_WITH_CDTE` (off until the CdTe analysis is final) adds the error-weighted mean of the quoted CZT value and `results/cdte_ge.result`, taken as independent (different detectors, beam times, calibrations and escape inputs; they share only the reference line energies and Geant4's Te Kβ/Kα ratio, below an eV here). Now: **68.7524 ± 0.0175 keV** (CZT weight 0.72), the two differing by 3.3 ± 38.9 eV.
+<!---->
+## PSI Si (si/), a first look at the waveforms
+<!---->
+`si/SiWaveformLook.cpp`, through `PulseHeightProcessor` (τ = 324 samples), 20000 records from each of an Am-241 and a Ba-133 source run and three beam runs; figures in `plots/studies/psi_si/waveforms`. The Si energy is not measured from waveforms yet.
+<!---->
+- **Baseline noise** is about 33 ADC per sample (0.55 keV), with lines at 20, 30 and 48 MHz on a rising 1/f part. The 2 µs trapezoid averages it away: Am 59.54 keV at σ 272 ± 5 eV, against 258 ± 5 eV in the digitiser's own energy.
+- **Records at the bottom of the ADC range**: 10–11% of the records in the 10/11 Ge and 10/13 beam runs (under 1% in the others) have the raw baseline near 16 ADC instead of ~590, so their noise is clipped (baseline RMS ~2.7 ADC). What follows is a step of ~650 ADC that does not decay over the 10 µs record, with ~1 µs ringing, at digitiser energy ~273 channels (~11.4 keV), 19–40 ms apart: not detector pulses, and a false line near 11.4 keV unless cut (baseline RMS below 8 ADC).
+- **Pile-up**: a second edge within the record in 12–14% of those two beam runs' records, against ~2% in the sources and the 10/10 beam run.
+- **Decay**: 324 samples (3.24 µs) in the sources; 353–385 samples in the beam runs even without visible pile-up, likely pile-up below the edge cut's ~5 keV. With 324 the deconvolved beam steps are flat.
+- **Rise time**: two bands, 310–330 and 180–200 ns, independent of energy.
+- **Trapezoid against the digitiser's energy**: 4.163 ADC per channel in the sources, 4.155–4.159 in beam (0.1–0.2% lower); a few percent of beam pulses read lower in the trapezoid, a tail reaching −30%.
 <!---->
 ## Findings
 <!---->
@@ -196,6 +215,7 @@ Code that no longer fed the result, cut so it cannot be mistaken for part of it:
 1. **Method 1's remaining model choices** are not in the budget: the in-situ background shape (flat against sloped, −1 to +6 eV on Method 1), the lineshape (shared tail, τ/σ ≤ 20) and the pixel selection. Decide which become systematics, as the transfer model did.
 2. **The Cd pairs** inherit the Cu reference across the 130 eV step at the Cd → Cu change; if the bias was cycled then, they have 01/14's problem.
 3. **01/16**: kept, with its larger errors (BLUE weight 0.057; without it the quoted value moves −1.8 eV to 68.7515 ± 0.0210 keV). Its residual runs from −5 counts/s at 62 keV to 0 at 71 keV, the signal run below the live-time-scaled background, and the signal/background rate ratio is below 1 over 55–70 keV; it is the highest-rate run (26–34k counts/s per crystal) and has no line in both its runs to check the source-run calibration. Decide whether it stays.
-4. **Analysis-Utilities**: report the `cov_qual` comment; review the five checklists and `review/simultaneous-fixed-lines`, then push it and bump the lock (`nix flake lock --update-input utils`), after which the 73mGe shell needs no override.
+4. **Analysis-Utilities**: report the `cov_qual` comment; review the checklists, `review/simultaneous-fixed-lines` and `review/waveform-processor-variants` (its migration prompt updates the other projects), then push them with a version bump and bump the lock (`nix flake lock --update-input utils`), after which the 73mGe shell needs no override.
 5. **The in-situ fit on real background**: halves leave 10–30 eV in-situ offsets near Ge that the shared background fluctuation can explain but not exclude (Testbed). Running the halves procedure on several synthetic background runs, each held fixed through its series of trials, would measure the spread that fluctuation causes; a real-background effect would show as an offset beyond it.
-6. **Write-up**: the move from 68.7502 keV step by step — the Kβ blend in the old pol2 (−27 eV), the RooFit fix (≤ 4 eV), fit convergence (up to 36 eV), the lineshape, the Pb centroid link, dropping 01/14, the signal-run anchor, the transfer model, and both methods in the combination.
+6. **The CdTe extrapolation term**: the reprocessing shift is scatter (PSI CdTe), but it showed the full curvature-free shift to be a noisy statistic (20.6 ± 9.5 eV over replicas of the same data, its fits' errors unstable) and the slice edges to sit on the rise estimator's sawtooth peaks. Decide between the full shift and the curvature's quadrature cost (± 0.0249 keV), and whether to move the slice edges off the peaks.
+7. **Write-up**: the move from 68.7502 keV step by step — the Kβ blend in the old pol2 (−27 eV), the RooFit fix (≤ 4 eV), fit convergence (up to 36 eV), the lineshape, the Pb centroid link, dropping 01/14, the signal-run anchor, the transfer model, and both methods in the combination.
