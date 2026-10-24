@@ -4,10 +4,13 @@
 //
 // Usage (no arguments; edit SUM_RUN_TAG near the bottom):
 //   root -q -l SummarizeInjection.cpp+
+#include "Constants.hpp"
 #include "InitUtils.hpp"
 #include "PlottingUtils.hpp"
+#include <TCanvas.h>
 #include <TCollection.h>
 #include <TGraphErrors.h>
+#include <TH1F.h>
 #include <TLegend.h>
 #include <TLine.h>
 #include <TString.h>
@@ -57,6 +60,28 @@ struct AggKey {
   }
 };
 
+// One trial's in-situ fits with and without the escape lines, on the same
+// data, for the escapes' effect trial by trial.
+struct TrialKey {
+  std::string pair, shape;
+  Double_t e = 0;
+  Int_t trial = 0;
+  bool operator<(const TrialKey &o) const {
+    if (pair != o.pair)
+      return pair < o.pair;
+    if (shape != o.shape)
+      return shape < o.shape;
+    if (e != o.e)
+      return e < o.e;
+    return trial < o.trial;
+  }
+};
+
+struct PairedTrial {
+  Bool_t has_with = kFALSE, has_without = kFALSE;
+  Double_t with_escapes = 0, without_escapes = 0;
+};
+
 struct Acc {
   Int_t n = 0, nvalid = 0, nfail = 0, nrail = 0, nclean = 0;
   Double_t sres = 0, sres2 = 0, spull = 0, spull2 = 0;
@@ -78,7 +103,8 @@ void Add(Acc &a, const Row &r) {
   a.nrail += r.rail;
   // The simultaneous fit often ends at status 3 / covQual 2 in production;
   // count those separately from hard failures and from clean fits.
-  if (r.method != "sim" || (r.status == 0 && r.cov_qual == 3))
+  Bool_t in_situ = r.method.compare(0, 3, "sim") == 0;
+  if (!in_situ || (r.status == 0 && r.cov_qual == 3))
     a.nclean++;
   a.sres += r.residual;
   a.sres2 += r.residual * r.residual;
@@ -222,13 +248,119 @@ std::string PairLabel(const std::string &key) {
     return "Cd 10% (01/13)";
   if (key == "CdShield25")
     return "Cd 25% (01/13)";
-  if (key == "CuShield10_0114")
-    return "Cu 10% (01/14)";
   return key;
 }
 
 std::vector<std::string> PairOrder() {
-  return {"CuShield10", "CdShield10", "CdShield25", "CuShield10_0114"};
+  return {"CuShield10", "CdShield10", "CdShield25"};
+}
+
+// The in-situ fit's bias per pair with the escape lines and without, on the
+// same trials: what leaving out the escapes the data carry costs.
+void DrawEscapeBiasByPair(const std::map<AggKey, Acc> &aggregates) {
+  std::vector<std::string> pairs = PairOrder();
+  TGraphErrors *with_escapes = new TGraphErrors();
+  TGraphErrors *without_escapes = new TGraphErrors();
+  Double_t lo = 0, hi = 0;
+  for (size_t pi = 0; pi < pairs.size(); pi++) {
+    const char *methods[2] = {"sim", "sim_noesc"};
+    TGraphErrors *graphs[2] = {with_escapes, without_escapes};
+    for (Int_t m = 0; m < 2; m++) {
+      std::map<AggKey, Acc>::const_iterator it =
+          aggregates.find(AggKey{pairs[pi], "model", methods[m]});
+      if (it == aggregates.end() || it->second.nvalid == 0)
+        continue;
+      Double_t x = pi + 1 + (m == 0 ? -0.1 : 0.1);
+      Int_t i = graphs[m]->GetN();
+      graphs[m]->SetPoint(i, x, Bias(it->second));
+      graphs[m]->SetPointError(i, 0, BiasSE(it->second));
+      lo = std::min(lo, Bias(it->second) - BiasSE(it->second));
+      hi = std::max(hi, Bias(it->second) + BiasSE(it->second));
+    }
+  }
+  if (with_escapes->GetN() == 0 || without_escapes->GetN() == 0)
+    return;
+  Double_t pad = 0.25 * (hi - lo);
+  TCanvas *c = PlottingUtils::GetConfiguredCanvas();
+  TH1F *frame =
+      new TH1F("escape_bias_frame", ";;Bias (#mu_{fit} - E_{inj}) [eV]",
+               (Int_t)pairs.size(), 0.5, pairs.size() + 0.5);
+  for (size_t pi = 0; pi < pairs.size(); pi++)
+    frame->GetXaxis()->SetBinLabel(pi + 1, PairLabel(pairs[pi]).c_str());
+  frame->SetMinimum(lo - pad);
+  frame->SetMaximum(hi + 2.0 * pad);
+  frame->SetStats(0);
+  frame->Draw("AXIS");
+  TLine *zero = new TLine(0.5, 0.0, pairs.size() + 0.5, 0.0);
+  zero->SetLineStyle(2);
+  zero->SetLineColor(kGray + 2);
+  zero->Draw("SAME");
+  PlottingUtils::ConfigureGraph(with_escapes, kBlue + 1);
+  PlottingUtils::ConfigureGraph(without_escapes, kRed + 1);
+  with_escapes->SetMarkerStyle(20);
+  without_escapes->SetMarkerStyle(21);
+  with_escapes->Draw("P SAME");
+  without_escapes->Draw("P SAME");
+  TLegend *leg = PlottingUtils::AddLegend(0.18, 0.75, 0.74, 0.9);
+  leg->AddEntry(with_escapes, "Fit with the escape lines (production)", "pe");
+  leg->AddEntry(without_escapes, "Same trials, fit without them", "pe");
+  leg->Draw();
+  PlottingUtils::SaveFigure(c, "escape_bias_by_pair", "",
+                            PlotSaveOptions::kLINEAR);
+}
+
+// A pair's trials, each one's residual without the escape lines against the
+// same events' residual with them: the trial noise moves both together, the
+// escapes move every trial off the diagonal by the same amount.
+void DrawEscapePaired(const std::string &pair,
+                      const std::vector<Double_t> &with_escapes,
+                      const std::vector<Double_t> &without_escapes) {
+  const Int_t n = (Int_t)with_escapes.size();
+  if (n < 5)
+    return;
+  Double_t lo = 1e30, hi = -1e30, sum = 0, sum2 = 0;
+  for (Int_t i = 0; i < n; i++) {
+    lo = std::min(lo, std::min(with_escapes[i], without_escapes[i]));
+    hi = std::max(hi, std::max(with_escapes[i], without_escapes[i]));
+    Double_t d = without_escapes[i] - with_escapes[i];
+    sum += d;
+    sum2 += d * d;
+  }
+  Double_t shift = sum / n;
+  Double_t rms = std::sqrt(std::max(sum2 / n - shift * shift, 0.0));
+  Double_t pad = 0.1 * (hi - lo);
+  lo -= pad;
+  hi += pad;
+  TGraph *trials = new TGraph(n, with_escapes.data(), without_escapes.data());
+  TCanvas *c = PlottingUtils::GetConfiguredCanvas();
+  PlottingUtils::ConfigureGraph(
+      trials, kRed + 1,
+      ";#mu_{fit} - E_{inj}, fit with the escape lines [eV];"
+      "Same trial, fit without them [eV]");
+  trials->SetMarkerStyle(20);
+  trials->SetMarkerColor(kRed + 1);
+  trials->GetXaxis()->SetLimits(lo, hi);
+  trials->SetMinimum(lo);
+  trials->SetMaximum(hi);
+  trials->Draw("AP");
+  TLine *diagonal = new TLine(lo, lo, hi, hi);
+  diagonal->SetLineStyle(2);
+  diagonal->SetLineColor(kGray + 2);
+  diagonal->Draw("SAME");
+  TLine *shifted = new TLine(lo, lo + shift, hi - shift, hi);
+  shifted->SetLineColor(kRed + 1);
+  shifted->Draw("SAME");
+  trials->Draw("P SAME");
+  TLegend *leg = PlottingUtils::AddLegend(0.42, 0.9, 0.2, 0.42);
+  leg->AddEntry(trials, Form("%s, %d trials", PairLabel(pair).c_str(), n), "p");
+  leg->AddEntry(diagonal, "Escapes without effect", "l");
+  leg->AddEntry(shifted,
+                Form("Shift %.1f #pm %.1f eV (rms %.1f eV)", shift,
+                     rms / std::sqrt(n - 1.0), rms),
+                "l");
+  leg->Draw();
+  PlottingUtils::SaveFigure(c, TString("escape_paired_") + pair.c_str(), "",
+                            PlotSaveOptions::kLINEAR);
 }
 
 void PrintRow(std::ostream &out, const std::string &pair,
@@ -251,19 +383,19 @@ void PrintRow(std::ostream &out, const std::string &pair,
 // ---------------------------------------------------------------- run controls
 // Edit and re-run. No command-line arguments by design. Must match the
 // INJ_RUN_TAG that produced the CSVs.
-const TString SUM_RUN_TAG = "pilot";
+const TString SUM_RUN_TAG = "closure";
 // ------------------------------------------------------------------------------
 
 void SummarizeInjection() {
   const TString &run_tag = SUM_RUN_TAG;
-  const TString project_root =
-      TString(gSystem->Getenv("HOME")) + "/UM-ANSG/73mGe";
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
   const TString base = project_root + "/plots/injection_" + run_tag;
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, base,
                                 project_root + "/root_files");
 
   std::map<GroupKey, Acc> groups;
   std::map<AggKey, Acc> aggregates;
+  std::map<TrialKey, PairedTrial> paired;
 
   TSystemDirectory dir(base + "/results", base + "/results");
   TList *files = dir.GetListOfFiles();
@@ -289,6 +421,18 @@ void SummarizeInjection() {
       Add(groups[gk], r);
       AggKey ak{r.pair, r.shape, r.method};
       Add(aggregates[ak], r);
+      Bool_t sane =
+          r.valid && std::isfinite(r.mu_err) && r.mu_err > 0 && r.mu_err < 0.5;
+      if (sane && (r.method == "sim" || r.method == "sim_noesc")) {
+        PairedTrial &p = paired[TrialKey{r.pair, r.shape, r.e, r.trial}];
+        if (r.method == "sim") {
+          p.has_with = kTRUE;
+          p.with_escapes = r.residual;
+        } else {
+          p.has_without = kTRUE;
+          p.without_escapes = r.residual;
+        }
+      }
     }
   }
   if (n_rows == 0) {
@@ -383,14 +527,75 @@ void SummarizeInjection() {
   }
 
   // Classification and bias-vs-energy figures.
+  // The escapes' effect: the fit without them minus the fit with them, trial
+  // by trial on the same data, per cell.
+  std::map<GroupKey, std::vector<Double_t>> escape_effect;
+  for (std::map<TrialKey, PairedTrial>::const_iterator it = paired.begin();
+       it != paired.end(); ++it)
+    if (it->second.has_with && it->second.has_without)
+      escape_effect[GroupKey{it->first.pair, it->first.shape, "escapes",
+                             it->first.e}]
+          .push_back(it->second.without_escapes - it->second.with_escapes);
+  if (!escape_effect.empty()) {
+    std::cout << "=== Escape effect: fit without them - fit with them, paired "
+                 "by trial [eV] ==="
+              << std::endl;
+    md << std::endl
+       << "## Escape effect (fit without the escape lines minus with, paired "
+          "by trial)"
+       << std::endl
+       << std::endl;
+    md << "| Pair | Shape | E_inj [keV] | N | Mean [eV] | SE [eV] | RMS [eV] |"
+       << std::endl;
+    md << "|---|---|---|---|---|---|---|" << std::endl;
+    for (std::map<GroupKey, std::vector<Double_t>>::const_iterator it =
+             escape_effect.begin();
+         it != escape_effect.end(); ++it) {
+      const std::vector<Double_t> &d = it->second;
+      Double_t sum = 0, sum2 = 0;
+      for (size_t i = 0; i < d.size(); i++) {
+        sum += d[i];
+        sum2 += d[i] * d[i];
+      }
+      Double_t n = d.size();
+      Double_t mean = sum / n;
+      Double_t rms = std::sqrt(std::max(sum2 / n - mean * mean, 0.0));
+      Double_t se = (n > 1) ? rms / std::sqrt(n - 1) : 0.0;
+      std::cout << std::left << std::setw(18) << PairLabel(it->first.pair)
+                << std::setw(10) << it->first.shape << std::fixed
+                << std::setprecision(3) << std::setw(10) << it->first.e
+                << std::setw(6) << (Int_t)n << std::setprecision(2)
+                << std::setw(10) << mean << " +/- " << std::setw(7) << se
+                << "  rms " << rms << std::endl;
+      md << "| " << PairLabel(it->first.pair) << " | " << it->first.shape
+         << " | " << std::setprecision(3) << it->first.e << " | " << (Int_t)n
+         << " | " << std::setprecision(2) << mean << " | " << se << " | " << rms
+         << " |" << std::endl;
+    }
+    DrawEscapeBiasByPair(aggregates);
+    md << std::endl
+       << "![escape bias by pair](escape_bias_by_pair.png)" << std::endl;
+    std::vector<std::string> pairs = PairOrder();
+    for (size_t pi = 0; pi < pairs.size(); pi++) {
+      std::vector<Double_t> with_escapes, without_escapes;
+      for (std::map<TrialKey, PairedTrial>::const_iterator it = paired.begin();
+           it != paired.end(); ++it)
+        if (it->first.pair == pairs[pi] && it->second.has_with &&
+            it->second.has_without) {
+          with_escapes.push_back(it->second.with_escapes);
+          without_escapes.push_back(it->second.without_escapes);
+        }
+      DrawEscapePaired(pairs[pi], with_escapes, without_escapes);
+    }
+  }
+
   md << std::endl << "## Interpretation" << std::endl << std::endl;
   const char *shapes[2] = {"model", "empirical"};
   const Int_t colors[4] = {kBlue, kRed, kGreen + 2, kMagenta + 1};
   std::vector<std::string> pair_order = PairOrder();
 
-  // Distinct method names actually present, in first-seen order: "sim" plus
-  // every rate-sub variant. The classification table below covers all of them;
-  // only "sim" gets a figure (the rate-sub numbers stay in the tables).
+  // Distinct method names actually present, in first-seen order. Each gets
+  // the classification table and a bias-vs-energy figure.
   std::vector<std::string> method_order;
   for (std::map<GroupKey, Acc>::const_iterator m_it = groups.begin();
        m_it != groups.end(); ++m_it) {
@@ -405,13 +610,11 @@ void SummarizeInjection() {
   for (Int_t si = 0; si < 2; si++) {
     for (size_t mi = 0; mi < method_order.size(); mi++) {
       std::string shape = shapes[si], method = method_order[mi];
-      const Bool_t make_plot = (method == "sim");
+      const Bool_t make_plot =
+          (method == "sim" || method == "sim_noesc" || method == "ratesub");
       TString name =
           TString("bias_vs_energy_") + shape.c_str() + "_" + method.c_str();
 
-      // Only the simultaneous-fit figure is drawn; the rate-sub numbers stay
-      // in the tables. This keeps the plot count down to one figure per
-      // lineshape.
       if (make_plot) {
         std::vector<TString> legend_labels;
         std::vector<TGraphErrors *> graphs;
@@ -502,7 +705,7 @@ void SummarizeInjection() {
         }
       }
 
-      // Classification per pair; rate-sub keeps its table but no figure.
+      // Classification per pair.
       md << std::endl
          << "### " << shape << " / " << method << std::endl
          << std::endl;
