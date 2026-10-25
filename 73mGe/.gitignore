@@ -5,3 +5,10 @@ ConvertBEF*
 !secrets/*.age
 *.csv
 .ipynb_checkpoints
+
+# Results of configurations production does not use, and the testbed's
+# reference fit states, which every testbed run rewrites. Results already
+# tracked (production, its partners, CORRECTIONS.md's configuration table,
+# the CdTe and the Si) stay tracked; a new one to keep needs `git add -f`.
+results/ge_tau20_*.result
+plots/injection_*/reference/
