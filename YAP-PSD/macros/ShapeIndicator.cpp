@@ -297,7 +297,9 @@ void CalculateShapeIndicator(const std::vector<TString> output_names) {
 
       Int_t n_samples = samples->GetSize();
       Int_t start = std::max<Int_t>(
-          trigger_position - Constants::DEFAULT_PROCESSING_CONFIG.pre_gate, 0);
+          trigger_position -
+              Constants::DEFAULT_PULSE_INTEGRAL_SETTINGS.pre_gate,
+          0);
       Int_t long_end =
           std::min(start + Constants::OPTIMAL_LONG_GATE, n_samples);
 

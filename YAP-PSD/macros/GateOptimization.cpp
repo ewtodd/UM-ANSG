@@ -256,7 +256,7 @@ OptimizeGates(const std::vector<Event> &alpha_events,
   std::cout << "  Total valid combinations to test: " << combinations.size()
             << std::endl;
 
-  Int_t pre_gate = Constants::DEFAULT_PROCESSING_CONFIG.pre_gate;
+  Int_t pre_gate = Constants::DEFAULT_PULSE_INTEGRAL_SETTINGS.pre_gate;
 
   unsigned int n_threads =
       std::min<unsigned int>(std::thread::hardware_concurrency(),
@@ -454,7 +454,7 @@ void GateOptimization() {
   std::cout << "Creating PSD plot with optimal gates..." << std::endl;
   OptimizationResult best = opt_results.at(0);
 
-  Int_t pre_gate = Constants::DEFAULT_PROCESSING_CONFIG.pre_gate;
+  Int_t pre_gate = Constants::DEFAULT_PULSE_INTEGRAL_SETTINGS.pre_gate;
   std::vector<Float_t> best_alpha_cc =
       ComputeCCValues(alpha_events, best.short_gate, best.long_gate, pre_gate);
   std::vector<Float_t> best_gamma_cc =

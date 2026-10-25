@@ -96,7 +96,7 @@ N_TEST_PER_CLASS = 100000
 SUBSAMPLE_SEED = 123
 
 # Long-gate integral parameters matching the C++ pipeline
-# (Analysis-Utilities/src/WaveformProcessingUtils.cpp + YAP-PSD Constants.hpp).
+# (Analysis-Utilities' PulseIntegralProcessor + YAP-PSD Constants.hpp).
 # Stored waveforms are already baseline-subtracted and polarity-inverted, so
 # the long_integral feature is reproduced by summing samples from
 # INTEGRATION_START to INTEGRATION_START+LONG_GATE clamped to the array end.
@@ -986,7 +986,7 @@ def _plot_noise_sample_waveforms(alpha_test,
 def _compute_long_integral(waveforms):
     """Reproduce the long_integral feature from the C++ pipeline.
 
-    Matches WaveformProcessingUtils::ExtractFeatures: sum of samples from
+    Matches PulseIntegralProcessor::ExtractFeatures: sum of samples from
     INTEGRATION_START to INTEGRATION_START+LONG_GATE, clamped to the array
     end. Waveforms are already baseline-subtracted and polarity-inverted
     upstream, so this is a direct port.

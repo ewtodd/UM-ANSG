@@ -71,9 +71,11 @@ void InitialProcessing() {
   Bool_t reprocess = kTRUE;
 
   if (reprocess) {
-    WaveformProcessingUtils::ProcessFilesParallel(
-        Constants::ALL_FILEPATHS, Constants::ALL_OUTPUT_NAMES,
-        Constants::DEFAULT_PROCESSING_CONFIG, max_threads);
+    PulseIntegralProcessor processor(
+        Constants::DEFAULT_PROCESSING_CONFIG,
+        Constants::DEFAULT_PULSE_INTEGRAL_SETTINGS);
+    processor.ProcessFilesParallel(Constants::ALL_FILEPATHS,
+                                   Constants::ALL_OUTPUT_NAMES, max_threads);
   }
 
   InitialPlots(Constants::ALL_OUTPUT_NAMES);

@@ -43,7 +43,9 @@ void CalculateChargeComparison(const std::vector<TString> output_names) {
 
       Int_t n_samples = samples->GetSize();
       Int_t start = std::max<Int_t>(
-          trigger_position - Constants::DEFAULT_PROCESSING_CONFIG.pre_gate, 0);
+          trigger_position -
+              Constants::DEFAULT_PULSE_INTEGRAL_SETTINGS.pre_gate,
+          0);
       Int_t short_end =
           std::min(start + Constants::OPTIMAL_SHORT_GATE, n_samples);
       Int_t long_end =
@@ -106,8 +108,8 @@ void PlotChargeComparison(const std::vector<TString> output_names) {
     TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
     PlottingUtils::ConfigureAndDraw2DHistogram(
         charge_comparison_vs_LO, canvas, ";Light Output [keVee]; PSP_{CC}");
-    PlottingUtils::SaveFigure(canvas, "cc_vs_lo_" + output_name,
-                              "", PlotSaveOptions::kLINEAR);
+    PlottingUtils::SaveFigure(canvas, "cc_vs_lo_" + output_name, "",
+                              PlotSaveOptions::kLINEAR);
 
     charge_comparison_vs_LO->Write("charge_comparison_vs_LO",
                                    TObject::kOverwrite);
@@ -123,8 +125,7 @@ void ChargeComparison() {
   Bool_t recalculate_cc = kTRUE;
 
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(Constants::SAVE_FORMAT,
-                                project_root + "/plots",
+  InitUtils::SetROOTPreferences(Constants::SAVE_FORMAT, project_root + "/plots",
                                 project_root + "/root_files");
 
   if (recalculate_cc)

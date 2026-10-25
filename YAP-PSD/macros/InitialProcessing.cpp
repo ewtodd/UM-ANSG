@@ -66,9 +66,11 @@ void InitialProcessing() {
     for (Int_t i = 0; i < n_inputs; i++) {
       input_filepaths.push_back(input_dir + Constants::ALL_FILENAMES.at(i));
     }
-    WaveformProcessingUtils::ProcessFilesParallel(
-        input_filepaths, Constants::ALL_OUTPUT_NAMES,
-        Constants::DEFAULT_PROCESSING_CONFIG, max_threads);
+    PulseIntegralProcessor processor(
+        Constants::DEFAULT_PROCESSING_CONFIG,
+        Constants::DEFAULT_PULSE_INTEGRAL_SETTINGS);
+    processor.ProcessFilesParallel(input_filepaths, Constants::ALL_OUTPUT_NAMES,
+                                   max_threads);
   }
 
   InitialPlots(Constants::ALL_OUTPUT_NAMES);

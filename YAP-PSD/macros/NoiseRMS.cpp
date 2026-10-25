@@ -17,7 +17,7 @@ const Float_t LO_MAX = 1500.0;
 // Stored waveforms are already baseline-subtracted and polarity-inverted, so
 // the first N samples have mean ~ 0 by construction and RMS reduces to
 // sqrt(sum(s^2)/(N-1)) -- the same quantity upstream computes in
-// WaveformProcessingUtils::SubtractBaseline.
+// WaveformProcessor::SubtractBaseline, the shared baseline step.
 Float_t ComputeMeanRMS(const TString output_name) {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   TFile *file = IO::OpenForReading(output_name + ".root");

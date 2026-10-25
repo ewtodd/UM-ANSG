@@ -108,13 +108,16 @@ const FileProcessingConfig DEFAULT_PROCESSING_CONFIG = {
     .num_samples_baseline = 15,
     .pre_samples = 20,
     .post_samples = 200,
-    .pre_gate = 5,
-    .short_gate = 10,
-    .long_gate = 250,
     .sample_waveforms_to_save = 5,
     .max_events = -1,
     .verbose = kTRUE,
     .store_waveforms = kTRUE,
+};
+
+const PulseIntegralSettings DEFAULT_PULSE_INTEGRAL_SETTINGS = {
+    .pre_gate = 5,
+    .short_gate = 10,
+    .long_gate = 250,
 };
 
 const Int_t OPTIMAL_SHORT_GATE = 17;

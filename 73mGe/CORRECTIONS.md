@@ -5,7 +5,7 @@ A shift between two analysis choices is charged as a systematic only when more t
 <!---->
 ## CZT: from 68.7502 to 68.7533 keV
 <!---->
-The value reported earlier, 68.7502 ± 0.0145 keV (c260617), moved through these steps (sizes where measured; the full table is for the write-up, Plan 8 in `STATUS.md`):
+The value reported earlier, 68.7502 ± 0.0145 keV (c260617), moved through these steps (sizes where measured; the full table is for the write-up, Plan 7 in `STATUS.md`):
 <!---->
 1. **The Pb Kβ1,3 blend in the old pol2** was given Kβ1's energy, 84.936 keV, where the blend's centroid is about 84.770 (Kβ3 at 0.52 of Kβ1). That pulled Cu 01/13's Ge 27.4 eV below the pol1; with the centroid it sits 5.4 eV above. Production uses a pol1 through Am-241 and Pb Kα only.
 2. **The RooFit fix**: ≤ 4 eV.

@@ -7,7 +7,8 @@
 void WaveformViewer() {
   InitUtils::SetROOTPreferences(Constants::SAVE_FORMAT);
 
-  WaveformProcessingUtils::ProcessFilesParallel(
-      Constants::ALL_FILEPATHS, Constants::ALL_OUTPUT_NAMES,
-      Constants::DEFAULT_PROCESSING_CONFIG);
+  PulseIntegralProcessor processor(Constants::DEFAULT_PROCESSING_CONFIG,
+                                   Constants::DEFAULT_PULSE_INTEGRAL_SETTINGS);
+  processor.ProcessFilesParallel(Constants::ALL_FILEPATHS,
+                                 Constants::ALL_OUTPUT_NAMES);
 }
