@@ -1316,26 +1316,6 @@ DayResult ProcessDay_20260115() {
   return ProcessLineCalDay(cfg);
 }
 
-DayResult ProcessDay_20260116() {
-  LineCalConfig cfg;
-  cfg.date_label = "20260116";
-  cfg.am_run = Constants::POSTREACTOR_AM241_BA133_20260116;
-  cfg.am_lo = 55;
-  cfg.am_hi = 70;
-  cfg.ba_run = Constants::POSTREACTOR_AM241_BA133_20260116;
-  cfg.day_datasets = {
-      Constants::NOSHIELD_GEONCZT_0_5PERCENT_20260116,
-      Constants::NOSHIELD_ACTIVEBACKGROUND_0_5PERCENT_20260116,
-      Constants::NOSHIELD_GRAPHITECASTLESIGNAL_10PERCENT_20260116,
-      Constants::NOSHIELD_GRAPHITECASTLEBACKGROUND_10PERCENT_20260116,
-      Constants::POSTREACTOR_AM241_BA133_20260116};
-  cfg.postcal_bkg =
-      Constants::NOSHIELD_GRAPHITECASTLEBACKGROUND_10PERCENT_20260116;
-  cfg.postcal_sig = Constants::NOSHIELD_GRAPHITECASTLESIGNAL_10PERCENT_20260116;
-  cfg.ge_label = "Graphite Castle Signal 10% (01/16)";
-  return ProcessLineCalDay(cfg);
-}
-
 void PrintDayCals(const DayResult &d) {
   for (size_t i = 0; i < d.cal_funcs.size(); i++) {
     TF1 *c = d.cal_funcs[i];
@@ -1372,20 +1352,23 @@ void CalibrateAndFit() {
   PairCalResult ref_pair;
   DayResult d13 = ProcessDay_20260113(ref_pair);
   DayResult d15 = ProcessDay_20260115();
-  DayResult d16 = ProcessDay_20260116();
 
   PrintDayCals(d13);
   PrintDayCals(d15);
-  PrintDayCals(d16);
 
-  // 15th/16th: line-cal (Am + Ba-133) days measured by rate subtraction.
+  // 15th: a line-cal (Am + Ba-133) day measured by rate subtraction.
   // Independent of the 13th in both calibration source and background
   // treatment, which is what makes the method systematic meaningful.
   // One .result row per run; no budget math here.
   // The 01/14 Cu 10% pair is not used. The detector was probably unbiased
   // overnight and re-biased that morning, and there was no Am run on the 14th,
   // so neither a gain nor an offset carries the 01/13 calibration across.
-  std::vector<DayResult *> day_vec = {&d13, &d15, &d16};
+  // The 01/16 graphite-castle pair is not used either: it differs from the
+  // other runs in too many ways to be understood. Its residual background
+  // slopes over 62-71 keV, it is the highest-rate run, no line appears in
+  // both its runs to check the source-run calibration, and its photons reach
+  // deeper into the crystal than in any other configuration.
+  std::vector<DayResult *> day_vec = {&d13, &d15};
   DayResult **days = day_vec.data();
   const Int_t n_days = (Int_t)day_vec.size();
 

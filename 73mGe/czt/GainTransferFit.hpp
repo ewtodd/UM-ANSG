@@ -247,12 +247,12 @@ struct EscapeFractions {
 };
 
 // Captures inside the crystal (no shield, Cu shield). Cd K-beta, the one
-// escape clear of other lines, is measured in the 01/15 and 01/16 beam
-// background runs (0.0122 and 0.0115, each +/- ~0.0017), and Cd K-alpha
-// follows from the shares. Te K-alpha takes Geant4's 0.053 of Cd K-alpha for
-// captures inside the crystal (those runs give 0.0006 and 0.0021, +/-
-// 0.002-0.004), Te K-beta Geant4's 0.30 of Te K-alpha.
-const EscapeFractions ESCAPES_INSIDE = {{0.0450, 0.0119, 0.0024, 0.0007}};
+// escape clear of other lines, is measured in the 01/15 beam background run
+// (0.0122 +/- ~0.0017; 01/16 is not used, see CalibrateAndFit.cpp), and Cd
+// K-alpha follows from the shares. Te K-alpha takes Geant4's 0.053 of Cd
+// K-alpha for captures inside the crystal (the run gives 0.0006 +/- 0.002),
+// Te K-beta Geant4's 0.30 of Te K-alpha.
+const EscapeFractions ESCAPES_INSIDE = {{0.0461, 0.0122, 0.0024, 0.0007}};
 
 // Photons from captures outside the crystal, in the Cd shield, which stops
 // the thermal neutrons: Geant4, the line's photons onto the crystal's face.

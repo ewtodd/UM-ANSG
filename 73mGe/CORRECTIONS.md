@@ -3,7 +3,7 @@
 What each correction in the result does, how large it is, and the evidence for it; the current numbers and the plan are in `STATUS.md`.
 A shift between two analysis choices is charged as a systematic only when more than one of the choices can be defended; fixing a defect, or changing an implementation detail that should give the same answer, is not a systematic (the CdTe reprocessing, below).
 <!---->
-## CZT: from 68.7502 to 68.7533 keV
+## CZT: from 68.7502 to 68.7511 keV
 <!---->
 The value reported earlier, 68.7502 ± 0.0145 keV (c260617), moved through these steps (sizes where measured; the full table is for the write-up, Plan 7 in `STATUS.md`):
 <!---->
@@ -16,20 +16,21 @@ The value reported earlier, 68.7502 ± 0.0145 keV (c260617), moved through these
 7. **The signal-run Pb anchor** (below).
 8. **The gain transfer model** (below).
 9. **Both methods in the combination**: the gap between them was not significant (0.3–0.5σ), and charging it as a systematic used Method 2 only through that noise.
-10. **The 95.902 keV escapes** (below): −7.7 eV on the quoted value.
+10. **The 95.902 keV escapes** (below): −7.9 eV on the quoted value.
+11. **01/16 dropped** (2026-10-26): the graphite-castle run differs from the others in too many ways to be understood. Its residual runs from −5 counts/s at 62 keV to 0 at 71 keV, it is the highest-rate run (26–34k counts/s per crystal), no line appears in both its runs to check the source-run calibration, and its photons reach deeper into the crystal than in any other configuration. Its background run no longer enters the inside escape fraction either, which is now 01/15's alone. 68.7533 → 68.7511 keV: −1.8 eV for the run, −0.4 eV for the fraction.
 <!---->
-How the anchor (`_sigpb`), the transfer model (`_oxfer`) and the escapes (`_esc`) move each run: Ge − 68.752 keV per in-situ row in eV; the rate-sub rows are +23.9 (01/15) and +42.6 eV (01/16) without the escapes, +14.2 and +33.3 eV with them. Each tag combined alone.
+How the anchor (`_sigpb`), the transfer model (`_oxfer`) and the escapes (`_esc`) move each run: Ge − 68.752 keV per in-situ row in eV; the rate-sub row (01/15) is +23.9 eV without the escapes and +13.9 eV with them. Each tag combined alone, without 01/16.
 <!---->
 | Tag | Cu 01/13 | Cd 10% | Cd 25% | Method 1 | Both methods, BLUE | Outlier | Quoted |
 |---|---|---|---|---|---|---|---|
-| `tau20` | +26.8 | +1.7 | +6.4 | 68.7695 ± 0.0171 | 68.7715 ± 0.0158 | 3.6 | 68.7715 ± 0.0162 |
-| `tau20_oxfer` | +26.8 | +12.8 | +17.8 | 68.7742 ± 0.0172 | 68.7755 ± 0.0158 | 2.1 | 68.7755 ± 0.0160 |
-| `tau20_sigpb` | +22.4 | −31.9 | +9.9 | 68.7580 ± 0.0168 | 68.7615 ± 0.0153 | 12.0 | 68.7615 ± 0.0195 |
-| `tau20_sigpb_oxfer` | +22.4 | −22.0 | +21.5 | 68.7627 ± 0.0165 | 68.7656 ± 0.0153 | 10.2 | 68.7656 ± 0.0184 |
-| `tau20_sigpb_esc` | +10.7 | −32.6 | +9.1 | 68.7510 ± 0.0166 | 68.7542 ± 0.0154 | 10.2 | 68.7542 ± 0.0185 |
-| `tau20_sigpb_esc_oxfer` | +10.7 | −22.6 | +20.9 | 68.7556 ± 0.0166 | 68.7582 ± 0.0154 | 8.5 | 68.7582 ± 0.0176 |
+| `tau20` | +26.8 | +1.7 | +6.4 | 68.7695 ± 0.0171 | 68.7701 ± 0.0163 | 10.3 | 68.7701 ± 0.0192 |
+| `tau20_oxfer` | +26.8 | +12.8 | +17.8 | 68.7742 ± 0.0172 | 68.7744 ± 0.0163 | 5.4 | 68.7744 ± 0.0172 |
+| `tau20_sigpb` | +22.4 | −31.9 | +9.9 | 68.7580 ± 0.0168 | 68.7596 ± 0.0158 | 12.4 | 68.7596 ± 0.0200 |
+| `tau20_sigpb_oxfer` | +22.4 | −22.0 | +21.5 | 68.7627 ± 0.0165 | 68.7639 ± 0.0158 | 10.5 | 68.7639 ± 0.0189 |
+| `tau20_sigpb_esc` | +10.1 | −32.7 | +9.1 | 68.7507 ± 0.0166 | 68.7521 ± 0.0158 | 10.2 | 68.7521 ± 0.0188 |
+| `tau20_sigpb_esc_oxfer` | +10.1 | −22.6 | +20.9 | 68.7553 ± 0.0166 | 68.7563 ± 0.0158 | 8.5 | 68.7563 ± 0.0179 |
 <!---->
-The quoted 68.7533 keV is `tau20_sigpb_esc` combined with its transfer-model and escape partners as correlated terms (`STATUS.md`).
+The quoted 68.7511 keV is `tau20_sigpb_esc` combined with its transfer-model and escape partners as correlated terms (`STATUS.md`).
 <!---->
 ## CZT corrections
 <!---->
@@ -49,13 +50,13 @@ The Cd pairs inherit the Cu 10% calibration through their background runs' Pb K�
 ### 95.902 keV escapes
 <!---->
 - **The line** is 113Cd(n,γ)'s E2 transition in 114Cd, converted in the K shell 47% of the time and emitted as a photon 37% (BrIcc: αK 1.288, αT 1.735). Its escapes come from the Cd K X-rays of conversions at captures near a surface, and from Cd and Te K X-rays when its photon is absorbed: Cd Kα at 72.73 / 72.92 keV under Pb Kα2, Cd Kβ at 69.25–69.81 keV beside Ge, Te Kα at 68.43 / 68.70 keV under Ge, Te Kβ at 64.2–64.9 keV.
-- **Captures inside the crystal** (no shield, Cu shield), as fractions of the line's Gaussian yield: Cd Kβ 0.0119, the mean of the 01/15 and 01/16 beam background runs (0.0122, 0.0115, each ± ~0.0017, the one escape clear of other lines); Cd Kα 0.0450 from it through the DDEP intensities times escape probabilities; Te Kα 0.0024 from Geant4's 0.053 of Cd Kα (the runs give 0.0006 and 0.0021, ± 0.002–0.004); Te Kβ 0.0007. Geant4 alone (CZT, captures at 0.25 mm mean depth) gives 0.061, 0.017, 0.0033 and 0.0010.
+- **Captures inside the crystal** (no shield, Cu shield), as fractions of the line's Gaussian yield: Cd Kβ 0.0122 ± 0.0017, measured in the 01/15 beam background run (the one escape clear of other lines; 01/16's 0.0115 is no longer used); Cd Kα 0.0461 from it through the DDEP intensities times escape probabilities; Te Kα 0.0024 from Geant4's 0.053 of Cd Kα (the run gives 0.0006 ± 0.002); Te Kβ 0.0007. Geant4 alone (CZT, captures at 0.25 mm mean depth) gives 0.061, 0.017, 0.0033 and 0.0010.
 - **Photons from the Cd shield**, which stops the thermal neutrons: Geant4 with the line's photons onto the face, 0.0115, 0.0033, 0.0057 and 0.0017. The 01/13 Cd background runs show no Cd Kβ escape (0 ± 0.004 at 10%, ± 0.006 at 25%), where captures inside would give 0.012; the Cu run cannot tell (± 0.008–0.026).
-- **Where the line is detected** (`czt/Capture96Positions.cpp`, single-interaction events, `plots/czt/studies/capture96_positions`): within 1 mm of the cathode for 82% (Cu), 87% and 85% (Cd 10% and 25%) and 84% (01/15) of the line's events, against 72–77% for Pb Kβ in the same runs and 67% for Am-241 entering the cathode, with no excess at the side faces (the edge-ring profile is alike in every configuration). So the line is mostly captures in the CZT's own cathode layer, in the Cd-foil runs as well: the foil covered the four sides and left the cathode face (toward the Ge) and the anode face open. That supports captures inside for the Cd rows, against the missing Cd Kβ escape above; open (`STATUS.md`, Plan 8). In 01/16 the line (62%) and Pb Kβ (45%) reach deeper.
-- **In the fits** the escapes are fixed lines (`RooFitUtils::AddFixedLines`) at the run's own 95.902 keV centroid minus the X-ray energy (in the 01/16 background run the line and its escapes read low together, −244 eV), with that line's Gaussian yield times the fractions. In the in-situ fits each channel gets its own run's lines, drawn with the Pb Kα1 shape; the line's yield and centroid come from its fits in comb-period bins at five starting points over 91.5–100.5 keV, with the in-situ fit's converged tail (the raw fit first runs once without the escapes). In the rate-sub fit they are a fixed term with Ge's width and tail, scaled by the residual's own 95.902 keV line, which is 1.2 times stronger in the signal runs than live time predicts.
-- **Effect**: Cu 01/13 −11.7 eV, the Cd pairs −0.7 and −0.8 eV, the rate-sub rows −9.7 and −9.2 eV; the quoted value −7.7 eV (68.7630 ± 0.0191 keV without, 68.7553 ± 0.0183 with them as a correction only). A TF1 replica of the in-situ fit with the same lines gives −12.7, +0.1 and −1.2 eV.
-- **Charged in full** as a systematic, correlated among the runs whose escapes come from captures inside the crystal (Cu, 01/15, 01/16) and among the Cd-shield runs, independent between the two sets.
-- **Sensitivity**: with Te Kα (and Kβ) doubled, as PSI's CdTe runs without Ge suggest, the rows move +2.4 (Cu) and +1.4 / +3.1 eV (rate-sub), well inside that systematic.
+- **Where the line is detected** (`czt/Capture96Positions.cpp`, single-interaction events, `plots/czt/studies/capture96_positions`): within 1 mm of the cathode for 82% (Cu), 87% and 85% (Cd 10% and 25%) and 84% (01/15) of the line's events, against 72–77% for Pb Kβ in the same runs and 67% for Am-241 entering the cathode, with no excess at the side faces (the edge-ring profile is alike in every configuration). So the line is mostly captures in the CZT's own cathode layer, in the Cd-foil runs as well: the foil covered the four sides and left the cathode face (toward the Ge) and the anode face open. That supports captures inside for the Cd rows, against the missing Cd Kβ escape above; open (`STATUS.md`, Plan 3). In 01/16 the line (62%) and Pb Kβ (45%) reach deeper.
+- **In the fits** the escapes are fixed lines (`RooFitUtils::AddFixedLines`) at the run's own 95.902 keV centroid minus the X-ray energy, with that line's Gaussian yield times the fractions. In the in-situ fits each channel gets its own run's lines, drawn with the Pb Kα1 shape; the line's yield and centroid come from its fits in comb-period bins at five starting points over 91.5–100.5 keV, with the in-situ fit's converged tail (the raw fit first runs once without the escapes). In the rate-sub fit they are a fixed term with Ge's width and tail, scaled by the residual's own 95.902 keV line, which is 1.2 times stronger in the signal runs than live time predicts.
+- **Effect**: Cu 01/13 −12.3 eV, the Cd pairs −0.7 and −0.8 eV, 01/15 −10.0 eV; the quoted value −7.9 eV (68.7610 ± 0.0197 keV without, 68.7531 ± 0.0188 with them as a correction only). A TF1 replica of the in-situ fit with the same lines gives −12.7, +0.1 and −1.2 eV.
+- **Charged in full** as a systematic, correlated among the runs whose escapes come from captures inside the crystal (Cu, 01/15) and among the Cd-shield runs, independent between the two sets.
+- **Sensitivity**: with Te Kα (and Kβ) doubled, as PSI's CdTe runs without Ge suggest, the rows move +2.4 (Cu) and at most +3.1 eV (rate-sub), well inside that systematic.
 - **Validation.** The fixed lines reproduce a testbed's doublet without bias (−0.1 ± 2.1 and −0.3 ± 1.4 eV; +12.4 and +7.6 eV without them), and with the escapes switched off production reproduces `tau20_sigpb` exactly. In production's own fit, on a synthetic replica of Cu 01/13 with the escapes in the data, the fit with the escape lines recovers the injected 68.750 keV (+1.8 ± 2.7 eV, 50 trials); the same events fitted without them read +11.1 ± 0.1 eV higher in every trial, the size of production's Cu correction.
 <!---->
 ### Rate subtraction (Method 2)

@@ -5,7 +5,7 @@
 //   cal_off sys_err anchor_err label
 //
 // The quoted value is the BLUE of every run of both methods: Method 1
-// (in-situ, 01/13) and Method 2 (rate subtraction, 01/15-16, with its own
+// (in-situ, 01/13) and Method 2 (rate subtraction, 01/15, with its own
 // systematics in sys_err: bin phase, residual-background shape, calibration
 // transfer). The calibration is split into its correlated (Am reference) and
 // independent (gain transfer) parts, and the transfer model (gain against
@@ -65,7 +65,7 @@ struct Row {
 
 // The Cd-shield runs' escapes come from photons out of the shield, with
 // Geant4's fractions; every other run's from captures inside the crystal,
-// with the fractions measured in the 01/15-16 background runs. Each set's
+// with the fractions measured in the 01/15 background run. Each set's
 // correction is fully correlated among its runs and independent of the
 // other's.
 Bool_t EscapesFromShield(const Row &r) { return r.label.Contains("Cd_Shield"); }
@@ -564,8 +564,8 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
               << " keV" << std::endl;
   if (rs.valid)
     std::cout << "  Method 2  live-time rate subtraction  (" << rs.n
-              << " datasets, 01/15-16): " << rs.mean << " +/- " << rs.err
-              << " keV" << std::endl;
+              << " datasets, 01/15): " << rs.mean << " +/- " << rs.err << " keV"
+              << std::endl;
   if (in_only.valid && rs.valid) {
     Double_t diff = std::fabs(in_only.mean - rs.mean);
     Double_t ddiff = std::sqrt(in_only.err * in_only.err + rs.err * rs.err);

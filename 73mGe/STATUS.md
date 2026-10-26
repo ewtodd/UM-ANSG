@@ -1,4 +1,4 @@
-# 73mGe — status and plan (2026-10-24)
+# 73mGe — status and plan (2026-10-26)
 <!---->
 The energy of the bare 73mGe γ ray: in the pixelated CZT at the OSU reactor (`czt/`, January 2026), and in the Amptek CdTe and Si at PSI's BOA beamline (`cdte/`, `si/`, October 2025). ENSDF gives 68.752 ± 0.007 keV. Ge-detector values (68.79–68.82 keV) include a recoil deposit these detectors do not see, so a result there would mean a bias.
 <!---->
@@ -8,10 +8,10 @@ Why each correction is applied, how large it is, and how the CZT result moved fr
 <!---->
 | Detector | Ge [keV] | ± [keV] | From |
 |---|---|---|---|
-| CZT, quoted | **68.7533** | 0.0206 | `czt/CombineGeResult.cpp` on `tau20_sigpb_esc` |
+| CZT, quoted | **68.7511** | 0.0211 | `czt/CombineGeResult.cpp` on `tau20_sigpb_esc` |
 | PSI CdTe | 68.7501 | 0.0331 | `cdte/GeBudget.cpp` → `results/cdte_ge.result` |
 | PSI Si | 68.7648 | 0.0205 | `si/SiGeBudget.cpp` → `results/si_ge.result` |
-| CZT + CdTe | 68.7524 | 0.0175 | `COMBINE_WITH_CDTE`, off until the CdTe is final |
+| CZT + CdTe | — | — | `COMBINE_WITH_CDTE`, off until the CdTe is final |
 <!---->
 The collaborator's draft gives CdTe 68.7484 ± 0.0189, Si-1 68.7543 ± 0.0115 and CZT 68.7606 ± 0.0146 keV.
 <!---->
@@ -27,20 +27,19 @@ The collaborator's draft gives CdTe 68.7484 ± 0.0189, Si-1 68.7543 ± 0.0115 an
 <!---->
 | Run | Method | Ge [keV] | fit | cal | sys | transfer model | escapes | χ²/ndf | BLUE weight | Ge − mean |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Cu shield 10%, 01/13 | in-situ | 68.7627 | 20.6 | 7.3 | — | 0 | −11.7 | 1.36 | 0.455 | +9.4 eV, +0.38σ |
-| Cd shield 10%, 01/13 | in-situ | 68.7194 | 30.8 | 7.3 | — | +10.0 | −0.7 | 1.14 | 0.247 | −34.0 eV, −1.02σ |
-| Cd shield 25%, 01/13 | in-situ | 68.7611 | 33.4 | 20.1 | — | +11.9 | −0.8 | 1.47 | 0.156 | +7.7 eV, +0.19σ |
-| No shield 5%, 01/15 | rate-sub | 68.7662 | 42.7 | 6.3 | 30.6 | 0 | −9.7 | 1.43 | 0.085 | +12.9 eV, +0.24σ |
-| Graphite castle 10%, 01/16 | rate-sub | 68.7853 | 55.9 | 9.3 | 31.3 | 0 | −9.2 | 0.95 | 0.057 | +32.0 eV, +0.49σ |
+| Cu shield 10%, 01/13 | in-situ | 68.7621 | 20.6 | 7.2 | — | 0 | −12.3 | 1.39 | 0.478 | +11.0 eV, +0.44σ |
+| Cd shield 10%, 01/13 | in-situ | 68.7193 | 30.8 | 7.3 | — | +10.0 | −0.7 | 1.14 | 0.261 | −31.8 eV, −0.96σ |
+| Cd shield 25%, 01/13 | in-situ | 68.7611 | 33.4 | 20.1 | — | +11.9 | −0.8 | 1.46 | 0.165 | +9.9 eV, +0.24σ |
+| No shield 5%, 01/15 | rate-sub | 68.7659 | 42.7 | 6.3 | 27.4 | 0 | −10.0 | 1.43 | 0.096 | +14.8 eV, +0.28σ |
 <!---->
 Errors and corrections in eV; Ge − mean in each run's own total error.
 <!---->
-- **Quoted** 68.7533 ± 0.0206 keV, +1.3 eV from ENSDF: the BLUE of the five runs, 68.7533 ± 0.0174 keV (χ²/ndf 0.39; statistics 14.0, calibration offset 4.4, multiplicative 3.6, rate-sub systematics 3.2, transfer model 4.3, escapes 6.7 eV), with 11.0 eV of outlier removal (the BLUE without Cd 10%, the lowest run) in quadrature. Method 1 (68.7503 ± 0.0185) and Method 2 (68.7739 ± 0.0420 keV) agree to 24 ± 46 eV.
+- **Quoted** 68.7511 ± 0.0211 keV, −0.9 eV from ENSDF: the BLUE of the four runs, 68.7511 ± 0.0178 keV (χ²/ndf 0.43; statistics 14.4, calibration offset 4.6, multiplicative 3.8, rate-sub systematics 2.6, transfer model 4.6, escapes 6.8 eV), with 11.2 eV of outlier removal (the BLUE without Cd 10%, the lowest run) in quadrature. Method 1 (68.7498 ± 0.0186) and Method 2 (68.7659 ± 0.0521 keV) agree to 16 ± 55 eV.
 - **Method 1, 01/13, in-situ.** Each background run (Pb Kα2/Kα1) is fitted together with its signal run (the same lines plus Ge) in raw energy, with one Pb shape and one low tail (a Gaussian with an exponential tail, τ/σ ≤ 20). Cu 10% is calibrated with a pol1 through Am-241 and its background run's Pb Kα; the Cd pairs inherit it as a gain through their own Pb Kα, and each signal run is shifted onto its own Pb Kα.
-- **Method 2, 01/15–16, rate subtraction.** A pol1 through Am-241 and Ba-133 80.998 keV from the source runs; Ge from the live-time-normalised signal − background residual over 62–71.5 keV, in comb-period bins at five starting points, the fit error scaled by √(χ²/ndf). Systematic: the spread over starting points, a quadratic residual background, and 20 eV for carrying the source-run calibration to the beam runs.
+- **Method 2, 01/15, rate subtraction.** A pol1 through Am-241 and Ba-133 80.998 keV from the source runs; Ge from the live-time-normalised signal − background residual over 62–71.5 keV, in comb-period bins at five starting points, the fit error scaled by √(χ²/ndf). Systematic: the spread over starting points, a quadratic residual background, and 20 eV for carrying the source-run calibration to the beam runs.
 - **Both methods** carry the 95.902 keV line's Cd and Te K X-ray escapes as fixed lines.
 - **Combination** (`CombineGeResult`'s defaults: `tag = "tau20_sigpb_esc"`, `alt_tag = "tau20_sigpb_esc_oxfer"`, `escape_tag = "tau20_sigpb"`): a BLUE with correlated blocks for the Am reference (the 01/13 rows), the gain transfer, the transfer model (`alt_tag` − `tag`) and the escape correction (`tag` − `escape_tag`, the Cd-shield runs and the rest as two blocks); fits, anchors and rate-sub systematics on the diagonal; the outlier removal on top.
-- **01/14 is not used**; **01/16 is kept** with its larger errors (Plan 3).
+- **01/14 and 01/16 are not used** (`CORRECTIONS.md`): 01/14's calibration cannot be carried over from 01/13, and the 01/16 graphite castle differs from the other runs in too many ways.
 <!---->
 ## PSI CdTe (`cdte/`)
 <!---->
@@ -84,9 +83,8 @@ The Si (DT5780 channel 0) on the trapezoid of the processed waveforms (rise 4 µ
 <!---->
 1. **Method 1's remaining model choices** are not in the budget: the in-situ background shape (flat against sloped, −1 to +6 eV on Method 1), the lineshape (shared tail, τ/σ ≤ 20) and the pixel selection. Decide which become systematics, as the transfer model did.
 2. **The Cd pairs** inherit the Cu reference across the 130 eV step at the Cd → Cu change; if the bias was cycled then, they have 01/14's problem.
-3. **01/16** (BLUE weight 0.057; without it the quoted value moves −1.8 eV to 68.7515 ± 0.0210 keV): its residual runs from −5 counts/s at 62 keV to 0 at 71 keV, it is the highest-rate run (26–34k counts/s per crystal), and no line appears in both its runs to check the source-run calibration. Decide whether it stays.
+3. **The Cd-shield rows' escapes.** The 95.9 keV line sits in the cathode layer in every configuration (`CORRECTIONS.md`), and thermal neutrons almost certainly reached the CZT in all of them, so the Cd rows may need the inside escapes (roughly −4 eV on the quoted value, an estimate) despite the missing Cd Kβ escape in their background runs.
 4. **The in-situ fit on real background**: running the halves procedure on several synthetic background runs, each held fixed through its trials, would measure the spread the shared fluctuation causes; a real-background effect would show beyond it.
 5. **The CdTe extrapolation term**: the full curvature-free shift or the curvature's quadrature cost, and whether to move the slice edges off the rise estimator's sawtooth peaks (280, 300, 320 ns).
 6. **The Si in the combination**: whether it joins, and with which correlations (the Si and CdTe share the PSI beam time and the Pb Kα and Am reference energies, not the calibration fits).
 7. **Write-up**: the step-by-step move from 68.7502 keV (`CORRECTIONS.md`), with each step's size measured.
-8. **The Cd-shield rows' escapes.** The 95.9 keV line sits in the cathode layer in every configuration (`CORRECTIONS.md`), and thermal neutrons almost certainly reached the CZT in all of them, so the Cd rows may need the inside escapes (roughly −4 eV on the quoted value, an estimate) despite the missing Cd Kβ escape in their background runs. Next: the same position study on 114Cd's stronger 558 keV line, whose depth and edge profiles should tell captures in the cathode layer from foil photons entering the sides.
