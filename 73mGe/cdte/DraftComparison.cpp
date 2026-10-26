@@ -147,8 +147,7 @@ void RiseCut() {
 void DraftComparison() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root +
-                                    "/plots/studies/psi_cdte/draft_comparison",
+                                project_root + "/plots/cdte/draft_comparison",
                                 project_root + "/root_files");
   CdTeDraft::AllRuns();
   CdTeDraft::PerRun();

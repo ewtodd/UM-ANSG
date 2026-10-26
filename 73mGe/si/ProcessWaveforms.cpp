@@ -50,9 +50,9 @@ const Int_t WORKERS = 12;
 void ProcessWaveforms(const char *run = "") {
   using namespace SiProcessing;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(
-      PlotSaveFormat::kPNG, project_root + "/plots/studies/psi_si/waveforms",
-      Si::FEATURES_DIR);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                project_root + "/plots/si/waveforms",
+                                Si::FEATURES_DIR);
   std::vector<TString> runs;
   if (TString(run).Length() > 0)
     runs.push_back(run);

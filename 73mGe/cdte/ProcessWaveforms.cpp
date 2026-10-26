@@ -78,9 +78,9 @@ std::vector<TString> RawRuns() {
 void ProcessWaveforms(const char *run = "") {
   using namespace CdTeProcessing;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(
-      PlotSaveFormat::kPNG, project_root + "/plots/studies/psi_cdte/waveforms",
-      CdTe::FEATURES_DIR);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                project_root + "/plots/cdte/waveforms",
+                                CdTe::FEATURES_DIR);
   PulseHeightProcessor processor(Config(), Filter());
   std::vector<TString> runs;
   if (TString(run).Length() > 0)

@@ -287,7 +287,7 @@ void FilterDemo(std::vector<TString> filenames) {
       box->Draw();
     }
 
-    PlottingUtils::SaveFigure(canvasX, filename + "_X", "filterDemo",
+    PlottingUtils::SaveFigure(canvasX, filename + "_X", "filter_demo",
                               PlotSaveOptions::kLOG);
 
     TCanvas *canvasEZ = PlottingUtils::GetConfiguredCanvas();
@@ -305,7 +305,7 @@ void FilterDemo(std::vector<TString> filenames) {
     box->SetFillColorAlpha(kBlack, 0.5);
     box->Draw();
 
-    PlottingUtils::SaveFigure(canvasEZ, filename + "_ZvsE", "filterDemo",
+    PlottingUtils::SaveFigure(canvasEZ, filename + "_ZvsE", "filter_demo",
                               PlotSaveOptions::kLINEAR);
 
     TCanvas *canvasRegions = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -342,7 +342,7 @@ void FilterDemo(std::vector<TString> filenames) {
 
     canvasRegions->SetLeftMargin(0.2);
     PlottingUtils::SaveFigure(canvasRegions, filename + "_FilterSpectra",
-                              "filterDemo", PlotSaveOptions::kLINEAR);
+                              "filter_demo", PlotSaveOptions::kLINEAR);
 
     std::cout << "Wrote histograms for " << filename << std::endl;
 
@@ -601,7 +601,8 @@ void FilterEvents(std::vector<TString> filenames) {
 
 void Filter() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, project_root + "/plots",
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                project_root + "/plots/czt",
                                 project_root + "/root_files");
   ROOT::EnableThreadSafety();
 

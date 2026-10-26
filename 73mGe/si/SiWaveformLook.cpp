@@ -497,9 +497,8 @@ void DrawTrapezoidVsDpp(const LookRun &run) {
 void SiWaveformLook(Int_t stage, Double_t decay_samples = 0) {
   using namespace SiLook;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(
-      PlotSaveFormat::kPNG, project_root + "/plots/studies/psi_si/waveforms",
-      LOOK_DIR);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                project_root + "/plots/si/waveforms", LOOK_DIR);
   if (stage == 1) {
     Process(decay_samples);
     return;

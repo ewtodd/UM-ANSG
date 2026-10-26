@@ -68,8 +68,9 @@ const Int_t INJ_PAIR_INDEX = -1;   // -1 = every pair
 const Int_t INJ_ENERGY_INDEX = -1; // -1 = every injection energy
 const Int_t INJ_N_TRIALS = 10;
 const Int_t INJ_TRIAL_OFFSET = 0;
-const TString INJ_RUN_TAG = "closure"; // results go to plots/injection_<tag>/
-const TString INJ_SOURCE = "halves";   // "halves" | "real" | "synthetic"
+const TString INJ_RUN_TAG =
+    "closure"; // results go to plots/testbed/injection_<tag>/
+const TString INJ_SOURCE = "halves"; // "halves" | "real" | "synthetic"
 // Synthetic data also carry each run's 95.902 keV line and, under everything
 // else, its K X-ray escapes at the pair's escape fractions.
 const Bool_t INJ_SYNTHETIC_ESCAPES = kTRUE;
@@ -769,6 +770,7 @@ PairReference RunReferenceFit(const InjPair &pair,
   gSystem->mkdir(fits_dir, kTRUE);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, reference_dir,
                                 ProjectRoot() + "/root_files");
+  PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
   const TString bkg_label = pair.bkg_run + "_postcal_" + pair.tag;
   const TString sig_label = pair.sig_run + "_postcal_" + pair.tag;
 
@@ -1221,10 +1223,11 @@ void InjectionTest() {
             << " trials " << n_trials << " from " << trial_offset << " run "
             << run_tag << std::endl;
   const TString project_root = ProjectRoot();
-  const TString base = project_root + "/plots/injection_" + run_tag;
+  const TString base = project_root + "/plots/testbed/injection_" + run_tag;
   gSystem->mkdir(base + "/results", kTRUE);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, base,
                                 project_root + "/root_files");
+  PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
 
   std::vector<InjPair> pairs = MakePairs();
   for (Int_t pi = 0; pi < (Int_t)pairs.size(); pi++) {
@@ -1253,10 +1256,10 @@ void InjectionTest() {
       return;
     }
 
-    const TString production_state = project_root + "/plots/calibration_low_" +
-                                     RESULT_TAG + "/fits/PostCal_" + pair.tag +
-                                     "_" + pair.sig_run + "_postcal_" +
-                                     pair.tag + ".simroofits";
+    const TString production_state =
+        project_root + "/plots/czt/calibration_low_" + RESULT_TAG +
+        "/fits/PostCal_" + pair.tag + "_" + pair.sig_run + "_postcal_" +
+        pair.tag + ".simroofits";
     const TString reference_dir =
         base + "/reference/" + pair.tag +
         TString::Format("_e%d_t%d", energy_index, trial_offset);
@@ -1313,6 +1316,7 @@ void InjectionTest() {
         gSystem->mkdir(fits_dir, kTRUE);
         InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, cell_dir,
                                       project_root + "/root_files");
+        PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
         // Include the trial range so a pilot (offset 0, N trials) and a later
         // top-up (offset N, M trials) can share a run tag without overwriting
         // each other; the summariser reads every CSV in results/.

@@ -1364,9 +1364,11 @@ void CalibrateAndFit() {
             << "   95.902 keV escapes "
             << (EscapeLinesRequested() ? "on" : "off") << "   ROOT "
             << gROOT->GetVersion() << std::endl;
-  InitUtils::SetROOTPreferences(
-      PlotSaveFormat::kPNG, project_root + "/plots/calibration_low_" + out_tag,
-      project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                project_root + "/plots/czt/calibration_low_" +
+                                    out_tag,
+                                project_root + "/root_files");
+  PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
   PairCalResult ref_pair;
   DayResult d13 = ProcessDay_20260113(ref_pair);
   DayResult d15 = ProcessDay_20260115();

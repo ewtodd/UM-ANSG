@@ -11,4 +11,4 @@ ConvertBEF*
 # tracked (production, its partners, CORRECTIONS.md's configuration table,
 # the CdTe and the Si) stay tracked; a new one to keep needs `git add -f`.
 results/ge_tau20_*.result
-plots/injection_*/reference/
+plots/testbed/injection_*/reference/

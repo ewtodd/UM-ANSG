@@ -389,7 +389,7 @@ const TString SUM_RUN_TAG = "closure";
 void SummarizeInjection() {
   const TString &run_tag = SUM_RUN_TAG;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  const TString base = project_root + "/plots/injection_" + run_tag;
+  const TString base = project_root + "/plots/testbed/injection_" + run_tag;
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, base,
                                 project_root + "/root_files");
 
@@ -679,14 +679,8 @@ void SummarizeInjection() {
           TCanvas *c = PlottingUtils::GetConfiguredCanvasWithSideLegend(
               plot, legend_pad, (Int_t)legend_w);
           plot->cd();
-          // Same style as PlottingUtils::AddLegend: boxed, white fill,
-          // font 43.
-          TLegend *leg = new TLegend(0.05, 0.92, 0.98, 0.72);
-          leg->SetBorderSize(1);
-          leg->SetFillColor(kWhite);
-          leg->SetFillStyle(1001);
-          leg->SetTextSize(30);
-          leg->SetTextFont(43);
+          TLegend *leg = PlottingUtils::AddSideLegend(
+              plot, legend_pad, (Int_t)legend_labels.size());
           for (size_t i = 0; i < graphs.size(); i++) {
             TGraphErrors *g = graphs[i];
             g->SetMinimum(lo);
@@ -699,8 +693,6 @@ void SummarizeInjection() {
           zero->SetLineStyle(2);
           zero->SetLineColor(kGray + 2);
           zero->Draw("SAME");
-          legend_pad->cd();
-          leg->Draw();
           PlottingUtils::SaveFigure(c, name, "", PlotSaveOptions::kLINEAR);
         }
       }
