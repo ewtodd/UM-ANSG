@@ -10,8 +10,7 @@ Why each correction is applied, how large it is, and how the CZT result moved fr
 |---|---|---|---|
 | CZT, quoted | **68.7533** | 0.0206 | `czt/CombineGeResult.cpp` on `tau20_sigpb_esc` |
 | PSI CdTe | 68.7501 | 0.0331 | `cdte/GeBudget.cpp` → `results/cdte_ge.result` |
-| PSI Si, trapezoid | 68.7648 | 0.0205 | `si/SiGeBudget.cpp` → `results/si_ge_trapezoid.result` |
-| PSI Si, digitiser energy | 68.7698 | 0.0196 | `results/si_ge_digitizer.result` |
+| PSI Si | 68.7648 | 0.0205 | `si/SiGeBudget.cpp` → `results/si_ge.result` |
 | CZT + CdTe | 68.7524 | 0.0175 | `COMBINE_WITH_CDTE`, off until the CdTe is final |
 <!---->
 The collaborator's draft gives CdTe 68.7484 ± 0.0189, Si-1 68.7543 ± 0.0115 and CZT 68.7606 ± 0.0146 keV.
@@ -21,7 +20,7 @@ The collaborator's draft gives CdTe 68.7484 ± 0.0189, Si-1 68.7543 ± 0.0115 an
 - **Shell.** `nix develop .#73mGe` from the repo root; the lock pins Analysis-Utilities 26.10.26 (3465b43), which has everything production needs.
 - **CZT.** `czt/CalibrateAndFit.cpp` (with `czt/GainTransferFit.hpp`) per configuration, then `czt/CombineGeResult.cpp`. Production is the default configuration, `tau20_sigpb_esc`; its partners for the systematics are `TRANSFER=offset` (`tau20_sigpb_esc_oxfer`) and `ESCAPES=off` (`tau20_sigpb`). Each writes `root_files/calibrated_<tag>`, `plots/czt/calibration_low_<tag>` and `results/ge_<tag>.result` (columns `method ge_mu fit_err cal_err bkg_err chi2 gain_err cal_off sys_err anchor_err label`). A new tag needs `plots/czt/calibration_low_<tag>/fits` copied from production's, or the fitter opens the editor.
 - **CdTe.** `cdte/ProcessWaveforms.cpp` (raw waveforms to `features` trees), `cdte/NoGeEscapes.cpp` (the escape tie, entered as constants in `GeBudget.cpp`), then `cdte/GeBudget.cpp`.
-- **Si.** `si/ProcessWaveforms.cpp`, then `si/SiGeBudget.cpp` with `"trapezoid"`, `"digitizer"`, `"compare"` or `"bootstrap"`.
+- **Si.** `si/ProcessWaveforms.cpp`, then `si/SiGeBudget.cpp`.
 - **Data.** The raw PSI waveforms in `/labdata/PSI/{CdTe,Si}` are read only; the processed trees are in `/labdata/ANSG/PSI/processed/{CdTe,Si}/features`. Line energies and escape tables shared by the three analyses are in `include/ReferenceLines.hpp`.
 <!---->
 ## CZT (`czt/`)
@@ -64,12 +63,11 @@ The CdTe (DT5780 channel 1) on `PulseHeightProcessor` energies, in rise-time sli
 <!---->
 ## PSI Si (`si/`)
 <!---->
-The Si (DT5780 channel 0), the collaborator's way: one Gaussian on a linear background over 66.5–71 keV in the summed main Ge runs (10/10–10/12; BeamTurnOn_4 of 10/09 is outside the result), calibrated with Am-241 from the source runs and the beam runs' own Pb Kα (cal A). Errors: fit, calibration offset and slope, background (|linear − flat|), window (RMS over 15 windows).
+The Si (DT5780 channel 0) on the trapezoid of the processed waveforms (rise 4 µs, flat top 1 µs, baseline up to 75 samples before the trigger; `si/SiShapingScan.cpp` chose it by the Am and Pb Kα widths), the collaborator's way: one Gaussian on a linear background over 66.5–71 keV in the summed main Ge runs (10/10–10/12; BeamTurnOn_4 of 10/09 is outside the result), calibrated with Am-241 from the source runs and the beam runs' own Pb Kα (cal A). Errors: fit, calibration offset and slope, background (|linear − flat|), window (RMS over 15 windows).
 <!---->
-- **Trapezoid** (rise 4 µs, flat top 1 µs, baseline up to 75 samples before the trigger; `si/SiShapingScan.cpp` chose it by the Am and Pb Kα widths): 68.7648 ± 0.0205 keV (fit 17.2, calibration 2.2, background 10.6, window 2.5 eV).
-- **The digitiser's own energy** of the same records: 68.7698 ± 0.0196 keV, as the earlier list-mode analysis (68.7697).
-- **The choice between them is not a systematic**: on the same records they differ by −4.9 ± 15.1 eV (`SiGeBudget("bootstrap")`), each seeing much of its own background fluctuation. For the trapezoid: steadier Pb Kα1 run to run (χ² 6.4/7 against 18.1/7), per-run Ge χ² 9.8/6 against 13.9/6, physical per-run widths, no channel comb; against it, a wider Ge line (270 against 253 eV). Open (Plan 6).
-- **Checks** (trapezoid / digitiser, eV from cal A): cal B (Am + Ba-133) +5.0 / +1.8; per-day mean −5.9 / −2.8; without GeTarget_1 −5.5 / −6.0; with the W Kβ group −10.4 / −12.6; quadratic cal B −6.5 / −6.8 against linear cal B; isolated records +2.3 / +3.6; the 53.44 keV line 53.4201 ± 0.0319 / 53.4387 ± 0.0409 keV.
+- **Result** 68.7648 ± 0.0205 keV (fit 17.2, calibration 2.2, background 10.6, window 2.5 eV).
+- **The digitiser's on-board energy is not used.** On the same records it read 68.7698 ± 0.0196 keV, −4.9 ± 15.1 eV from the trapezoid by bootstrap, so the choice is not a systematic. The trapezoid has the steadier Pb Kα1 run to run (χ² 6.4/7 against 18.1/7), per-run Ge χ² 9.8/6 against 13.9/6, physical per-run widths and no channel comb.
+- **Checks** (eV from cal A): cal B (Am + Ba-133) +5.0; per-day mean −5.9; without GeTarget_1 −5.5; with the W Kβ group −10.4; quadratic cal B −6.5 against linear cal B; isolated records +2.3; the 53.44 keV line 53.4201 ± 0.0319 keV.
 - **GeTarget_1** (the first 1.6 h of the 10/10 acquisition) reads 2.9σ high, but the seven runs give χ² 9.8/6 and nothing besides its value argues for dropping it.
 - **The collaborator's Si-1** averages six day/night runs from 10/09 to 10/12, so it includes 10/09.
 - **Records whose baseline sits at the bottom of the ADC range** are dropped (`CORRECTIONS.md`).
@@ -89,5 +87,5 @@ The Si (DT5780 channel 0), the collaborator's way: one Gaussian on a linear back
 3. **01/16** (BLUE weight 0.057; without it the quoted value moves −1.8 eV to 68.7515 ± 0.0210 keV): its residual runs from −5 counts/s at 62 keV to 0 at 71 keV, it is the highest-rate run (26–34k counts/s per crystal), and no line appears in both its runs to check the source-run calibration. Decide whether it stays.
 4. **The in-situ fit on real background**: running the halves procedure on several synthetic background runs, each held fixed through its trials, would measure the spread the shared fluctuation causes; a real-background effect would show beyond it.
 5. **The CdTe extrapolation term**: the full curvature-free shift or the curvature's quadrature cost, and whether to move the slice edges off the rise estimator's sawtooth peaks (280, 300, 320 ns).
-6. **The Si result**: quote the trapezoid or the digitiser energy; then whether the Si joins the combination, and with which correlations (the Si and CdTe share the PSI beam time and the Pb Kα and Am reference energies, not the calibration fits).
+6. **The Si in the combination**: whether it joins, and with which correlations (the Si and CdTe share the PSI beam time and the Pb Kα and Am reference energies, not the calibration fits).
 7. **Write-up**: the step-by-step move from 68.7502 keV (`CORRECTIONS.md`), with each step's size measured.

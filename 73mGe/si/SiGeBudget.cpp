@@ -1,7 +1,6 @@
-// The 68.75 keV 72Ge(n,g) line in the PSI Amptek Si, from the processed
-// waveforms (ProcessWaveforms.cpp), in either energy of the same records:
-// the trapezoid ("trapezoid") or the digitiser's own on-board energy
-// ("digitizer"). Done the collaborator's way: a Gaussian on a linear
+// The 68.75 keV 72Ge(n,g) line in the PSI Amptek Si, from the trapezoid of
+// the processed waveforms (ProcessWaveforms.cpp; the digitiser's own on-board
+// energy is not used). Done the collaborator's way: a Gaussian on a linear
 // background over 66.5-71 keV, calibrated with Am-241 59.5409 keV (source
 // runs) and the beam runs' own Pb Ka2/Ka1 (cal A, the result). Alternatives:
 // Am-241 and Ba-133 53.1622, 79.6142, 80.9979 keV (cal B, source lines
@@ -13,16 +12,11 @@
 // group from the collimator, the 53.44 keV line, calibration variants,
 // isolated events, and the run-to-run stability of the line positions.
 //
-// Writes results/si_ge_<energy>.result, the spectra to
-// /labdata/ANSG/PSI/processed/Si/ge_spectra_<energy>.root, and the figures
-// to plots/studies/psi_si/ge_<energy>. "compare" (after both) draws the two
-// energies' Ge spectra together; "bootstrap" measures how far two estimates
-// of the same records scatter against each other (Bootstrap()).
+// Writes results/si_ge.result, the spectra to
+// /labdata/ANSG/PSI/processed/Si/ge_spectra.root, and the figures to
+// plots/si/ge_budget.
 //
-// Usage: root -b -q 'SiGeBudget.cpp+("trapezoid")'
-//        root -b -q 'SiGeBudget.cpp+("digitizer")'
-//        root -b -q 'SiGeBudget.cpp+("compare")'
-//        root -b -q 'SiGeBudget.cpp+("bootstrap", <replicas>)'
+// Usage: root -b -q 'SiGeBudget.cpp+'
 #include "SiAnalysis.hpp"
 
 #include <TBox.h>
@@ -32,7 +26,6 @@
 #include <TLegend.h>
 #include <TLine.h>
 #include <TPad.h>
-#include <TRandom3.h>
 #include <TVectorD.h>
 
 #include <fstream>
@@ -575,18 +568,12 @@ void DrawSumFit(TH1D *h, const Calibration &cal, const GeFit &lin,
   pulls->Draw("HIST");
   TLine *zero = new TLine(show_lo, 0, data->GetXaxis()->GetXmax(), 0);
   zero->Draw();
-  legend_pad->cd();
-  TLegend *leg = new TLegend(0.05, 0.92, 0.98, 0.62);
-  leg->SetBorderSize(1);
-  leg->SetFillColor(kWhite);
-  leg->SetFillStyle(1001);
-  leg->SetTextSize(30);
-  leg->SetTextFont(43);
+  TLegend *leg =
+      PlottingUtils::AddSideLegend(upper, legend_pad, (Int_t)labels.size());
   leg->AddEntry(data, labels[0], "lep");
   leg->AddEntry(g_lin, labels[1], "l");
   leg->AddEntry(g_flat, labels[2], "l");
   leg->AddEntry(g_background, labels[3], "l");
-  leg->Draw();
   PlottingUtils::ScaleFigure(plot);
   PlottingUtils::SaveFigure(canvas, "psi_si_ge_sum_fit", "",
                             PlotSaveOptions::kLINEAR);
@@ -725,19 +712,13 @@ void DrawPerRun(const std::vector<RunValue> &values, Double_t sigma_fixed_ev,
   g_free->Draw("P SAME");
   g_fixed->Draw("P SAME");
   frame->Draw("AXIS SAME");
-  legend_pad->cd();
-  TLegend *leg = new TLegend(0.05, 0.92, 0.98, 0.55);
-  leg->SetBorderSize(1);
-  leg->SetFillColor(kWhite);
-  leg->SetFillStyle(1001);
-  leg->SetTextSize(30);
-  leg->SetTextFont(43);
+  TLegend *leg =
+      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
   leg->AddEntry(g_free, labels[0], "lep");
   leg->AddEntry(g_fixed, labels[1], "lep");
   leg->AddEntry(free_line, labels[2], "l");
   leg->AddEntry(fixed_line, labels[3], "l");
   leg->AddEntry(band, labels[4], "f");
-  leg->Draw();
   PlottingUtils::SaveFigure(canvas, "psi_si_ge_per_run", "",
                             PlotSaveOptions::kLINEAR);
 }
@@ -798,17 +779,15 @@ void PrintStability(const TString &label, const std::vector<Double_t> &ch,
             << extra * ev_per_ch << " eV)" << std::endl;
 }
 
-TString SpectraFile(Estimator estimator) {
-  return TString(SPECTRA_DIR) + "/ge_spectra_" + EstimatorName(estimator) +
-         ".root";
-}
+TString SpectraFile() { return TString(SPECTRA_DIR) + "/ge_spectra.root"; }
 
-void WriteResult(const TString &path, Estimator estimator,
-                 const GeEnergy &result, const GeEnergy &cal_b,
-                 const GeEnergy &cal_c, const Combined &days_b) {
+void WriteResult(const TString &path, const GeEnergy &result,
+                 const GeEnergy &cal_b, const GeEnergy &cal_c,
+                 const Combined &days_b) {
   std::ofstream out(path.Data());
-  out << "# Si (PSI) Ge energy, SiGeBudget.cpp, " << EstimatorName(estimator)
-      << " energy; summed main runs, Am + Pb Ka calibration; keV" << std::endl;
+  out << "# Si (PSI) Ge energy, SiGeBudget.cpp, trapezoid; summed main runs, "
+         "Am + Pb Ka calibration; keV"
+      << std::endl;
   out << std::fixed << std::setprecision(6);
   out << "ge " << result.e << std::endl;
   out << "total " << result.total << std::endl;
@@ -825,7 +804,7 @@ void WriteResult(const TString &path, Estimator estimator,
 
 // ----------------------------------------------------------------- budget
 
-void Budget(Estimator estimator, const TString &project_root) {
+void Budget(const TString &project_root) {
   // ------------------------------------------------------------ spectra
   std::vector<GeRun> runs = GeRuns();
   std::vector<TH1D *> h_run;
@@ -835,7 +814,7 @@ void Budget(Estimator estimator, const TString &project_root) {
   Double_t seconds_main = 0;
   for (size_t i = 0; i < runs.size(); i++) {
     TH1D *h = NewSpectrum("ge_" + runs[i].label);
-    FillSpectrum(h, runs[i].run, estimator, Selection());
+    FillSpectrum(h, runs[i].run, Selection());
     h_run.push_back(h);
     Double_t seconds = 0;
     Long64_t entries = 0;
@@ -857,12 +836,12 @@ void Budget(Estimator estimator, const TString &project_root) {
   }
   std::cout << "SIGE RUN main total span " << std::setprecision(0)
             << seconds_main << " s" << std::endl;
-  TH1D *h_am = SumSpectrum(AmRuns(0), "am_all", estimator);
-  TH1D *h_ba = SumSpectrum(BaRuns(0), "ba_all", estimator);
+  TH1D *h_am = SumSpectrum(AmRuns(0), "am_all");
+  TH1D *h_ba = SumSpectrum(BaRuns(0), "ba_all");
   std::map<Int_t, TH1D *> h_am_day, h_ba_day;
   for (Int_t d = 10; d <= 13; d++) {
-    h_am_day[d] = SumSpectrum(AmRuns(d), Form("am_d%d", d), estimator);
-    h_ba_day[d] = SumSpectrum(BaRuns(d), Form("ba_d%d", d), estimator);
+    h_am_day[d] = SumSpectrum(AmRuns(d), Form("am_d%d", d));
+    h_ba_day[d] = SumSpectrum(BaRuns(d), Form("ba_d%d", d));
   }
 
   // ------------------------------------------------------ calibrations
@@ -1036,8 +1015,7 @@ void Budget(Estimator estimator, const TString &project_root) {
     for (size_t i = 0; i < runs.size(); i++)
       if (runs[i].main)
         main_runs.push_back(runs[i].run);
-    TH1D *h_isolated =
-        SumSpectrum(main_runs, "ge_sum_isolated", estimator, isolated);
+    TH1D *h_isolated = SumSpectrum(main_runs, "ge_sum_isolated", isolated);
     Point k2, k1;
     FitPb(h_isolated, nominal, k2, k1);
     std::vector<Point> p;
@@ -1059,8 +1037,8 @@ void Budget(Estimator estimator, const TString &project_root) {
     delete h_isolated;
   }
 
-  // The two rise bands alone, each on its own Am + Pb Ka calibration: the
-  // trapezoid's gain to the digitiser's differs by 0.1% between them.
+  // The two rise bands alone, each on its own Am + Pb Ka calibration (the
+  // trapezoid's gain differs by 0.1% between them).
   {
     const Int_t n_bands = 2;
     const Double_t band_lo[n_bands] = {150, 280}, band_hi[n_bands] = {230, 360};
@@ -1072,8 +1050,8 @@ void Budget(Estimator estimator, const TString &project_root) {
       Selection band;
       band.rise_min_ns = band_lo[b];
       band.rise_max_ns = band_hi[b];
-      TH1D *h_band = SumSpectrum(main_runs, "ge_sum_band", estimator, band);
-      TH1D *h_am_band = SumSpectrum(AmRuns(0), "am_band", estimator, band);
+      TH1D *h_band = SumSpectrum(main_runs, "ge_sum_band", band);
+      TH1D *h_am_band = SumSpectrum(AmRuns(0), "am_band", band);
       Point am_band = FitAm(h_am_band, nominal), k2, k1;
       FitPb(h_band, nominal, k2, k1);
       std::vector<Point> p;
@@ -1366,7 +1344,7 @@ void Budget(Estimator estimator, const TString &project_root) {
     std::vector<Double_t> am_ch, am_err, ba_ch, ba_err;
     for (size_t i = 0; i < am_runs.size(); i++) {
       TH1D *h = NewSpectrum("stability_am");
-      FillSpectrum(h, am_runs[i], estimator, Selection());
+      FillSpectrum(h, am_runs[i], Selection());
       Point p = FitAm(h, nominal);
       am_ch.push_back(p.ch);
       am_err.push_back(p.ch_err);
@@ -1374,7 +1352,7 @@ void Budget(Estimator estimator, const TString &project_root) {
     }
     for (size_t i = 0; i < ba_runs.size(); i++) {
       TH1D *h = NewSpectrum("stability_ba");
-      FillSpectrum(h, ba_runs[i], estimator, Selection());
+      FillSpectrum(h, ba_runs[i], Selection());
       Point p80, p81;
       FitBa8081(h, nominal, p80, p81);
       ba_ch.push_back(p81.ch);
@@ -1390,16 +1368,12 @@ void Budget(Estimator estimator, const TString &project_root) {
   // ------------------------------------------------------------- output
   DrawCalibration(cal_a, cal_b, all_lines);
   DrawSumFit(h_sum, cal_a, lin, flat, sum_a,
-             EstimatorName(estimator) == "trapezoid"
-                 ? "Ge runs, trapezoid, Am + Pb K#alpha calibration"
-                 : "Ge runs, digitiser energy, Am + Pb K#alpha calibration");
+             "Ge runs, Am + Pb K#alpha calibration");
   DrawPerRun(plot_values, 1000 * sigma_ge_kev, sum_a.e, sum_a.total, ca.e,
              ca_fix.e);
-  WriteResult(project_root + "/results/si_ge_" + EstimatorName(estimator) +
-                  ".result",
-              estimator, sum_a, sum_b, sum_c, db);
+  WriteResult(project_root + "/results/si_ge.result", sum_a, sum_b, sum_c, db);
 
-  TFile out(SpectraFile(estimator), "RECREATE");
+  TFile out(SpectraFile(), "RECREATE");
   TVectorD calibration(3);
   calibration[0] = cal_a.c0;
   calibration[1] = cal_a.c1;
@@ -1414,253 +1388,12 @@ void Budget(Estimator estimator, const TString &project_root) {
   out.Close();
 }
 
-// ---------------------------------------------------------------- compare
-
-// The two energies' summed Ge spectra, each on its own Am + Pb Ka
-// calibration, on one figure.
-void Compare() {
-  const Estimator estimators[2] = {kDigitizer, kTrapezoid};
-  const Int_t colors[2] = {kGray + 2, kRed + 1};
-  const char *labels[2] = {"Digitiser energy", "Trapezoid"};
-  const Int_t rebin = 2;
-  const Double_t show_lo = 56.0, show_hi = 77.0;
-  TH1D *spectra[2] = {nullptr, nullptr};
-  Double_t bin_ev = 0;
-  for (Int_t k = 0; k < 2; k++) {
-    TFile in(SpectraFile(estimators[k]));
-    TH1D *h = static_cast<TH1D *>(in.Get("ge_sum"));
-    TVectorD *calibration = static_cast<TVectorD *>(in.Get("cal_a"));
-    if (!h || !calibration) {
-      std::cout << "SIGE COMPARE missing " << SpectraFile(estimators[k])
-                << std::endl;
-      return;
-    }
-    h->SetDirectory(nullptr);
-    Calibration cal;
-    cal.c0 = (*calibration)[0];
-    cal.c1 = (*calibration)[1];
-    cal.pivot = (*calibration)[2];
-    spectra[k] = ToKeV(h, cal, rebin, show_lo, show_hi, Form("compare_%d", k));
-    bin_ev = 1000.0 * cal.c1 * rebin;
-  }
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
-  for (Int_t k = 0; k < 2; k++) {
-    PlottingUtils::ConfigureHistogram(
-        spectra[k], colors[k], Form(";Energy [keV];Counts / %.0f eV", bin_ev));
-    spectra[k]->SetFillStyle(0);
-  }
-  spectra[0]->SetMinimum(
-      0.8 * TMath::Min(spectra[0]->GetMinimum(), spectra[1]->GetMinimum()));
-  spectra[0]->SetMaximum(
-      1.25 * TMath::Max(spectra[0]->GetMaximum(), spectra[1]->GetMaximum()));
-  spectra[0]->GetYaxis()->SetMaxDigits(3);
-  spectra[0]->Draw("HIST");
-  spectra[1]->Draw("HIST SAME");
-  TLegend *legend = PlottingUtils::AddLegend(0.2, 0.5, 0.6, 0.78);
-  for (Int_t k = 0; k < 2; k++)
-    legend->AddEntry(spectra[k], labels[k], "l");
-  legend->Draw();
-  PlottingUtils::SaveFigure(canvas, "psi_si_ge_energies", "",
-                            PlotSaveOptions::kLINEAR);
-}
-
-// ------------------------------------------------------------- bootstrap
-
-// One record of the summed main Ge runs in both energies (digitiser
-// channels) and its rise time.
-struct RecordPair {
-  Float_t trapezoid, digitizer, rise_ns;
-};
-
-std::vector<RecordPair> LoadPairs(const std::vector<TString> &runs) {
-  std::vector<RecordPair> pairs;
-  for (size_t r = 0; r < runs.size(); r++) {
-    TFile file(FeaturesFile(runs[r]));
-    TTree *tree = static_cast<TTree *>(file.Get("features"));
-    Double_t digitizer_energy = 0;
-    Float_t trapezoid_height = 0, baseline_rms = 0, rise_time = 0;
-    tree->SetBranchStatus("*", 0);
-    tree->SetBranchStatus("digitizer_energy", 1);
-    tree->SetBranchStatus("trapezoid_height", 1);
-    tree->SetBranchStatus("baseline_rms", 1);
-    tree->SetBranchStatus("rise_time", 1);
-    tree->SetBranchAddress("digitizer_energy", &digitizer_energy);
-    tree->SetBranchAddress("trapezoid_height", &trapezoid_height);
-    tree->SetBranchAddress("baseline_rms", &baseline_rms);
-    tree->SetBranchAddress("rise_time", &rise_time);
-    for (Long64_t i = 0; i < tree->GetEntries(); i++) {
-      tree->GetEntry(i);
-      if (baseline_rms < FLOOR_BASELINE_RMS)
-        continue;
-      Float_t trapezoid = trapezoid_height / TRAPEZOID_PER_CHANNEL;
-      Bool_t in_range = (trapezoid > 1550 && trapezoid < 1900) ||
-                        (digitizer_energy > 1550 && digitizer_energy < 1900);
-      if (!in_range)
-        continue;
-      RecordPair pair = {trapezoid, Float_t(digitizer_energy),
-                         Float_t(SAMPLE_NS * rise_time)};
-      pairs.push_back(pair);
-    }
-  }
-  return pairs;
-}
-
-// Ge on the Am + Pb Ka calibration of a summed spectrum, Am fixed.
-Double_t GeOnOwnPb(TH1D *h, const Point &am) {
-  LineSetting nominal;
-  Point ka2, ka1;
-  FitPb(h, nominal, ka2, ka1);
-  std::vector<Point> points;
-  points.push_back(am);
-  points.push_back(ka2);
-  points.push_back(ka1);
-  Calibration cal = Calibrate(points);
-  return cal.Energy(FitGe(h, cal, WIN_LO, WIN_HI, 1).mu);
-}
-
-// The two energies of the same records are two estimates that scatter
-// against each other: every replica gives each record of the summed main
-// runs a Poisson(1) weight, the same in both energies, and refits Pb Ka and
-// Ge in each (Am fixed at its nominal fit). The rms of trapezoid - digitiser
-// over the replicas is the scale against which their observed difference is
-// judged, for all records and for the slow rise band.
-void Bootstrap(Int_t n_replicas, const TString &project_root) {
-  std::vector<GeRun> runs = GeRuns();
-  std::vector<TString> main_runs;
-  for (size_t i = 0; i < runs.size(); i++)
-    if (runs[i].main)
-      main_runs.push_back(runs[i].run);
-  std::vector<RecordPair> pairs = LoadPairs(main_runs);
-  std::cout << "SIGE BOOT " << pairs.size() << " records near the lines"
-            << std::endl;
-  // Per record, in the Ge window: the two energies' difference, its median
-  // and its robust width (half the 16-84% range).
-  {
-    std::vector<Double_t> d;
-    for (size_t i = 0; i < pairs.size(); i++)
-      if (pairs[i].digitizer > 1594 && pairs[i].digitizer < 1702)
-        d.push_back(pairs[i].trapezoid - pairs[i].digitizer);
-    std::sort(d.begin(), d.end());
-    Double_t ev_per_ch = 1000.0 / DPP_PER_KEV;
-    Double_t median = d[d.size() / 2];
-    Double_t width =
-        0.5 * (d[Long64_t(0.84 * d.size())] - d[Long64_t(0.16 * d.size())]);
-    std::cout << "SIGE BOOT per record in the Ge window (" << d.size()
-              << "): trapezoid - digitiser median " << std::fixed
-              << std::setprecision(1) << median * ev_per_ch
-              << " eV, robust width " << width * ev_per_ch << " eV"
-              << std::endl;
-  }
-  LineSetting nominal;
-  Point am[2];
-  for (Int_t e = 0; e < 2; e++) {
-    TH1D *h_am =
-        SumSpectrum(AmRuns(0), "boot_am", e == 0 ? kTrapezoid : kDigitizer);
-    am[e] = FitAm(h_am, nominal);
-    delete h_am;
-  }
-  const Int_t n_sets = 2;
-  const char *set_names[n_sets] = {"all", "rise 280-360 ns"};
-  TRandom3 random(20261024);
-  std::vector<Double_t> difference[n_sets];
-  Double_t observed[n_sets] = {0, 0};
-  for (Int_t replica = -1; replica < n_replicas; replica++) {
-    TH1D *h[n_sets][2];
-    for (Int_t s = 0; s < n_sets; s++)
-      for (Int_t e = 0; e < 2; e++)
-        h[s][e] = NewSpectrum(Form("boot_%d_%d", s, e));
-    for (size_t i = 0; i < pairs.size(); i++) {
-      Int_t weight = replica < 0 ? 1 : random.Poisson(1.0);
-      if (weight == 0)
-        continue;
-      Bool_t slow = pairs[i].rise_ns >= 280 && pairs[i].rise_ns < 360;
-      for (Int_t s = 0; s < n_sets; s++) {
-        if (s == 1 && !slow)
-          continue;
-        h[s][0]->Fill(pairs[i].trapezoid, weight);
-        h[s][1]->Fill(pairs[i].digitizer, weight);
-      }
-    }
-    for (Int_t s = 0; s < n_sets; s++) {
-      Double_t d = GeOnOwnPb(h[s][0], am[0]) - GeOnOwnPb(h[s][1], am[1]);
-      if (replica < 0)
-        observed[s] = d;
-      else
-        difference[s].push_back(d);
-      for (Int_t e = 0; e < 2; e++)
-        delete h[s][e];
-    }
-  }
-  for (Int_t s = 0; s < n_sets; s++) {
-    Double_t mean = TMath::Mean(difference[s].size(), difference[s].data());
-    Double_t rms = TMath::RMS(difference[s].size(), difference[s].data());
-    std::cout << "SIGE BOOT " << std::left << std::setw(16) << set_names[s]
-              << std::right << " trapezoid - digitiser " << std::showpos
-              << std::fixed << std::setprecision(1) << 1000 * observed[s]
-              << std::noshowpos << " +- " << 1000 * rms << " eV ("
-              << std::showpos << observed[s] / rms << std::noshowpos
-              << " sigma from agreement; " << n_replicas << " replicas, mean "
-              << std::showpos << 1000 * mean << std::noshowpos << " eV)"
-              << std::endl;
-  }
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
-  TH1D *h_all = new TH1D("boot_difference", "", 30, -45, 45);
-  TH1D *h_slow = new TH1D("boot_difference_slow", "", 30, -45, 45);
-  h_all->SetDirectory(nullptr);
-  h_slow->SetDirectory(nullptr);
-  for (Int_t i = 0; i < n_replicas; i++) {
-    h_all->Fill(1000 * difference[0][i]);
-    h_slow->Fill(1000 * difference[1][i]);
-  }
-  PlottingUtils::ConfigureHistogram(
-      h_all, kGray + 2, ";Trapezoid #minus digitiser Ge [eV];Replicas / 3 eV");
-  PlottingUtils::ConfigureHistogram(h_slow, kAzure + 2, "");
-  h_all->SetFillStyle(0);
-  h_slow->SetFillStyle(0);
-  Double_t y_top = TMath::Max(h_all->GetMaximum(), h_slow->GetMaximum());
-  h_all->SetMaximum(1.9 * y_top);
-  h_all->Draw("HIST");
-  h_slow->Draw("HIST SAME");
-  TLine *line_all = new TLine(1000 * observed[0], 0, 1000 * observed[0], y_top);
-  TLine *line_slow =
-      new TLine(1000 * observed[1], 0, 1000 * observed[1], y_top);
-  line_all->SetLineColor(kGray + 2);
-  line_slow->SetLineColor(kAzure + 2);
-  line_all->SetLineWidth(3);
-  line_slow->SetLineWidth(3);
-  line_slow->SetLineStyle(2);
-  line_all->Draw();
-  line_slow->Draw();
-  TLine *agreement = new TLine(0, 0, 0, y_top);
-  agreement->SetLineColor(kBlack);
-  agreement->SetLineStyle(3);
-  agreement->SetLineWidth(2);
-  agreement->Draw();
-  TLegend *legend = PlottingUtils::AddLegend(0.16, 0.62, 0.64, 0.9);
-  legend->AddEntry(h_all, "All records, replicas", "l");
-  legend->AddEntry(line_all, "All records, observed", "l");
-  legend->AddEntry(h_slow, "Rise 280-360 ns, replicas", "l");
-  legend->AddEntry(line_slow, "Rise 280-360 ns, observed", "l");
-  legend->AddEntry(agreement, "The two energies agree", "l");
-  legend->Draw();
-  PlottingUtils::SaveFigure(canvas, "psi_si_energy_bootstrap", "",
-                            PlotSaveOptions::kLINEAR);
-}
-
 } // namespace SiGe
 
-void SiGeBudget(const char *energy = "trapezoid", Int_t n_replicas = 200) {
+void SiGeBudget() {
   using namespace SiGe;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  TString mode = energy;
-  Bool_t both = mode == "compare" || mode == "bootstrap";
-  TString plot_dir = project_root + "/plots/studies/psi_si/" +
-                     (both ? TString("ge_compare") : "ge_" + mode);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, plot_dir, SPECTRA_DIR);
-  if (mode == "compare")
-    Compare();
-  else if (mode == "bootstrap")
-    Bootstrap(n_replicas, project_root);
-  else
-    Budget(EstimatorFromName(mode), project_root);
+  InitUtils::SetROOTPreferences(
+      PlotSaveFormat::kPNG, project_root + "/plots/si/ge_budget", SPECTRA_DIR);
+  Budget(project_root);
 }

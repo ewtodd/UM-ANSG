@@ -137,16 +137,6 @@ const Double_t DPP_PER_KEV = 23.98;
 // Trapezoid ADC per digitiser channel in the source runs (SiWaveformLook).
 const Double_t TRAPEZOID_PER_CHANNEL = 4.163;
 
-enum Estimator { kTrapezoid, kDigitizer };
-
-inline TString EstimatorName(Estimator estimator) {
-  return estimator == kTrapezoid ? "trapezoid" : "digitizer";
-}
-
-inline Estimator EstimatorFromName(const TString &name) {
-  return name == "digitizer" ? kDigitizer : kTrapezoid;
-}
-
 // Optional event selection: a time window in seconds from the run's first
 // record, isolation (no other accepted record within min_gap_us), and a
 // window on the 10-90% rise time in ns.
@@ -165,8 +155,8 @@ inline TH1D *NewSpectrum(const TString &name) {
   return h;
 }
 
-// One run's spectrum added to h, in digitiser channels.
-inline void FillSpectrum(TH1D *h, const TString &run, Estimator estimator,
+// One run's trapezoid spectrum added to h, in digitiser channels.
+inline void FillSpectrum(TH1D *h, const TString &run,
                          const Selection &selection) {
   TFile file(FeaturesFile(run));
   TTree *tree = static_cast<TTree *>(file.Get("features"));
@@ -175,16 +165,13 @@ inline void FillSpectrum(TH1D *h, const TString &run, Estimator estimator,
     return;
   }
   ULong64_t timestamp = 0;
-  Double_t digitizer_energy = 0;
   Float_t trapezoid_height = 0, baseline_rms = 0, rise_time = 0;
   tree->SetBranchStatus("*", 0);
   tree->SetBranchStatus("timestamp", 1);
-  tree->SetBranchStatus("digitizer_energy", 1);
   tree->SetBranchStatus("trapezoid_height", 1);
   tree->SetBranchStatus("baseline_rms", 1);
   tree->SetBranchStatus("rise_time", 1);
   tree->SetBranchAddress("timestamp", &timestamp);
-  tree->SetBranchAddress("digitizer_energy", &digitizer_energy);
   tree->SetBranchAddress("trapezoid_height", &trapezoid_height);
   tree->SetBranchAddress("baseline_rms", &baseline_rms);
   tree->SetBranchAddress("rise_time", &rise_time);
@@ -221,19 +208,15 @@ inline void FillSpectrum(TH1D *h, const TString &run, Estimator estimator,
       if (gap_before < selection.min_gap_us || gap_after < selection.min_gap_us)
         continue;
     }
-    if (estimator == kTrapezoid)
-      h->Fill(trapezoid_height / TRAPEZOID_PER_CHANNEL);
-    else
-      h->Fill(digitizer_energy);
+    h->Fill(trapezoid_height / TRAPEZOID_PER_CHANNEL);
   }
 }
 
 inline TH1D *SumSpectrum(const std::vector<TString> &runs, const TString &name,
-                         Estimator estimator,
                          const Selection &selection = Selection()) {
   TH1D *h = NewSpectrum(name);
   for (size_t i = 0; i < runs.size(); i++)
-    FillSpectrum(h, runs[i], estimator, selection);
+    FillSpectrum(h, runs[i], selection);
   return h;
 }
 

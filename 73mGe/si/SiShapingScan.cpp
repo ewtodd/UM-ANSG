@@ -4,8 +4,7 @@
 // rise and flat-top times and two baselines (the record's first 350 samples,
 // or every sample up to 75 before the nominal trigger), each processed
 // through Analysis-Utilities' PulseHeightProcessor. The widths are fitted as
-// in the Ge analysis (SiAnalysis.hpp), in digitiser channels, against the
-// digitiser's own energy of the same records.
+// in the Ge analysis (SiAnalysis.hpp), in digitiser channels.
 //
 // Usage: root -b -q 'SiShapingScan.cpp+(<rise>, <flat top>, <near baseline>)'
 //        processes one setting; root -b -q 'SiShapingScan.cpp+' fits and
@@ -15,7 +14,6 @@
 #include <TCanvas.h>
 #include <TGraphErrors.h>
 #include <TLegend.h>
-#include <TLine.h>
 
 namespace SiScan {
 
@@ -74,25 +72,21 @@ void Process(Int_t rise, Int_t flat, Bool_t near_baseline) {
   }
 }
 
-// A spectrum of one scan file in digitiser channels.
-TH1D *ScanSpectrum(const TString &file, Estimator estimator,
-                   const TString &name) {
+// The trapezoid spectrum of one scan file in digitiser channels.
+TH1D *ScanSpectrum(const TString &file, const TString &name) {
   TH1D *h = NewSpectrum(name);
   TFile in(file);
   TTree *tree = static_cast<TTree *>(in.Get("features"));
   if (!tree)
     return h;
-  Double_t digitizer_energy = 0;
   Float_t trapezoid_height = 0, baseline_rms = 0;
-  tree->SetBranchAddress("digitizer_energy", &digitizer_energy);
   tree->SetBranchAddress("trapezoid_height", &trapezoid_height);
   tree->SetBranchAddress("baseline_rms", &baseline_rms);
   for (Long64_t i = 0; i < tree->GetEntries(); i++) {
     tree->GetEntry(i);
     if (baseline_rms < FLOOR_BASELINE_RMS)
       continue;
-    h->Fill(estimator == kTrapezoid ? trapezoid_height / TRAPEZOID_PER_CHANNEL
-                                    : digitizer_energy);
+    h->Fill(trapezoid_height / TRAPEZOID_PER_CHANNEL);
   }
   return h;
 }
@@ -120,7 +114,6 @@ void Summarise() {
   std::vector<ScanRun> runs = ScanRuns();
   Int_t n_runs = (Int_t)runs.size();
   std::vector<TGraphErrors *> graphs[2][N_FLAT];
-  std::vector<Double_t> digitizer_width(n_runs, 0), digitizer_err(n_runs, 0);
   for (Int_t b = 0; b < 2; b++)
     for (Int_t f = 0; f < N_FLAT; f++)
       for (Int_t r = 0; r < n_runs; r++)
@@ -135,24 +128,18 @@ void Summarise() {
           TString file = ScanFile(runs[r], setting);
           if (gSystem->AccessPathName(file))
             continue;
-          TH1D *h = ScanSpectrum(file, kTrapezoid, "scan_" + setting);
+          TH1D *h = ScanSpectrum(file, "scan_" + setting);
           Double_t err = 0;
           Double_t width = LineWidth(h, runs[r].beam, err);
           TGraphErrors *g = graphs[b][f][r];
           Int_t point = g->GetN();
           g->SetPoint(point, SAMPLE_NS * RISE_SAMPLES[k] / 1000.0, width);
           g->SetPointError(point, 0, err);
-          if (digitizer_width[r] == 0) {
-            TH1D *d = ScanSpectrum(file, kDigitizer, "scan_dpp");
-            digitizer_width[r] = LineWidth(d, runs[r].beam, digitizer_err[r]);
-            delete d;
-          }
           std::cout << "SI-SHAPING " << std::left << std::setw(20) << setting
                     << std::right << " " << std::setw(7) << runs[r].tag
                     << (runs[r].beam ? " Pb Ka" : " Am 59") << " sigma "
                     << std::fixed << std::setprecision(1) << width << " +- "
-                    << err << " eV (digitiser " << digitizer_width[r] << " +- "
-                    << digitizer_err[r] << ")  entries " << std::setprecision(0)
+                    << err << " eV  entries " << std::setprecision(0)
                     << h->GetEntries() << std::endl;
           delete h;
         }
@@ -163,7 +150,7 @@ void Summarise() {
   for (Int_t r = 0; r < n_runs; r++) {
     TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
     TLegend *legend = PlottingUtils::AddLegend(0.45, 0.93, 0.62, 0.92);
-    Double_t y_lo = digitizer_width[r], y_hi = digitizer_width[r];
+    Double_t y_lo = 1e9, y_hi = -1e9;
     for (Int_t b = 0; b < 2; b++) {
       for (Int_t f = 0; f < N_FLAT; f++) {
         TGraphErrors *g = graphs[b][f][r];
@@ -187,12 +174,6 @@ void Summarise() {
     frame->SetMaximum(y_hi);
     frame->SetStats(0);
     frame->Draw("AXIS");
-    TLine *digitizer =
-        new TLine(1.5, digitizer_width[r], 6.5, digitizer_width[r]);
-    digitizer->SetLineStyle(2);
-    digitizer->SetLineWidth(2);
-    digitizer->Draw();
-    legend->AddEntry(digitizer, "Digitiser energy", "l");
     for (Int_t b = 0; b < 2; b++) {
       for (Int_t f = 0; f < N_FLAT; f++) {
         TGraphErrors *g = graphs[b][f][r];
@@ -221,8 +202,7 @@ void SiShapingScan(Int_t rise = 0, Int_t flat = 0, Int_t near_baseline = 1) {
   using namespace SiScan;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots/studies/psi_si/shaping",
-                                SCAN_DIR);
+                                project_root + "/plots/si/shaping", SCAN_DIR);
   if (rise > 0)
     Process(rise, flat, near_baseline != 0);
   else
