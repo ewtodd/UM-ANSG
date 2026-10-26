@@ -12,3 +12,7 @@ ConvertBEF*
 # the CdTe and the Si) stay tracked; a new one to keep needs `git add -f`.
 results/ge_tau20_*.result
 plots/testbed/injection_*/reference/
+
+# Local ROOT outputs, and the macros and logs Geant4 runs leave beside their
+# output (the simulation and its macros live in the Geant4 repository).
+root_files/
