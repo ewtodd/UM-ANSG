@@ -1,5 +1,6 @@
-// Where in the CZT the 95.902 keV 113Cd(n,g) line is detected, per shielding
-// configuration, to test the escape simulation's two pictures (geant4/):
+// Where in the CZT the 113Cd(n,g) lines are detected, per shielding
+// configuration, to test the escape simulation's two pictures (geant4/) for
+// the 95.902 keV line:
 // captures inside the crystal, within a neutron mean free path of the faces
 // the neutrons enter, whose conversion deposits stay at the capture, against
 // photons from captures in a Cd shield, which convert within a photon
@@ -19,6 +20,14 @@
 //     bands' rate in the same ring, so pixel acceptance cancels; normalised
 //     to the central rings 3-5;
 //   - the spectrum with the windows, to check them.
+// The 558 keV line (114Cd's 2+ -> 0+) asks the same question with a photon
+// that crosses the crystal (attenuation length about 2 cm): from captures in
+// the cathode's surface layer it is absorbed mostly near the cathode, from
+// a Cd foil on the sides nearly evenly in depth and more in the edge rings.
+// Its depth and ring profiles are set against two lines from outside the
+// crystal at a similar energy in the same runs: 511 keV annihilation, and
+// 595.8 keV from captures in the Ge target in front of the cathode (signal
+// runs only).
 // Depth is reconstructed only above about 0.7 mm: the anode face itself is
 // not seen.
 //
@@ -78,6 +87,22 @@ const LineWindow PB_KBETA =
     OnGridWindow("Pb K#beta", 84.0, 88.0, 80.5, 82.5, 89.5, 91.5);
 const LineWindow AM59 =
     OnGridWindow("Am-241 59.54 keV", 58.6, 60.5, 55.5, 57.4, 61.0, 62.9);
+
+// The high-energy lines, binned at four ADC channels. A line near 500 keV
+// sits just below 511 keV, so its continuum comes from above alone (two
+// adjacent bands); the 595.8 keV line's upper band stops short of the line
+// at 608 keV.
+const LineWindow LINE558 =
+    OnGridWindow("558 keV line", 553.0, 564.0, 538.0, 546.0, 565.0, 571.0);
+const LineWindow ANNIHILATION =
+    OnGridWindow("511 keV", 506.0, 516.0, 517.0, 522.0, 522.0, 527.0);
+const LineWindow GE596 =
+    OnGridWindow("595.8 keV (Ge)", 591.0, 601.0, 580.0, 587.0, 602.0, 605.0);
+const Double_t HIGH_START_KEV = OnGrid(470.0);
+const Int_t HIGH_GROUP = 4, N_HIGH_BINS = 150;
+
+// The windows' order in every pass over the runs.
+enum { W_96, W_PB_KBETA, W_558, W_511, W_596, N_WINDOWS };
 
 const Int_t N_Z_BINS = 40;
 const Int_t PIXELS_PER_CRYSTAL = 11, N_RINGS = 6;
@@ -147,7 +172,7 @@ Profile NewProfile(const TString &tag) {
 
 // One run's single-interaction events into the spectrum and each window's
 // profile.
-void FillRun(const TString &run, TH1D *spectrum,
+void FillRun(const TString &run, TH1D *spectrum, TH1D *spectrum_high,
              const std::vector<LineWindow> &windows,
              std::vector<Profile> &profiles) {
   TFile *file = IO::OpenForReading("filtered/" + run + ".root");
@@ -191,6 +216,8 @@ void FillRun(const TString &run, TH1D *spectrum,
     Double_t e = energy * g_pixel_gain[ix][iy];
     if (spectrum)
       spectrum->Fill(e);
+    if (spectrum_high)
+      spectrum_high->Fill(e);
     Int_t ring = Ring(ix, iy);
     for (size_t w = 0; w < windows.size(); w++) {
       const LineWindow &win = windows[w];
@@ -240,39 +267,77 @@ Double_t NearCathode(TH1D *h, Double_t depth_mm) {
   return h->Integral(h->FindBin(10.0 - depth_mm + 0.001), N_Z_BINS);
 }
 
+Double_t NearCathodeError(TH1D *h, Double_t depth_mm) {
+  Double_t error = 0;
+  h->IntegralAndError(h->FindBin(10.0 - depth_mm + 0.001), N_Z_BINS, error);
+  return error;
+}
+
+// Ring profiles of several configurations, signal over background with the
+// centre at one.
+void DrawRings(const std::vector<TH1D *> &rings,
+               const std::vector<TString> &labels, const TString &name) {
+  TPad *plot = nullptr, *legend_pad = nullptr;
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
+      plot, legend_pad, (Int_t)PlottingUtils::LegendWidthPx(labels));
+  TLegend *leg =
+      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
+  const Int_t colors[6] = {kRed + 1,   kOrange + 7, kBlue + 1,
+                           kAzure + 7, kGreen + 2,  kBlack};
+  for (size_t c = 0; c < rings.size(); c++) {
+    PlottingUtils::ConfigureHistogram(
+        rings[c], colors[c % 6],
+        ";Pixel ring from the crystal edge;Signal / background, centre = 1");
+    rings[c]->SetStats(0);
+    rings[c]->SetMarkerStyle(20 + c);
+    rings[c]->SetMinimum(0.5);
+    rings[c]->SetMaximum(1.5);
+    rings[c]->Draw(c == 0 ? "e1 p" : "e1 p same");
+    leg->AddEntry(rings[c], labels[c], "pe");
+  }
+  PlottingUtils::SaveFigure(canvas, name, "", PlotSaveOptions::kLINEAR);
+}
+
 const Int_t COLORS[6] = {kBlack,    kRed + 1,   kOrange + 7,
                          kBlue + 1, kAzure + 7, kGreen + 2};
 
 void DrawDepths(const std::vector<TH1D *> &hists,
                 const std::vector<TString> &labels,
                 const std::vector<Int_t> &colors,
-                const std::vector<Int_t> &styles, const TString &name) {
+                const std::vector<Int_t> &styles, const TString &name,
+                Bool_t near_cathode = kTRUE) {
   TPad *plot = nullptr, *legend_pad = nullptr;
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
       plot, legend_pad, (Int_t)PlottingUtils::LegendWidthPx(labels), 800,
-      kTRUE);
+      near_cathode);
   TLegend *leg =
       PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
+  Double_t linear_max = 0;
+  for (size_t k = 0; k < hists.size(); k++)
+    linear_max = TMath::Max(linear_max, hists[k]->GetMaximum());
   for (size_t k = 0; k < hists.size(); k++) {
     PlottingUtils::ConfigureHistogram(
         hists[k], colors[k], ";Depth z [mm] (10 = cathode);Fraction / 0.25 mm");
     hists[k]->SetStats(0);
     hists[k]->SetLineStyle(styles[k]);
-    hists[k]->SetMinimum(1e-3);
-    hists[k]->SetMaximum(1.0);
-    hists[k]->GetXaxis()->SetRangeUser(4.0, 10.0);
+    hists[k]->SetMinimum(near_cathode ? 1e-3 : 0.0);
+    hists[k]->SetMaximum(near_cathode ? 1.0 : 1.3 * linear_max);
+    hists[k]->GetXaxis()->SetRangeUser(near_cathode ? 4.0 : 0.5, 10.0);
     hists[k]->Draw(k == 0 ? "hist e" : "hist e same");
     leg->AddEntry(hists[k], labels[k], "l");
   }
-  PlottingUtils::SaveFigure(canvas, name, "", PlotSaveOptions::kLOG);
+  PlottingUtils::SaveFigure(canvas, name, "",
+                            near_cathode ? PlotSaveOptions::kLOG
+                                         : PlotSaveOptions::kLINEAR);
 }
 
 // The spectrum around the windows on a linear axis, each line's window and
 // side bands shaded in its colour.
 void PlotWindows(TH1D *spectrum, const std::vector<LineWindow> &windows,
-                 const TString &label, const TString &name) {
-  const Int_t window_color[2] = {kRed + 1, kBlue + 1};
-  const Int_t side_color[2] = {kRed - 9, kAzure - 9};
+                 const TString &label, const TString &name, Double_t x_lo,
+                 Double_t x_hi) {
+  const Int_t window_color[3] = {kRed + 1, kBlue + 1, kGreen + 2};
+  const Int_t side_color[3] = {kRed - 9, kAzure - 9, kGreen - 9};
   std::vector<TString> labels;
   for (size_t w = 0; w < windows.size(); w++) {
     labels.push_back(Form("%s window", windows[w].name));
@@ -286,13 +351,13 @@ void PlotWindows(TH1D *spectrum, const std::vector<LineWindow> &windows,
   leg->SetHeader(label);
   PlottingUtils::ConfigureHistogram(spectrum, kBlack, "");
   spectrum->SetStats(0);
-  spectrum->GetXaxis()->SetRangeUser(78, 105);
+  spectrum->GetXaxis()->SetRangeUser(x_lo, x_hi);
   Double_t y_lo = 0.9 * spectrum->GetMinimum();
   Double_t y_hi = 1.1 * spectrum->GetMaximum();
   spectrum->SetMinimum(y_lo);
   spectrum->SetMaximum(y_hi);
   spectrum->Draw("hist");
-  for (size_t w = 0; w < windows.size() && w < 2; w++) {
+  for (size_t w = 0; w < windows.size() && w < 3; w++) {
     const Double_t lo[3] = {windows[w].lo, windows[w].s1_lo, windows[w].s2_lo};
     const Double_t hi[3] = {windows[w].hi, windows[w].s1_hi, windows[w].s2_hi};
     for (Int_t k = 0; k < 3; k++) {
@@ -359,7 +424,12 @@ void Capture96Positions() {
   std::vector<LineWindow> windows;
   windows.push_back(LINE96);
   windows.push_back(PB_KBETA);
-  std::vector<TH1D *> depth96, rings;
+  windows.push_back(LINE558);
+  windows.push_back(ANNIHILATION);
+  windows.push_back(GE596);
+  std::vector<LineWindow> low_windows(windows.begin(), windows.begin() + W_558);
+  std::vector<LineWindow> high_windows(windows.begin() + W_558, windows.end());
+  std::vector<TH1D *> depth96, rings, depth558, rings558;
   std::vector<TString> labels;
   for (size_t c = 0; c < configs.size(); c++) {
     TString tag = configs[c].tag;
@@ -368,16 +438,21 @@ void Capture96Positions() {
                 GRID_START_KEV + N_GRID_BINS * Constants::BIN_WIDTH_KEV);
     spectrum->SetTitle(
         Form(";Energy [keV];Counts / %d eV", Constants::BIN_WIDTH_EV));
+    TH1D *spectrum_high = NewHist(
+        "spectrum_high_" + tag, N_HIGH_BINS, HIGH_START_KEV,
+        HIGH_START_KEV + N_HIGH_BINS * HIGH_GROUP * Constants::BIN_WIDTH_KEV);
+    spectrum_high->SetTitle(Form(";Energy [keV];Counts / %d eV",
+                                 HIGH_GROUP * Constants::BIN_WIDTH_EV));
     std::vector<Profile> profiles;
     for (size_t w = 0; w < windows.size(); w++)
       profiles.push_back(NewProfile(Form("%s_%d", tag.Data(), (Int_t)w)));
     for (size_t r = 0; r < configs[c].runs.size(); r++)
-      FillRun(configs[c].runs[r], spectrum, windows, profiles);
+      FillRun(configs[c].runs[r], spectrum, spectrum_high, windows, profiles);
 
     Double_t net96 = 0, net_pb = 0;
-    TH1D *z96 = NetDepth(profiles[0], LINE96, "z96_" + tag, net96);
-    TH1D *z_pb = NetDepth(profiles[1], PB_KBETA, "zpb_" + tag, net_pb);
-    TH1D *ring96 = RingRatio(profiles[0], LINE96, "ring96_" + tag);
+    TH1D *z96 = NetDepth(profiles[W_96], LINE96, "z96_" + tag, net96);
+    TH1D *z_pb = NetDepth(profiles[W_PB_KBETA], PB_KBETA, "zpb_" + tag, net_pb);
+    TH1D *ring96 = RingRatio(profiles[W_96], LINE96, "ring96_" + tag);
     std::cout << "CAPTURE96 " << configs[c].label << ": net 95.9 keV "
               << std::fixed << std::setprecision(0) << net96 << ", Pb Kb "
               << net_pb << " | within 1 mm of the cathode: 95.9 keV "
@@ -409,7 +484,63 @@ void Capture96Positions() {
     DrawDepths(pair, pair_labels, pair_colors, pair_styles,
                "capture96_depth_vs_pb_" + tag);
 
-    PlotWindows(spectrum, windows, configs[c].label, "spectrum_" + tag);
+    PlotWindows(spectrum, low_windows, configs[c].label, "spectrum_" + tag, 78,
+                105);
+
+    // The 558 keV line against the lines from outside the crystal.
+    Double_t net558 = 0, net511 = 0, net596 = 0;
+    TH1D *z558 = NetDepth(profiles[W_558], LINE558, "z558_" + tag, net558);
+    TH1D *z511 = NetDepth(profiles[W_511], ANNIHILATION, "z511_" + tag, net511);
+    TH1D *z596 = NetDepth(profiles[W_596], GE596, "z596_" + tag, net596);
+    TH1D *ring558 = RingRatio(profiles[W_558], LINE558, "ring558_" + tag);
+    TH1D *ring511 = RingRatio(profiles[W_511], ANNIHILATION, "ring511_" + tag);
+    std::cout << "CAPTURE558 " << configs[c].label << ": net 558 keV "
+              << std::setprecision(0) << net558 << ", 511 keV " << net511
+              << ", 595.8 keV " << net596 << " | 558 over 95.9 keV "
+              << std::setprecision(2) << net558 / net96 << std::endl;
+    TH1D *depth_lines[3] = {z558, z511, z596};
+    const char *depth_names[3] = {"558", "511", "595.8"};
+    for (Int_t k = 0; k < 3; k++)
+      std::cout << "CAPTURE558 " << configs[c].label << ":   " << depth_names[k]
+                << " keV within 1 mm of the cathode " << std::setprecision(3)
+                << NearCathode(depth_lines[k], 1.0) << " +- "
+                << NearCathodeError(depth_lines[k], 1.0) << ", within 2 mm "
+                << NearCathode(depth_lines[k], 2.0) << " +- "
+                << NearCathodeError(depth_lines[k], 2.0) << ", within 5 mm "
+                << NearCathode(depth_lines[k], 5.0) << " +- "
+                << NearCathodeError(depth_lines[k], 5.0) << std::endl;
+    TH1D *ring_lines[2] = {ring558, ring511};
+    for (Int_t k = 0; k < 2; k++) {
+      std::cout << "CAPTURE558 " << configs[c].label << ":   " << depth_names[k]
+                << " keV ring rate / central";
+      for (Int_t b = 1; b <= N_RINGS; b++)
+        std::cout << "  " << b - 1 << ": " << std::setprecision(2)
+                  << ring_lines[k]->GetBinContent(b) << " +- "
+                  << ring_lines[k]->GetBinError(b);
+      std::cout << std::endl;
+    }
+    depth558.push_back(z558);
+    rings558.push_back(ring558);
+
+    std::vector<TH1D *> trio;
+    trio.push_back(z558);
+    trio.push_back(z511);
+    trio.push_back(z596);
+    std::vector<TString> trio_labels;
+    trio_labels.push_back(TString(configs[c].label) + ", 558 keV");
+    trio_labels.push_back(TString(configs[c].label) + ", 511 keV");
+    trio_labels.push_back(TString(configs[c].label) + ", 595.8 keV (Ge)");
+    std::vector<Int_t> trio_colors, trio_styles;
+    trio_colors.push_back(kRed + 1);
+    trio_colors.push_back(kBlue + 1);
+    trio_colors.push_back(kGreen + 2);
+    trio_styles.push_back(1);
+    trio_styles.push_back(2);
+    trio_styles.push_back(7);
+    DrawDepths(trio, trio_labels, trio_colors, trio_styles,
+               "capture558_depth_vs_outside_" + tag, kFALSE);
+    PlotWindows(spectrum_high, high_windows, configs[c].label,
+                "spectrum_high_" + tag, 490, 615);
   }
 
   // The Am-241 source line: photons entering the cathode.
@@ -417,7 +548,8 @@ void Capture96Positions() {
   am_window.push_back(AM59);
   std::vector<Profile> am;
   am.push_back(NewProfile("am"));
-  FillRun(Constants::POSTREACTOR_AM241_20260113, nullptr, am_window, am);
+  FillRun(Constants::POSTREACTOR_AM241_20260113, nullptr, nullptr, am_window,
+          am);
   Double_t net_am = 0;
   TH1D *z_am = NetDepth(am[0], AM59, "z_am", net_am);
   std::cout << "CAPTURE96 Am-241 01/13: within 1 mm of the cathode "
@@ -437,22 +569,14 @@ void Capture96Positions() {
   styles.push_back(2);
   DrawDepths(all, all_labels, colors, styles, "capture96_depth");
 
-  TPad *plot = nullptr, *legend_pad = nullptr;
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
-      plot, legend_pad, (Int_t)PlottingUtils::LegendWidthPx(labels));
-  TLegend *leg =
-      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
-  for (size_t c = 0; c < rings.size(); c++) {
-    PlottingUtils::ConfigureHistogram(
-        rings[c], COLORS[c + 1],
-        ";Pixel ring from the crystal edge;Signal / background, centre = 1");
-    rings[c]->SetStats(0);
-    rings[c]->SetMarkerStyle(20 + c);
-    rings[c]->SetMinimum(0.5);
-    rings[c]->SetMaximum(1.5);
-    rings[c]->Draw(c == 0 ? "e1 p" : "e1 p same");
-    leg->AddEntry(rings[c], labels[c], "pe");
+  DrawRings(rings, labels, "capture96_rings");
+
+  std::vector<Int_t> colors558, styles558;
+  for (size_t c = 0; c < depth558.size(); c++) {
+    colors558.push_back(COLORS[c + 1]);
+    styles558.push_back(1);
   }
-  PlottingUtils::SaveFigure(canvas, "capture96_rings", "",
-                            PlotSaveOptions::kLINEAR);
+  DrawDepths(depth558, labels, colors558, styles558, "capture558_depth",
+             kFALSE);
+  DrawRings(rings558, labels, "capture558_rings");
 }
