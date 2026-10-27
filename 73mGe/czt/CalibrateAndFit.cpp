@@ -91,7 +91,9 @@ struct LineCalConfig {
   TString ge_label;
 };
 
-std::vector<Double_t> LoadInteriorEnergies(TTree *tree) {
+// The tree's energies with their pixels' factors from the day's map.
+std::vector<Double_t>
+LoadAlignedEnergies(TTree *tree, const PixelAlignment::RunAlignment *map) {
   std::vector<Double_t> energies;
   Float_t energy = 0, x = 0, y = 0;
   tree->SetBranchAddress("energykeV", &energy);
@@ -100,8 +102,7 @@ std::vector<Double_t> LoadInteriorEnergies(TTree *tree) {
   Long64_t n = tree->GetEntries();
   for (Long64_t i = 0; i < n; i++) {
     tree->GetEntry(i);
-    if (InInteriorPixels(x, y))
-      energies.push_back(energy);
+    energies.push_back(AlignedEnergy(map, energy, x, y));
   }
   tree->ResetBranchAddresses();
   return energies;
@@ -115,14 +116,14 @@ std::vector<Double_t> LoadFiltered(const TString &input_name) {
               << std::endl;
     return events;
   }
+  const PixelAlignment::RunAlignment *map = PixelMapFor(input_name);
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
     TTree *tree =
         static_cast<TTree *>(file->Get(Form("crystal%d_filtered_tree", c)));
     if (!tree)
       continue;
     std::vector<Double_t> ch =
-        InteriorPixelsRequested()
-            ? LoadInteriorEnergies(tree)
+        map ? LoadAlignedEnergies(tree, map)
             : RooFitUtils::LoadEventsFromTree(tree, "energykeV");
     events.insert(events.end(), ch.begin(), ch.end());
   }
@@ -513,6 +514,7 @@ void ApplyPol1Cal(const std::vector<TString> &input_names, TF1 *cal,
     cal_tree->Branch("depositedEnergykeV", &deposited_energy,
                      "depositedEnergykeV/F");
 
+    const PixelAlignment::RunAlignment *map = PixelMapFor(input_name);
     for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
       TTree *tree = static_cast<TTree *>(
           in_file->Get(Form("crystal%d_filtered_tree", c)));
@@ -525,9 +527,7 @@ void ApplyPol1Cal(const std::vector<TString> &input_names, TF1 *cal,
       Int_t n_entries = tree->GetEntries();
       for (Int_t j = 0; j < n_entries; j++) {
         tree->GetEntry(j);
-        if (InteriorPixelsRequested() && !InInteriorPixels(x, y))
-          continue;
-        deposited_energy = cal->Eval(energy);
+        deposited_energy = cal->Eval(AlignedEnergy(map, energy, x, y));
         cal_tree->Fill();
       }
     }
@@ -598,6 +598,7 @@ std::vector<TH1F *> BuildRateHists(const TString &input_name, TF1 *cal,
     sums.push_back(h);
   }
 
+  const PixelAlignment::RunAlignment *map = PixelMapFor(input_name);
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
     TTree *tree =
         static_cast<TTree *>(file->Get(Form("crystal%d_filtered_tree", c)));
@@ -613,9 +614,7 @@ std::vector<TH1F *> BuildRateHists(const TString &input_name, TF1 *cal,
     Long64_t n = tree->GetEntries();
     for (Long64_t j = 0; j < n; j++) {
       tree->GetEntry(j);
-      if (InteriorPixelsRequested() && !InInteriorPixels(x, y))
-        continue;
-      Double_t e = cal->Eval(energy);
+      Double_t e = cal->Eval(AlignedEnergy(map, energy, x, y));
       for (Int_t k = 0; k < n_phases; k++)
         sums[k]->Fill(e, 1.0 / lt);
     }
@@ -996,13 +995,11 @@ PairCalResult ProcessPbAnchoredPair(
   }
   out.cal_func = cal;
 
-  SignalPbAnchor sig_anchor;
-  if (SignalPbAnchorRequested()) {
-    sig_anchor = AnchorOnSignalPb(calfit, pre.sig_channel, pb_mus, cal_label);
-    if (!sig_anchor.valid)
-      std::cerr << "WARNING: no signal-run Pb anchor for " << cal_label
-                << "; the signal run keeps the pair calibration" << std::endl;
-  }
+  SignalPbAnchor sig_anchor =
+      AnchorOnSignalPb(calfit, pre.sig_channel, pb_mus, cal_label);
+  if (!sig_anchor.valid)
+    std::cerr << "WARNING: no signal-run Pb anchor for " << cal_label
+              << "; the signal run keeps the pair calibration" << std::endl;
   const CalFit &sig_calfit = sig_anchor.valid ? sig_anchor.calfit : calfit;
   TF1 *sig_cal = sig_calfit.func;
 
@@ -1330,23 +1327,14 @@ void PrintDayCals(const DayResult &d) {
 
 void CalibrateAndFit() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  const TString out_tag = RuntimeResultTag();
-  std::cout << "OUTPUT-TAG " << out_tag
-            << (out_tag == RESULT_TAG ? " (default)" : " (RESULT_TAG_OVERRIDE)")
-            << std::endl;
-  std::cout << "CONFIG tail tau/sigma <= " << TAIL_RATIO_MAX << "   hard fit "
-            << (HardFitRequested() ? "on" : "off") << "   Pb anchor "
-            << (SignalPbAnchorRequested() ? "signal run" : "background run")
-            << "   transfer " << (OffsetTransferRequested() ? "offset" : "gain")
-            << "   pixels "
-            << (InteriorPixelsRequested() ? "interior 9 x 9" : "all")
-            << "   in-situ background " << (USE_FLAT_BKG ? "flat" : "linear")
-            << "   95.902 keV escapes "
-            << (EscapeLinesRequested() ? "on" : "off") << "   ROOT "
+  std::cout << "CONFIG " << RESULT_TAG << ": transfer "
+            << (OffsetTransferRequested() ? "offset" : "gain")
+            << ", 95.902 keV escapes "
+            << (EscapeLinesRequested() ? "on" : "off") << ", ROOT "
             << gROOT->GetVersion() << std::endl;
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
                                 project_root + "/plots/czt/calibration_low_" +
-                                    out_tag,
+                                    RESULT_TAG,
                                 project_root + "/root_files");
   PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
   PairCalResult ref_pair;
@@ -1374,9 +1362,9 @@ void CalibrateAndFit() {
 
   const TString results_dir = project_root + "/results";
   gSystem->mkdir(results_dir, kTRUE);
-  const TString result_path = results_dir + "/ge_" + out_tag + ".result";
+  const TString result_path = results_dir + "/ge_" + RESULT_TAG + ".result";
   std::ofstream out(result_path.Data());
-  out << "# Ge-73m gamma energy results   tag=" << out_tag << std::endl;
+  out << "# Ge-73m gamma energy results   tag=" << RESULT_TAG << std::endl;
   out << "# method  ge_mu  fit_err  cal_err  bkg_err  chi2  gain_err  cal_off  "
          "sys_err  anchor_err  label"
       << std::endl;

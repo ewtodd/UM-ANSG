@@ -21,6 +21,12 @@
 //             statistics, Ge at the injected energy; with
 //             INJ_SYNTHETIC_ESCAPES each run's 95.902 keV line and its K
 //             X-ray escapes under the window's lines too. In-situ fit only.
+//   synthetic_halves  the halves procedure on INJ_N_BACKGROUNDS synthetic
+//             background runs, each generated once at the background run's
+//             statistics and held through its trials. The spread of their
+//             mean residuals is what the shared fluctuation alone does to
+//             the halves; the real run's halves residual beyond it would
+//             be the real background's own effect. In-situ fit only.
 // With INJ_FIT_WITHOUT_ESCAPES every trial is fitted a second time without
 // the escape lines ("sim_noesc"), on the same events.
 //
@@ -70,7 +76,11 @@ const Int_t INJ_N_TRIALS = 10;
 const Int_t INJ_TRIAL_OFFSET = 0;
 const TString INJ_RUN_TAG =
     "closure"; // results go to plots/testbed/injection_<tag>/
-const TString INJ_SOURCE = "halves"; // "halves" | "real" | "synthetic"
+const TString INJ_SOURCE =
+    "halves"; // "halves" | "real" | "synthetic" | "synthetic_halves"
+// synthetic_halves: how many synthetic background runs, each the pool of
+// INJ_N_TRIALS halves trials.
+const Int_t INJ_N_BACKGROUNDS = 8;
 // Synthetic data also carry each run's 95.902 keV line and, under everything
 // else, its K X-ray escapes at the pair's escape fractions.
 const Bool_t INJ_SYNTHETIC_ESCAPES = kTRUE;
@@ -82,10 +92,6 @@ const Bool_t INJ_FIT_WITHOUT_ESCAPES = kTRUE;
 // Turn on to inspect a single cell (set INJ_PAIR_INDEX/INJ_ENERGY_INDEX/
 // INJ_N_TRIALS down too).
 const Bool_t INJ_KEEP_TRIAL_PLOTS = kFALSE;
-// Run the simultaneous fits with the hard settings (strategy 2, final HESSE,
-// 200k calls) through the shared RunBkgGeSim FIT_HARD hook. Off is what
-// production runs.
-const Bool_t INJ_FIT_HARD = kFALSE;
 
 namespace {
 
@@ -219,12 +225,6 @@ std::vector<std::string> FreeStateParams() {
                          "sig:GausAmplitude3",
                          "sig:BkgConstant"};
   std::vector<std::string> out(names, names + sizeof(names) / sizeof(names[0]));
-  if (!LINK_PB_KA_SIGMA)
-    out.push_back("bkg:Sigma2");
-  if (!USE_FLAT_BKG) {
-    out.push_back("bkg:BkgSlope");
-    out.push_back("sig:BkgSlope");
-  }
   return out;
 }
 
@@ -1019,6 +1019,31 @@ SyntheticData GenerateSynthetic(const PairReference &ref, Double_t e_inj,
   return out;
 }
 
+// A synthetic background run at the background run's statistics: the
+// reference fit's background channel and its 95.902 keV region, as the
+// synthetic source makes them, without a Ge line.
+std::vector<Double_t> GenerateBackgroundRun(const PairReference &ref,
+                                            const EscapeFractions *escapes) {
+  const EscapeFractions *with = INJ_SYNTHETIC_ESCAPES ? escapes : nullptr;
+  std::vector<Double_t> events =
+      GenerateSyntheticWindow(ref, "bkg", 0.0, 0.0, ref.bkg_capture, with);
+  if (with && ref.bkg_capture.ok) {
+    std::vector<Double_t> region =
+        GenerateCaptureRegion(ref.ge, ref.bkg_capture);
+    events.insert(events.end(), region.begin(), region.end());
+  }
+  return events;
+}
+
+// Halves trials draw both channels from one pool; synthetic sources lack
+// the 62-65 keV the rate subtraction needs and use the model lineshape.
+Bool_t HalvesLike(const TString &source) {
+  return source == "halves" || source == "synthetic_halves";
+}
+Bool_t SyntheticSource(const TString &source) {
+  return source == "synthetic" || source == "synthetic_halves";
+}
+
 // ------------------------------------------------------------------ trials
 
 // What a pair's trials share.
@@ -1039,7 +1064,7 @@ struct PairSetup {
 // line started at ge_start.
 FitState StartState(const PairSetup &setup, Double_t ge_start) {
   FitState start = setup.ref.state;
-  if (setup.source == "halves") {
+  if (HalvesLike(setup.source)) {
     ScaleYield(start, "bkg:GausAmplitude1", 0.5);
     ScaleYield(start, "bkg:GausAmplitude2", 0.5);
     ScaleYield(start, "bkg:BkgConstant", 0.5);
@@ -1081,7 +1106,7 @@ TrialOutcome RunOneTrial(const PairSetup &setup, const TString &shape,
     bkg_events.swap(syn.bkg);
     sig_events.swap(syn.sig);
   } else {
-    const Double_t share = (setup.source == "halves") ? 0.5 : 1.0;
+    const Double_t share = HalvesLike(setup.source) ? 0.5 : 1.0;
     bkg_events = PoissonResample(setup.bkg_pool, share, rng);
     sig_events = PoissonResample(setup.sig_pool, share, rng);
     std::vector<Double_t> injected;
@@ -1133,7 +1158,7 @@ TrialOutcome RunOneTrial(const PairSetup &setup, const TString &shape,
 
   // The synthetic channels hold only the in-situ window and the 95.902 keV
   // region, not the 62-65 keV the rate subtraction also fits.
-  if (setup.source != "synthetic") {
+  if (!SyntheticSource(setup.source)) {
     RateSubResult rs = FitRateSubtractedEvents(
         sig_events, bkg_events, setup.live_sig, setup.live_bkg,
         setup.rate_sub_shape, setup.comb_bin, trial_tag + "_ratesub");
@@ -1186,17 +1211,12 @@ void InjectionTest() {
   const Int_t trial_offset = INJ_TRIAL_OFFSET;
   const TString &run_tag = INJ_RUN_TAG;
   gROOT->SetBatch(kTRUE);
-  // One implementation of the hard-fit settings: the shared RunBkgGeSim reads
-  // FIT_HARD. Unset it when the control is off so a stale shell variable cannot
-  // silently change which fit this test runs.
-  if (INJ_FIT_HARD)
-    gSystem->Setenv("FIT_HARD", "1");
-  else
-    gSystem->Unsetenv("FIT_HARD");
   RooMsgService::instance().setGlobalKillBelow(RooFit::WARNING);
 
-  if (source != "halves" && source != "real" && source != "synthetic") {
-    std::cerr << "ERROR: source must be halves, real or synthetic, got '"
+  if (source != "halves" && source != "real" && source != "synthetic" &&
+      source != "synthetic_halves") {
+    std::cerr << "ERROR: source must be halves, real, synthetic or "
+                 "synthetic_halves, got '"
               << source << "'" << std::endl;
     return;
   }
@@ -1206,10 +1226,10 @@ void InjectionTest() {
   }
   // Synthetic data are generated from the fit's own model.
   std::vector<TString> shapes;
-  if (INJ_SHAPE == "both" && source != "synthetic") {
+  if (INJ_SHAPE == "both" && !SyntheticSource(source)) {
     shapes.push_back("model");
     shapes.push_back("empirical");
-  } else if (source == "synthetic") {
+  } else if (SyntheticSource(source)) {
     shapes.push_back("model");
   } else {
     shapes.push_back(INJ_SHAPE);
@@ -1218,10 +1238,9 @@ void InjectionTest() {
   std::cout << "INJ-CONFIG tag " << RESULT_TAG << " source " << source
             << " synthetic escapes " << (INJ_SYNTHETIC_ESCAPES ? 1 : 0)
             << " fit without escapes " << (INJ_FIT_WITHOUT_ESCAPES ? 1 : 0)
-            << " hard " << (INJ_FIT_HARD ? 1 : 0) << " shape " << INJ_SHAPE
-            << " pair " << pair_index << " energy " << energy_index
-            << " trials " << n_trials << " from " << trial_offset << " run "
-            << run_tag << std::endl;
+            << " shape " << INJ_SHAPE << " pair " << pair_index << " energy "
+            << energy_index << " trials " << n_trials << " from "
+            << trial_offset << " run " << run_tag << std::endl;
   const TString project_root = ProjectRoot();
   const TString base = project_root + "/plots/testbed/injection_" + run_tag;
   gSystem->mkdir(base + "/results", kTRUE);
@@ -1273,7 +1292,11 @@ void InjectionTest() {
     // background run's live time. real: the signal run's own Ge again, so
     // the recovered line is a blend of the two and only the method difference
     // at one energy is meaningful. synthetic: the signal run's Ge.
-    if (source == "halves") {
+    if (source == "synthetic_halves") {
+      setup.live_bkg = 0.5 * t_bkg;
+      setup.live_sig = 0.5 * t_bkg;
+      setup.n_inj_expected = setup.ref.ge.area * setup.live_sig / t_sig;
+    } else if (source == "halves") {
       setup.bkg_pool = bkg_all;
       setup.sig_pool.swap(bkg_all);
       setup.live_bkg = 0.5 * t_bkg;
@@ -1290,7 +1313,7 @@ void InjectionTest() {
     }
     std::vector<Double_t>().swap(bkg_all);
     std::vector<Double_t>().swap(sig_all);
-    if (source != "synthetic" && INJ_SHAPE != "model") {
+    if (!SyntheticSource(source) && INJ_SHAPE != "model") {
       setup.am_events = LoadCalibrated(pair.am_run);
       if (setup.am_events.empty()) {
         std::cerr << "INJ-FATAL: no calibrated Am-241 events" << std::endl;
@@ -1302,65 +1325,112 @@ void InjectionTest() {
               << " n_inj_expected " << setup.n_inj_expected << " comb bin "
               << std::setprecision(5) << setup.comb_bin << std::endl;
 
-    for (Int_t ei = 0; ei < 9; ei++) {
-      if (energy_index >= 0 && ei != energy_index)
-        continue;
-      Double_t e_inj = kInjEnergies[ei];
-      for (Int_t si = 0; si < (Int_t)shapes.size(); si++) {
-        const TString &shape = shapes[si];
-        TString cell_tag =
-            CellTag(pair, shape, e_inj) +
-            (source == "halves" ? TString("") : TString("_") + source);
-        TString cell_dir = base + "/cells/" + cell_tag;
-        TString fits_dir = cell_dir + "/fits";
-        gSystem->mkdir(fits_dir, kTRUE);
-        InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, cell_dir,
-                                      project_root + "/root_files");
-        PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
-        // Include the trial range so a pilot (offset 0, N trials) and a later
-        // top-up (offset N, M trials) can share a run tag without overwriting
-        // each other; the summariser reads every CSV in results/.
-        TString csv_path = base + "/results/injection_" + cell_tag +
-                           Form("_t%d_n%d", trial_offset, n_trials) + ".csv";
-        std::ofstream csv(csv_path.Data());
-        if (!csv.is_open()) {
-          std::cerr << "INJ-FATAL: cannot write " << csv_path << std::endl;
-          return;
-        }
-        csv << "pair,shape,energy_keV,trial,n_inj,jitter_eV,method,mu_keV,"
-               "mu_err_keV,residual_eV,status,covQual,edm,valid,rail"
-            << std::endl;
-        std::cout << "INJ-CELL-START " << cell_tag << std::endl;
-        for (Int_t trial = trial_offset; trial < trial_offset + n_trials;
-             trial++) {
-          UInt_t seed = TrialSeed(pi, ei, si, trial, run_tag);
-          gRandom->SetSeed(seed);
-          RooRandom::randomGenerator()->SetSeed(seed);
-          TString trial_tag = cell_tag + "_t" + Form("%d", trial);
-          TrialOutcome out =
-              RunOneTrial(setup, shape, e_inj, seed, fits_dir, trial_tag);
-          WriteRow(csv, pair, shape, e_inj, trial, out.n_inj, out.jitter_eV,
-                   "sim", out.sim);
-          if (out.have_sim_noesc)
-            WriteRow(csv, pair, shape, e_inj, trial, out.n_inj, out.jitter_eV,
-                     "sim_noesc", out.sim_noesc);
-          if (out.have_ratesub)
-            WriteRow(csv, pair, shape, e_inj, trial, out.n_inj, 0.0, "ratesub",
-                     out.ratesub);
-          std::cout << "INJ-TRIAL " << trial_tag << " n_inj " << out.n_inj
-                    << " sim " << std::setprecision(5) << out.sim.mu << " +/- "
-                    << out.sim.err << " (status " << out.sim.status
-                    << ", valid " << (out.sim.valid ? 1 : 0) << ")";
-          if (out.have_sim_noesc)
-            std::cout << "  without escapes " << out.sim_noesc.mu << " (status "
-                      << out.sim_noesc.status << ")";
-          if (out.have_ratesub)
-            std::cout << "  ratesub " << out.ratesub.mu;
-          std::cout << std::endl;
-        }
-        csv.close();
-        std::cout << "INJ-CELL-DONE " << cell_tag << std::endl;
+    const Int_t n_backgrounds =
+        (source == "synthetic_halves") ? INJ_N_BACKGROUNDS : 1;
+    std::vector<Double_t> background_means;
+    for (Int_t bi = 0; bi < n_backgrounds; bi++) {
+      std::vector<Double_t> residuals_eV;
+      if (source == "synthetic_halves") {
+        RooRandom::randomGenerator()->SetSeed(
+            TrialSeed(pi, 1000 + bi, 0, 0, run_tag));
+        setup.bkg_pool = GenerateBackgroundRun(setup.ref, pair.escapes);
+        setup.sig_pool = setup.bkg_pool;
+        std::cout << "INJ-BACKGROUND " << pair.label << " b" << bi << ": "
+                  << setup.bkg_pool.size() << " synthetic events" << std::endl;
       }
+      for (Int_t ei = 0; ei < 9; ei++) {
+        if (energy_index >= 0 && ei != energy_index)
+          continue;
+        Double_t e_inj = kInjEnergies[ei];
+        for (Int_t si = 0; si < (Int_t)shapes.size(); si++) {
+          const TString &shape = shapes[si];
+          TString cell_tag =
+              CellTag(pair, shape, e_inj) +
+              (source == "halves" ? TString("") : TString("_") + source) +
+              (source == "synthetic_halves" ? TString(Form("_b%d", bi))
+                                            : TString(""));
+          TString cell_dir = base + "/cells/" + cell_tag;
+          TString fits_dir = cell_dir + "/fits";
+          gSystem->mkdir(fits_dir, kTRUE);
+          InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, cell_dir,
+                                        project_root + "/root_files");
+          PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
+          // Include the trial range so a pilot (offset 0, N trials) and a later
+          // top-up (offset N, M trials) can share a run tag without overwriting
+          // each other; the summariser reads every CSV in results/.
+          TString csv_path = base + "/results/injection_" + cell_tag +
+                             Form("_t%d_n%d", trial_offset, n_trials) + ".csv";
+          std::ofstream csv(csv_path.Data());
+          if (!csv.is_open()) {
+            std::cerr << "INJ-FATAL: cannot write " << csv_path << std::endl;
+            return;
+          }
+          csv << "pair,shape,energy_keV,trial,n_inj,jitter_eV,method,mu_keV,"
+                 "mu_err_keV,residual_eV,status,covQual,edm,valid,rail"
+              << std::endl;
+          std::cout << "INJ-CELL-START " << cell_tag << std::endl;
+          for (Int_t trial = trial_offset; trial < trial_offset + n_trials;
+               trial++) {
+            UInt_t seed = TrialSeed(pi, ei, si, trial, run_tag);
+            gRandom->SetSeed(seed);
+            RooRandom::randomGenerator()->SetSeed(seed);
+            TString trial_tag = cell_tag + "_t" + Form("%d", trial);
+            TrialOutcome out =
+                RunOneTrial(setup, shape, e_inj, seed, fits_dir, trial_tag);
+            WriteRow(csv, pair, shape, e_inj, trial, out.n_inj, out.jitter_eV,
+                     "sim", out.sim);
+            if (out.sim.valid)
+              residuals_eV.push_back(1000.0 * (out.sim.mu - e_inj));
+            if (out.have_sim_noesc)
+              WriteRow(csv, pair, shape, e_inj, trial, out.n_inj, out.jitter_eV,
+                       "sim_noesc", out.sim_noesc);
+            if (out.have_ratesub)
+              WriteRow(csv, pair, shape, e_inj, trial, out.n_inj, 0.0,
+                       "ratesub", out.ratesub);
+            std::cout << "INJ-TRIAL " << trial_tag << " n_inj " << out.n_inj
+                      << " sim " << std::setprecision(5) << out.sim.mu
+                      << " +/- " << out.sim.err << " (status " << out.sim.status
+                      << ", valid " << (out.sim.valid ? 1 : 0) << ")";
+            if (out.have_sim_noesc)
+              std::cout << "  without escapes " << out.sim_noesc.mu
+                        << " (status " << out.sim_noesc.status << ")";
+            if (out.have_ratesub)
+              std::cout << "  ratesub " << out.ratesub.mu;
+            std::cout << std::endl;
+          }
+          csv.close();
+          std::cout << "INJ-CELL-DONE " << cell_tag << std::endl;
+        }
+      }
+      if (source == "synthetic_halves" && residuals_eV.size() > 1) {
+        Double_t mean = 0, var = 0;
+        for (size_t k = 0; k < residuals_eV.size(); k++)
+          mean += residuals_eV[k];
+        mean /= residuals_eV.size();
+        for (size_t k = 0; k < residuals_eV.size(); k++)
+          var += (residuals_eV[k] - mean) * (residuals_eV[k] - mean);
+        var /= (residuals_eV.size() - 1);
+        background_means.push_back(mean);
+        std::cout << "INJ-BACKGROUND " << pair.label << " b" << bi
+                  << ": in-situ residual " << std::fixed << std::setprecision(1)
+                  << mean << " +- " << TMath::Sqrt(var / residuals_eV.size())
+                  << " eV over " << residuals_eV.size() << " valid trials"
+                  << std::endl;
+      }
+    }
+    if (background_means.size() > 1) {
+      Double_t mean = 0, var = 0;
+      for (size_t k = 0; k < background_means.size(); k++)
+        mean += background_means[k];
+      mean /= background_means.size();
+      for (size_t k = 0; k < background_means.size(); k++)
+        var += (background_means[k] - mean) * (background_means[k] - mean);
+      var /= (background_means.size() - 1);
+      std::cout << "INJ-BACKGROUNDS " << pair.label << ": mean residual "
+                << std::fixed << std::setprecision(1) << mean
+                << " eV, spread between backgrounds " << TMath::Sqrt(var)
+                << " eV over " << background_means.size() << " backgrounds"
+                << std::endl;
     }
   }
 }

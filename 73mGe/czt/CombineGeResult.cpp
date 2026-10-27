@@ -42,11 +42,6 @@
 // Method 1; no in-situ run also has a rate-sub row.
 const Double_t INSITU_CHI2_MAX = 3.0;
 
-// Combine the quoted CZT value with the PSI CdTe one (results/cdte_ge.result,
-// from cdte/GeBudget.cpp) in an error-weighted mean. Off until the CdTe
-// analysis is final.
-const Bool_t COMBINE_WITH_CDTE = kFALSE;
-
 struct Row {
   TString method;
   TString label;
@@ -432,58 +427,6 @@ Double_t UncorrelatedMean(const std::vector<Row> &rows,
   return (sw > 0) ? swx / sw : 0;
 }
 
-// A value of a "name value" line in a CdTe result file; -1 when absent.
-Double_t CdTeResultValue(const TString &path, const std::string &name) {
-  std::ifstream in(path.Data());
-  std::string line;
-  while (std::getline(in, line)) {
-    if (line.empty() || line[0] == '#')
-      continue;
-    std::istringstream ss(line);
-    std::string key;
-    Double_t value = 0;
-    if (ss >> key >> value && key == name)
-      return value;
-  }
-  return -1;
-}
-
-// The CZT and CdTe values, error-weighted, taken as independent: different
-// detectors, beam times, calibrations (Am and Pb K-alpha against the in-run
-// Pb and escape lines) and escape inputs. What they share, the reference
-// line energies and Geant4's Te Kb/Ka escape ratio, is below an eV here.
-void PrintCdTeCombination(const TString &cdte_path, Double_t czt,
-                          Double_t czt_err) {
-  Double_t cdte = CdTeResultValue(cdte_path, "ge");
-  Double_t cdte_err = CdTeResultValue(cdte_path, "total");
-  std::cout << std::endl;
-  std::cout << "========== CZT + CdTe (PSI), error-weighted =========="
-            << std::endl;
-  if (!(cdte > 0) || !(cdte_err > 0)) {
-    std::cerr << "  no CdTe result in " << cdte_path
-              << "; run cdte/GeBudget.cpp first." << std::endl;
-    return;
-  }
-  Double_t w_czt = 1.0 / (czt_err * czt_err);
-  Double_t w_cdte = 1.0 / (cdte_err * cdte_err);
-  Double_t mean = (w_czt * czt + w_cdte * cdte) / (w_czt + w_cdte);
-  Double_t err = 1.0 / std::sqrt(w_czt + w_cdte);
-  Double_t diff = czt - cdte;
-  Double_t diff_err = std::sqrt(czt_err * czt_err + cdte_err * cdte_err);
-  std::cout << std::fixed << std::setprecision(4);
-  std::cout << "  CZT  " << czt << " +/- " << czt_err << " keV  (weight "
-            << std::setprecision(3) << w_czt / (w_czt + w_cdte) << ")"
-            << std::endl;
-  std::cout << "  CdTe " << std::setprecision(4) << cdte << " +/- " << cdte_err
-            << " keV  (weight " << std::setprecision(3)
-            << w_cdte / (w_czt + w_cdte) << ")" << std::endl;
-  std::cout << "  they differ by " << std::setprecision(1) << diff * 1000.0
-            << " +/- " << diff_err * 1000.0 << " eV (" << std::setprecision(2)
-            << diff / diff_err << " sigma)" << std::endl;
-  std::cout << "  E = " << std::setprecision(4) << mean << " +/- " << err
-            << " keV" << std::endl;
-}
-
 // tag: the RESULT_TAG the rows were written with (results/ge_<tag>.result).
 // alt_tag: the same analysis under the other transfer model (gain against
 // offset, which no line inside the calibrated range can decide); each run's
@@ -491,9 +434,9 @@ void PrintCdTeCombination(const TString &cdte_path, Double_t czt,
 // escape_tag: the same analysis without the 95.902 keV escapes; each run's
 // correction (its Ge with them minus without) is charged in full as a
 // systematic, correlated as EscapesFromShield() says. "" leaves it out.
-void CombineGeResult(const char *tag = "tau20_sigpb_esc",
-                     const char *alt_tag = "tau20_sigpb_esc_oxfer",
-                     const char *escape_tag = "tau20_sigpb") {
+void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
+                     const char *alt_tag = "tau20_sigpb_esc_oxfer_pxday",
+                     const char *escape_tag = "tau20_sigpb_pxday") {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   std::vector<Row> rows =
       ReadResult(project_root + "/results/ge_" + TString(tag) + ".result");
@@ -587,9 +530,10 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
               << both.chi2ndf << std::setprecision(5) << std::endl;
     std::cout << "  split of err with the BLUE weights: stat " << both.stat_part
               << " (+) cal offset " << both.off_part
-              << " (+) cal multiplicative " << both.mult_part << " (+) sys "
-              << both.sys_part << " (+) transfer model " << both.model_part
-              << " (+) escapes " << both.escape_part << std::endl;
+              << " (+) cal multiplicative " << both.mult_part
+              << " (+) systematics: rate-sub " << both.sys_part
+              << " (+) transfer model " << both.model_part << " (+) escapes "
+              << both.escape_part << std::endl;
     std::cout
         << "  per run: BLUE weight, Ge - mean, and that in its own total error"
         << std::endl;
@@ -682,8 +626,4 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc",
   std::cout << "  quoted Total = sqrt(" << std::setprecision(1)
             << both.err * 1000.0 << "^2 + outlier removal " << nuisance * 1000.0
             << "^2) = " << quoted_err * 1000.0 << " eV" << std::endl;
-
-  if (COMBINE_WITH_CDTE && both.valid)
-    PrintCdTeCombination(project_root + "/results/cdte_ge.result", both.mean,
-                         quoted_err);
 }

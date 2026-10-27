@@ -1,6 +1,0 @@
-# Ge-73m gamma energy results   tag=tau20_oxfer
-# method  ge_mu  fit_err  cal_err  bkg_err  chi2  gain_err  cal_off  sys_err  anchor_err  label
-insitu  68.778839  0.020654  0.006255  0.001405  1.715143  0.000000  0.004776  0.000000  0.000000  Cu_Shield_Signal_10%_(01/13)
-insitu  68.764832  0.030678  0.013762  0.006024  1.000928  0.012263  0.004776  0.000000  0.000000  Cd_Shield_Signal_10%_(01/13)
-insitu  68.769836  0.033000  0.012871  0.000120  1.720236  0.011252  0.004776  0.000000  0.000000  Cd_Shield_Signal_25%_(01/13)
-ratesub  68.775887  0.042482  0.006254  0.000000  1.454291  0.000000  0.005983  0.029382  0.000000  No_Shield_Signal_5%_(01/15)_[rate-sub]

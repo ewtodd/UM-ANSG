@@ -10,6 +10,7 @@
 #include "Constants.hpp"
 #include "FittingUtils.hpp"
 #include "IOUtils.hpp"
+#include "PixelAlignment.hpp"
 #include "ReferenceLines.hpp"
 #include "RooFitPhotopeakPdfs.hpp"
 #include "RooFitUtils.hpp"
@@ -45,9 +46,8 @@ const Float_t E_NEAR_GE = 69;
 // so they propagate into the pol1 parameter covariance and thus the Ge energy.
 // Pb Ka are known to <1 eV (Deslattes).
 //
-// dE_LINE remains the conservative ~10 eV lump, now used ONLY for the Ba-133
-// lines of the 15th/16th line-cal days.
-// TODO: replace with per-line evaluated Ba-133 uncertainties.
+// dE_LINE is a conservative ~10 eV lump for the Ba-133 lines of the 01/15
+// source calibration.
 const Float_t dE_PB_KA = 0.001;
 const Float_t dE_AM241 = 0.0001;
 const Float_t dE_LINE = 0.010;
@@ -65,72 +65,82 @@ const Float_t RATESUB_HI = 71.5;
 const Double_t COMB_PERIOD_RAW_KEV = 0.264;
 const Int_t N_RATESUB_PHASES = 5;
 
-// The 01/15-16 calibration comes from source runs and is carried to the beam
+// The 01/15 calibration comes from source runs and is carried to the beam
 // runs, and no line appears in both to check it. On 01/13 the same step, Am
 // source run to beam run, holds to about 20 eV: the beam run's own Pb Ka1 ->
 // Kb1 slope matches the Am + Pb Ka slope.
 const Double_t RATESUB_TRANSFER_SYS_KEV = 0.020;
 
-const Bool_t LINK_PB_KA_SIGMA = kTRUE;
-
-// BKG=linear: a sloped continuum in the in-situ fit instead of the flat one, a
-// check of the continuum shape.
-inline Bool_t LinearBkgRequested() {
-  const char *env = getenv("BKG");
-  return env && TString(env) == "linear";
-}
-
-const Bool_t USE_FLAT_BKG = !LinearBkgRequested();
-
-// FIT_HARD=1: Minuit strategy 2, a final HESSE and 200k calls in RunBkgGeSim.
-inline Bool_t HardFitRequested() {
-  const char *env = getenv("FIT_HARD");
-  return env && *env && atoi(env) != 0;
-}
-
-// Each in-situ signal run is calibrated on its own Pb Ka lines rather than
-// inheriting its background run's: Ge follows its own run's Pb, and the Cd 10%
-// signal run reads +36 +/- 11 eV above its background run within the same
-// crystal, pixel ring and depth slice, a shift of the whole run.
-// PB_ANCHOR=background restores the background-run anchor.
-inline Bool_t SignalPbAnchorRequested() {
-  const char *env = getenv("PB_ANCHOR");
-  return !(env && TString(env) == "background");
-}
-
-// TRANSFER=offset: the pairs without their own Am run inherit the reference
-// calibration shifted by their Pb K-alpha offset from the reference run, not
-// scaled by the Pb ratio. At Ge the two differ by ~7% of the Pb shift. No line
-// inside the calibrated range resolves them (Pb K-beta lies above it), so the
-// choice is a systematic, not a measurement.
+// TRANSFER=offset: the Cd pairs inherit the Cu 10% calibration shifted by
+// their Pb K-alpha offset from it instead of scaled by the Pb ratio. At Ge the
+// two differ by ~7% of the Pb shift and no line inside the calibrated range
+// resolves them (Pb K-beta lies above it), so the difference is a systematic
+// (CombineGeResult's transfer model).
 inline Bool_t OffsetTransferRequested() {
   const char *env = getenv("TRANSFER");
   return env && TString(env) == "offset";
 }
 
-// FIDUCIAL=interior: every run, calibration and source runs included, keeps
-// only the 9 x 9 interior pixels of each crystal, dropping its outer ring and
-// the ring along the gap between crystals. Pb K-alpha1 reads 7-155 eV away
-// from its all-pixel value in those rings.
-inline Bool_t InteriorPixelsRequested() {
-  const char *env = getenv("FIDUCIAL");
-  return env && TString(env) == "interior";
-}
-
-// Pixel centres sit at |x|, |y| = 1.743 ... 20.769 mm on a 1.9 mm pitch.
-inline Bool_t InInteriorPixels(Float_t x_mm, Float_t y_mm) {
-  const Float_t inner_edge = Constants::PIXEL_CENTERS_X_MM[11] + 0.5;
-  const Float_t outer_edge = Constants::PIXEL_CENTERS_X_MM[21] - 0.5;
-  Float_t ax = TMath::Abs(x_mm), ay = TMath::Abs(y_mm);
-  return ax > inner_edge && ax < outer_edge && ay > inner_edge &&
-         ay < outer_edge;
-}
-
 // The 95.902 keV line's K X-ray escapes enter both methods' fits as fixed
-// lines (see "95.902 keV escapes" below). ESCAPES=off leaves them out.
+// lines (see "95.902 keV escapes" below). ESCAPES=off leaves them out, for
+// CombineGeResult's escape systematic.
 inline Bool_t EscapeLinesRequested() {
   const char *env = getenv("ESCAPES");
   return !(env && TString(env) == "off");
+}
+
+// ---------------------------------------------------------------- pixel map
+
+// Every event is aligned on its day's pixel map (PixelAlignment.hpp) before
+// the calibration: each pixel's line position against its run's, averaged
+// over the day's beam runs, on Pb K-alpha on 01/13 (behind the Cu or Cd
+// shield) and on the 95.902 keV capture line on 01/15 (Pb K-alpha stands a
+// few percent above the continuum there). A day's source runs take its map.
+
+inline TString RunDate(const TString &run) {
+  if (run.Contains("20260113"))
+    return "20260113";
+  if (run.Contains("20260115"))
+    return "20260115";
+  return "";
+}
+
+// The beam runs whose line makes a day's map.
+inline std::vector<TString> PixelMapRuns(const TString &date) {
+  std::vector<TString> runs;
+  if (date == "20260113") {
+    runs.push_back(Constants::CUSHIELDBACKGROUND_10PERCENT_20260113);
+    runs.push_back(Constants::CUSHIELDSIGNAL_10PERCENT_20260113);
+    runs.push_back(Constants::CDSHIELDBACKGROUND_10PERCENT_20260113);
+    runs.push_back(Constants::CDSHIELDSIGNAL_10PERCENT_20260113);
+    runs.push_back(Constants::CDSHIELDBACKGROUND_25PERCENT_20260113);
+    runs.push_back(Constants::CDSHIELDSIGNAL_25PERCENT_20260113);
+    runs.push_back(Constants::ACTIVEBACKGROUND_TEST_5PERCENT_20260113);
+    runs.push_back(Constants::ACTIVEBACKGROUND_TEST_90PERCENT_20260113);
+  }
+  if (date == "20260115") {
+    runs.push_back(Constants::NOSHIELDBACKGROUND_5PERCENT_20260115);
+    runs.push_back(Constants::NOSHIELDSIGNAL_5PERCENT_20260115);
+  }
+  return runs;
+}
+
+// The map run's pixels take, or null for a run outside the two days.
+inline const PixelAlignment::RunAlignment *PixelMapFor(const TString &run) {
+  const TString date = RunDate(run);
+  if (date == "")
+    return nullptr;
+  const Int_t line = (date == "20260113") ? PixelAlignment::LINE_PB_KA
+                                          : PixelAlignment::LINE_CAPTURE_96;
+  return &PixelAlignment::AlignmentOfDay(date, PixelMapRuns(date), line);
+}
+
+// An event's energy with its pixel's factor.
+inline Double_t AlignedEnergy(const PixelAlignment::RunAlignment *map,
+                              Float_t energy, Float_t x_mm, Float_t y_mm) {
+  if (!map)
+    return energy;
+  return energy * map->Factor(PixelAlignment::PixelIndexOf(x_mm, y_mm));
 }
 
 // At 8 the low-exp tail railed on every line. Up to 20 it settles inside
@@ -138,32 +148,14 @@ inline Bool_t EscapeLinesRequested() {
 // 2.6 to 1.1 per degree of freedom.
 const Double_t TAIL_RATIO_MAX = 20.0;
 
-// Fixed when the macro loads, from the switches above, so each
-// configuration writes its own calibrated trees, plots and results. The tag
-// names the Pb anchor and the escapes even though both are the default:
-// production is tau20_sigpb_esc, tau20_sigpb is it without the escapes, and
-// tau20 is the background-run anchor.
-const TString RESULT_TAG = TString("tau20") +
-                           (HardFitRequested() ? "_hard" : "") +
-                           (SignalPbAnchorRequested() ? "_sigpb" : "") +
-                           (EscapeLinesRequested() ? "_esc" : "") +
-                           (OffsetTransferRequested() ? "_oxfer" : "") +
-                           (InteriorPixelsRequested() ? "_int" : "") +
-                           (LinearBkgRequested() ? "_linbkg" : "");
+// Fixed when the macro loads, so production and its two systematic partners
+// each write their own calibrated trees, plots and results. The fixed parts
+// of the name are where the saved fit states live: tau20 the tail bound,
+// sigpb the signal-run Pb anchor, pxday the day pixel map.
+const TString RESULT_TAG =
+    TString("tau20_sigpb") + (EscapeLinesRequested() ? "_esc" : "") +
+    (OffsetTransferRequested() ? "_oxfer" : "") + "_pxday";
 const TString OUT_SUBDIR = "calibrated_" + RESULT_TAG;
-
-// Which result set this run writes. RESULT_TAG names the default one;
-// RESULT_TAG_OVERRIDE lets the same macro produce a second set (e.g. a
-// harder-convergence re-run) instead of keeping a duplicate source file.
-// It changes OUTPUT paths only -- the calibrated inputs always come from
-// OUT_SUBDIR, because overriding the tag must not change which calibrated
-// trees are read, only where the results land.
-inline TString RuntimeResultTag() {
-  const char *env = getenv("RESULT_TAG_OVERRIDE");
-  if (env && *env)
-    return TString(env);
-  return RESULT_TAG;
-}
 
 // ------------------------------------------------------------------- events
 
@@ -473,6 +465,7 @@ struct BkgGeSimResult {
 // The in-situ model's components. No high-side exponential tail: it never
 // takes an interior value across the hand-fitted runs, either switching off or
 // railing at both bounds at once.
+const Bool_t INSITU_FLAT_BKG = kTRUE;
 const Bool_t INSITU_STEP = kFALSE;
 const Bool_t INSITU_LOW_EXP = kTRUE;
 const Bool_t INSITU_LOW_LIN = kFALSE;
@@ -491,7 +484,6 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
   BkgGeSimResult out;
   out.valid = kFALSE;
   Int_t n_bkg = (Int_t)bkg_peak_mus.size();
-  const Bool_t kFlatBkg = USE_FLAT_BKG;
 
   // The saved .simroofits carries the hand-tuned starting point a cold start
   // cannot reach; SetRefitAfterLoad makes it SEED a real fit rather than be
@@ -501,11 +493,6 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
   sim.SetTailRatioMax(TAIL_RATIO_MAX);
   sim.SetInteractive();
   sim.SetRefitAfterLoad();
-  if (HardFitRequested()) {
-    sim.SetFitStrategy(2);
-    sim.SetFitFinalHesse(kTRUE);
-    sim.SetFitMaxCalls(200000);
-  }
 
   std::vector<Double_t> sig_mus = bkg_peak_mus;
   sig_mus.push_back((Double_t)E_NEAR_GE);
@@ -517,25 +504,22 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
 
   // The slope is held only for the flat model; a linear one fits it.
   sim.AddChannel("bkg", bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
-                 Constants::BIN_WIDTH_KEV, n_bkg, bkg_peak_mus, kFlatBkg,
+                 Constants::BIN_WIDTH_KEV, n_bkg, bkg_peak_mus, INSITU_FLAT_BKG,
                  INSITU_STEP, INSITU_LOW_EXP, INSITU_LOW_LIN, INSITU_HIGH_EXP,
-                 bkg_fixed, kFALSE, kFlatBkg, kFALSE);
+                 bkg_fixed, kFALSE, INSITU_FLAT_BKG, kFALSE);
   sim.AddChannel("sig", sig_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
-                 Constants::BIN_WIDTH_KEV, n_bkg + 1, sig_mus, kFlatBkg,
+                 Constants::BIN_WIDTH_KEV, n_bkg + 1, sig_mus, INSITU_FLAT_BKG,
                  INSITU_STEP, INSITU_LOW_EXP, INSITU_LOW_LIN, INSITU_HIGH_EXP,
-                 sig_fixed, kFALSE, kFlatBkg, kFALSE, sig_step);
-  // Share ONE low-side tail (LowExp + LowLin) across both Pb-Ka lines and the
-  // Ge peak, tied to bkg:Ka1. Fit independently, Ka1 inflates its own tail to
-  // absorb the inter-peak fill so neither Ka tail is trustworthy, and the Ge
-  // tail rails to zero, biasing its centroid low. Ge mu/sigma/yield stay free.
+                 sig_fixed, kFALSE, INSITU_FLAT_BKG, kFALSE, sig_step);
+  // Share ONE low-side tail across both Pb-Ka lines and the Ge peak, tied to
+  // bkg:Ka1. Fit independently, Ka1 inflates its own tail to absorb the
+  // inter-peak fill so neither Ka tail is trustworthy, and the Ge tail rails
+  // to zero, biasing its centroid low. Ge mu/sigma/yield stay free.
   // Pushed BEFORE LinkPeakShape so they win first-match on the tail params.
   // Route every target straight to bkg:Ka1 -- chaining via Ka2 hits a
   // ResolveOrCreate quirk that orphans sig:Ka2's tail into a free parameter.
-  // Only link components that exist: with kLowLin off the LowLinTail params
-  // are never built and linking to them aborts the channel build.
-  const char *tp[4] = {"LowExpTailAmplitude", "LowExpTailRatio",
-                       "LowLinTailAmplitude", "LowLinTailSlope"};
-  const Int_t n_tp = INSITU_LOW_LIN ? 4 : 2;
+  const Int_t n_tp = 2;
+  const char *tp[n_tp] = {"LowExpTailAmplitude", "LowExpTailRatio"};
   TString ge_idx = TString::Format("%d", n_bkg + 1);
   for (Int_t t = 0; t < n_tp; t++) {
     sim.LinkParameter(TString("bkg:") + tp[t] + "2",
@@ -547,8 +531,7 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
                       TString("bkg:") + tp[t] + "1");
   }
 
-  if (LINK_PB_KA_SIGMA)
-    sim.LinkParameter("bkg:Sigma2", "bkg:Sigma1");
+  sim.LinkParameter("bkg:Sigma2", "bkg:Sigma1");
 
   // The signal run's Pb lines keep their own centroids: the two runs of a pair
   // sit at different rates, and the reading moves with rate by tens of eV.
@@ -604,8 +587,9 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
     seed = *precomputed_bkg_seed;
   } else {
     RooFitUtils bkg_fitter(bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
-                           Constants::BIN_WIDTH_KEV, USE_FLAT_BKG, INSITU_STEP,
-                           INSITU_LOW_EXP, INSITU_LOW_LIN, INSITU_HIGH_EXP);
+                           Constants::BIN_WIDTH_KEV, INSITU_FLAT_BKG,
+                           INSITU_STEP, INSITU_LOW_EXP, INSITU_LOW_LIN,
+                           INSITU_HIGH_EXP);
     bkg_fitter.SetTailRatioMax(TAIL_RATIO_MAX);
     bkg_fitter.SetInteractive();
     TString seed_label = fit_label + "_BkgSeed";

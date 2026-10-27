@@ -1,9 +1,9 @@
-# 73mGe — the corrections and why (2026-10-24)
+# 73mGe — the corrections and why (2026-10-27)
 <!---->
 What each correction in the result does, how large it is, and the evidence for it; the current numbers and the plan are in `STATUS.md`.
 A shift between two analysis choices is charged as a systematic only when more than one of the choices can be defended; fixing a defect, or changing an implementation detail that should give the same answer, is not a systematic (the CdTe reprocessing, below).
 <!---->
-## CZT: from 68.7502 to 68.7511 keV
+## CZT: from 68.7502 to 68.7543 keV
 <!---->
 The value reported earlier, 68.7502 ± 0.0145 keV (c260617), moved through these steps (sizes where measured; the full table is for the write-up, Plan 7 in `STATUS.md`):
 <!---->
@@ -18,8 +18,9 @@ The value reported earlier, 68.7502 ± 0.0145 keV (c260617), moved through these
 9. **Both methods in the combination**: the gap between them was not significant (0.3–0.5σ), and charging it as a systematic used Method 2 only through that noise.
 10. **The 95.902 keV escapes** (below): −7.9 eV on the quoted value.
 11. **01/16 dropped** (2026-10-26): the graphite-castle run differs from the others in too many ways to be understood. Its residual runs from −5 counts/s at 62 keV to 0 at 71 keV, it is the highest-rate run (26–34k counts/s per crystal), no line appears in both its runs to check the source-run calibration, and its photons reach deeper into the crystal than in any other configuration. Its background run no longer enters the inside escape fraction either, which is now 01/15's alone. 68.7533 → 68.7511 keV: −1.8 eV for the run, −0.4 eV for the fraction.
+12. **The day pixel map** (2026-10-27, below): 68.7511 → 68.7543 keV, +3.2 eV.
 <!---->
-How the anchor (`_sigpb`), the transfer model (`_oxfer`) and the escapes (`_esc`) move each run: Ge − 68.752 keV per in-situ row in eV; the rate-sub row (01/15) is +23.9 eV without the escapes and +13.9 eV with them. Each tag combined alone, without 01/16.
+How the anchor (`_sigpb`), the transfer model (`_oxfer`), the escapes (`_esc`) and the day pixel map (`_pxday`) move each run: Ge − 68.752 keV per in-situ row in eV; the rate-sub row (01/15) is +23.9 eV without the escapes and +13.9 eV with them, +29.0 and +20.3 eV with the pixel map. Each tag combined alone, without 01/16.
 <!---->
 | Tag | Cu 01/13 | Cd 10% | Cd 25% | Method 1 | Both methods, BLUE | Outlier | Quoted |
 |---|---|---|---|---|---|---|---|
@@ -29,10 +30,26 @@ How the anchor (`_sigpb`), the transfer model (`_oxfer`) and the escapes (`_esc`
 | `tau20_sigpb_oxfer` | +22.4 | −22.0 | +21.5 | 68.7627 ± 0.0165 | 68.7639 ± 0.0158 | 10.5 | 68.7639 ± 0.0189 |
 | `tau20_sigpb_esc` | +10.1 | −32.7 | +9.1 | 68.7507 ± 0.0166 | 68.7521 ± 0.0158 | 10.2 | 68.7521 ± 0.0188 |
 | `tau20_sigpb_esc_oxfer` | +10.1 | −22.6 | +20.9 | 68.7553 ± 0.0166 | 68.7563 ± 0.0158 | 8.5 | 68.7563 ± 0.0179 |
+| `tau20_sigpb_esc_pxday` | +13.9 | −21.8 | −9.1 | 68.7530 ± 0.0165 | 68.7552 ± 0.0156 | 7.1 | 68.7552 ± 0.0171 |
+| `tau20_sigpb_esc_oxfer_pxday` | +13.9 | −10.9 | +2.7 | 68.7577 ± 0.0165 | 68.7593 ± 0.0155 | 5.3 | 68.7593 ± 0.0164 |
 <!---->
-The quoted 68.7511 keV is `tau20_sigpb_esc` combined with its transfer-model and escape partners as correlated terms (`STATUS.md`).
+The quoted 68.7543 keV is `tau20_sigpb_esc_pxday` combined with its transfer-model and escape partners as correlated terms (`STATUS.md`).
 <!---->
 ## CZT corrections
+<!---->
+### Day pixel map
+<!---->
+The pixel gains are one table: 558.456 keV over each pixel's 558 keV centroid in the 01/16 graphite-castle run, at every depth. Near 70–96 keV, after those gains, the pixels do not agree (`czt/PixelGainStability.cpp`, plots in `plots/czt/pixel_gain`). Each pixel's line position against its run's summed spectrum, in eV at 68.75 keV:
+<!---->
+- **The crystals read 80–300 eV apart.** Crystal means (x < 0, y < 0 / x > 0, y < 0 / x < 0, y > 0 / x > 0, y > 0): Pb Kα on 01/13 +63 / +22 / −81 / +8; the 95.902 keV line on 01/13 +140 / +53 / −138 / +22 and on 01/15 +131 / +40 / −154 / +16. At 558 keV the four agree within about ±10 eV.
+- **The pixels within a crystal spread by about 110 eV rms** beyond their errors.
+- **The 558 keV gains do not see this pattern:** on the same day the 95.902 keV and 558 keV maps correlate at 0.05 (01/13), −0.21 (01/14), 0.07 (01/15) and 0.00 (01/16).
+- **It is mostly fixed.** The 95.902 keV maps of different days correlate at 0.65–0.93 (01/15 against 01/16: 0.93), and differ by 40–115 eV rms beyond their errors. The 558 keV pattern changes by 7–27 eV.
+<!---->
+A single run measures a pixel to 90–300 eV, about the size of the pattern; the day's beam runs together measure it to about 50 eV (01/13, eight runs) and 28 eV (01/15). So every event is aligned on its day's map: Pb Kα on 01/13, behind the Cu or Cd shield, where it stands twice the continuum; the 95.902 keV line on 01/15, where Pb Kα stands 2–5% above it. Both come from the same filtered events; the 95.902 keV events sit closer to the cathode (61–66% within 0.5 mm of it on 01/13–15, against 43–49% for Pb Kα), and on the same day its map and Pb Kα's correlate at 0.45. A pixel measured to 100 eV or better gets the factor μ_run/μ_pixel, which leaves each run's summed scale where it was; the source runs take their day's map.
+<!---->
+- **Effect.** Cu +3.8, Cd 10% +10.9, Cd 25% −18.2, rate-sub +6.4 eV (its fit error 42.7 → 37.5 eV, χ²/ndf 1.43 → 1.12); the quoted value 68.7511 → 68.7543 keV, its outlier term 11.2 → 7.1 eV.
+- **Alternatives.** Each run on its own line moved the quoted value +6.9 eV, each signal run on its background run's −2.9 eV; both measure the pixels from one run, to 90–300 eV. A calibration per crystal (Am-241 and Pb Kα on 01/13, Am-241 and Ba-133 on 01/15) moved it +4.6 eV but fitted the in-situ pairs worse (χ²/ndf up by 0.1–0.4); the Am source runs light the crystals differently from the beam, most clearly on 01/15.
 <!---->
 ### Signal-run Pb anchor
 <!---->
