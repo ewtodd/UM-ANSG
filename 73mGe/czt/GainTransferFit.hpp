@@ -19,7 +19,7 @@
 #include <TF1.h>
 #include <TFile.h>
 #include <TFitResult.h>
-#include <TH1F.h>
+#include <TH1D.h>
 #include <TMath.h>
 #include <TString.h>
 #include <TTree.h>
@@ -42,9 +42,10 @@ const Float_t E_PB_KA1 = ReferenceLines::PB_KA1;
 
 const Float_t E_NEAR_GE = 69;
 
-// Anchor reference-energy uncertainties (keV), folded into the cal-fit x-errors
-// so they propagate into the pol1 parameter covariance and thus the Ge energy.
-// Pb Ka are known to <1 eV (Deslattes).
+// Anchor reference-energy uncertainties (keV), the cal fit's y-errors (energy
+// is its y axis), so they propagate into the pol1 parameter covariance and
+// thus the Ge energy. dE_PB_KA rounds SRD 128's 0.24 and 0.17 eV up to 1 eV;
+// dE_AM241 is DDEP's.
 //
 // dE_LINE is a conservative ~10 eV lump for the Ba-133 lines of the 01/15
 // source calibration.
@@ -65,12 +66,6 @@ const Float_t RATESUB_HI = 71.5;
 const Double_t COMB_PERIOD_RAW_KEV = 0.264;
 const Int_t N_RATESUB_PHASES = 5;
 
-// The 01/15 calibration comes from source runs and is carried to the beam
-// runs, and no line appears in both to check it. On 01/13 the same step, Am
-// source run to beam run, holds to about 20 eV: the beam run's own Pb Ka1 ->
-// Kb1 slope matches the Am + Pb Ka slope.
-const Double_t RATESUB_TRANSFER_SYS_KEV = 0.020;
-
 // TRANSFER=offset: the Cd pairs inherit the Cu 10% calibration shifted by
 // their Pb K-alpha offset from it instead of scaled by the Pb ratio. At Ge the
 // two differ by ~7% of the Pb shift and no line inside the calibrated range
@@ -87,6 +82,15 @@ inline Bool_t OffsetTransferRequested() {
 inline Bool_t EscapeLinesRequested() {
   const char *env = getenv("ESCAPES");
   return !(env && TString(env) == "off");
+}
+
+// CD_ESCAPES=inside: the Cd-shield pairs take the escape fractions of captures
+// inside the crystal instead of the shield's, for CombineGeResult's escape
+// source systematic. Their captures sit in the cathode layer like the other
+// runs', yet their background runs show no Cd K-beta escape.
+inline Bool_t CdInsideEscapesRequested() {
+  const char *env = getenv("CD_ESCAPES");
+  return env && TString(env) == "inside";
 }
 
 // ---------------------------------------------------------------- pixel map
@@ -148,13 +152,14 @@ inline Double_t AlignedEnergy(const PixelAlignment::RunAlignment *map,
 // 2.6 to 1.1 per degree of freedom.
 const Double_t TAIL_RATIO_MAX = 20.0;
 
-// Fixed when the macro loads, so production and its two systematic partners
+// Fixed when the macro loads, so production and its systematic partners
 // each write their own calibrated trees, plots and results. The fixed parts
 // of the name are where the saved fit states live: tau20 the tail bound,
 // sigpb the signal-run Pb anchor, pxday the day pixel map.
 const TString RESULT_TAG =
     TString("tau20_sigpb") + (EscapeLinesRequested() ? "_esc" : "") +
-    (OffsetTransferRequested() ? "_oxfer" : "") + "_pxday";
+    (OffsetTransferRequested() ? "_oxfer" : "") +
+    (CdInsideEscapesRequested() ? "_cdin" : "") + "_pxday";
 const TString OUT_SUBDIR = "calibrated_" + RESULT_TAG;
 
 // ------------------------------------------------------------------- events
@@ -177,17 +182,19 @@ inline std::vector<Double_t> LoadCalibrated(const TString &input_name) {
 
 // Rate histograms of an already-calibrated event list over its live time, in
 // bins of width bin at n_phases starting points bin / n_phases apart: the
-// event-list counterpart of CalibrateAndFit.cpp's BuildRateHists. Sumw2 so the
-// propagated errors survive a subtraction.
-inline std::vector<TH1F *>
+// event-list counterpart of CalibrateAndFit.cpp's BuildRateHists. That one
+// divides each crystal by its own live time; an event list pools the crystals
+// over their summed live time, and within a run the crystals' live times agree
+// to under 1%. Sumw2 so the propagated errors survive a subtraction.
+inline std::vector<TH1D *>
 RateHistsFromEvents(const std::vector<Double_t> &events, Double_t live_time,
                     const TString &name, Double_t lo, Double_t hi, Double_t bin,
                     Int_t n_phases) {
-  std::vector<TH1F *> hists;
+  std::vector<TH1D *> hists;
   Int_t nbins = (Int_t)std::lround((hi - lo) / bin);
   for (Int_t k = 0; k < n_phases; k++) {
     Double_t start = lo + k * bin / n_phases;
-    TH1F *h = new TH1F(name + Form("_phase%d", k),
+    TH1D *h = new TH1D(name + Form("_phase%d", k),
                        ";Deposited Energy [keV];Rate [counts/s]", nbins, start,
                        start + nbins * bin);
     h->SetDirectory(nullptr);
@@ -241,10 +248,10 @@ struct EscapeFractions {
 // Captures inside the crystal (no shield, Cu shield). Cd K-beta, the one
 // escape clear of other lines, is measured in the 01/15 beam background run
 // (0.0122 +/- ~0.0017; 01/16 is not used, see CalibrateAndFit.cpp), and Cd
-// K-alpha follows from the shares. Te K-alpha takes Geant4's 0.053 of Cd
-// K-alpha for captures inside the crystal (the run gives 0.0006 +/- 0.002),
-// Te K-beta Geant4's 0.30 of Te K-alpha.
-const EscapeFractions ESCAPES_INSIDE = {{0.0461, 0.0122, 0.0024, 0.0007}};
+// K-alpha follows from the shares (ReferenceLines.hpp: Ka/Kb 4.187). Te
+// K-alpha takes Geant4's 0.053 of Cd K-alpha for captures inside the crystal
+// (the run gives 0.0006 +/- 0.002), Te K-beta Geant4's 0.30 of Te K-alpha.
+const EscapeFractions ESCAPES_INSIDE = {{0.0511, 0.0122, 0.0027, 0.0008}};
 
 // Photons from captures outside the crystal, in the Cd shield, which stops
 // the thermal neutrons: Geant4, the line's photons onto the crystal's face.
@@ -283,6 +290,30 @@ struct CaptureLine {
 const Double_t CAPTURE_FIT_LO = 91.5;
 const Double_t CAPTURE_FIT_HI = 100.5;
 
+// AU's valid flag also passes Minuit status 3-4 at EDM < 10 and a forced
+// positive-definite covariance, and a refit of a saved state is always valid,
+// so a result is used only from a clean minimum with an accurate covariance.
+inline Bool_t FitConverged(const FitResult &r, const TString &label) {
+  if (r.fit_status == 0 && r.cov_qual == 3)
+    return kTRUE;
+  std::cerr << "ERROR: " << label << " did not converge cleanly (status "
+            << r.fit_status << ", covariance quality " << r.cov_qual << ", edm "
+            << r.edm << "); the fit is not used" << std::endl;
+  return kFALSE;
+}
+
+// A fitted value pinned at its limit is no measurement, whatever the fit
+// status says.
+inline Bool_t ParameterAtLimit(const TF1 &f, Int_t i) {
+  Double_t lo = 0, hi = 0;
+  f.GetParLimits(i, lo, hi);
+  if (!(hi > lo))
+    return kFALSE;
+  Double_t margin = 1e-4 * (hi - lo);
+  Double_t value = f.GetParameter(i);
+  return value <= lo + margin || value >= hi - margin;
+}
+
 // The 95.902 keV line in h, with the tail of the lines the escapes will sit
 // among. Counts take a Poisson likelihood; a rate-sub residual, which goes
 // negative, a chi2.
@@ -312,7 +343,8 @@ inline CaptureLine FitCaptureLine(TH1 *h, Double_t tail_height_ratio,
   model.SetParLimits(1, mu0 - 1.0, mu0 + 1.0);
   model.SetParLimits(2, 0.4, 1.5);
   TFitResultPtr fr = h->Fit(&model, poisson ? "S L Q R N" : "S Q R N");
-  if (fr.Get() && fr->IsValid() && model.GetParameter(0) > 0) {
+  if (fr.Get() && fr->IsValid() && model.GetParameter(0) > 0 &&
+      !ParameterAtLimit(model, 1) && !ParameterAtLimit(model, 2)) {
     out.gaus_yield = model.GetParameter(0);
     out.mu = model.GetParameter(1);
     out.valid = kTRUE;
@@ -324,7 +356,7 @@ inline CaptureLine FitCaptureLine(TH1 *h, Double_t tail_height_ratio,
 // N_RATESUB_PHASES starting points, which beat neither against the comb nor
 // against where they start: in 255 eV bins at one starting point the Cu 01/13
 // background run's yield moved by 20%.
-inline CaptureLine AverageCaptureLine(const std::vector<TH1F *> &hists,
+inline CaptureLine AverageCaptureLine(const std::vector<TH1D *> &hists,
                                       Double_t tail_height_ratio,
                                       Double_t tau_over_sigma, Bool_t poisson,
                                       const TString &tag) {
@@ -390,19 +422,20 @@ struct InSituEscapes {
 
 // Fit a channel's capture line in its events with the tail of tail_source
 // and add its escapes to that channel as fixed lines with the shape of
-// shape_peak.
-inline void AddEscapeLinesToChannel(RooFitUtils &sim, const TString &channel,
-                                    Int_t shape_peak,
-                                    const std::vector<Double_t> &events,
-                                    const PeakFitResult &tail_source,
-                                    const InSituEscapes &escapes,
-                                    const TString &tag) {
+// shape_peak. False when the line cannot be measured: a fit asked for escapes
+// must not go on without them.
+inline Bool_t AddEscapeLinesToChannel(RooFitUtils &sim, const TString &channel,
+                                      Int_t shape_peak,
+                                      const std::vector<Double_t> &events,
+                                      const PeakFitResult &tail_source,
+                                      const InSituEscapes &escapes,
+                                      const TString &tag) {
   const Double_t bin = escapes.comb_period;
   const Int_t n_bins = (Int_t)std::lround(16.0 / bin);
-  std::vector<TH1F *> hists;
+  std::vector<TH1D *> hists;
   for (Int_t k = 0; k < N_RATESUB_PHASES; k++) {
     Double_t start = 88.0 + k * bin / N_RATESUB_PHASES;
-    TH1F *h = new TH1F(TString::Format("capture_hist_%s_%d", tag.Data(), k), "",
+    TH1D *h = new TH1D(TString::Format("capture_hist_%s_%d", tag.Data(), k), "",
                        n_bins, start, start + n_bins * bin);
     h->SetDirectory(nullptr);
     for (size_t i = 0; i < events.size(); i++)
@@ -416,9 +449,9 @@ inline void AddEscapeLinesToChannel(RooFitUtils &sim, const TString &channel,
   for (size_t k = 0; k < hists.size(); k++)
     delete hists[k];
   if (!line.valid) {
-    std::cerr << "WARNING: no 95.902 keV line for " << tag
-              << "; its escapes are left out" << std::endl;
-    return;
+    std::cerr << "ERROR: no 95.902 keV line for " << tag
+              << "; the fit is abandoned" << std::endl;
+    return kFALSE;
   }
   std::vector<Double_t> mus, gaus_yields;
   EscapeLinesOf(line, *escapes.fractions, escapes.units_per_kev, mus,
@@ -431,6 +464,7 @@ inline void AddEscapeLinesToChannel(RooFitUtils &sim, const TString &channel,
             << std::setprecision(4) << mus[0] << " / " << mus[1]
             << ", Te K-alpha at " << mus[4] << " / " << mus[5] << std::endl;
   sim.AddFixedLines(channel, shape_peak, mus, gaus_yields);
+  return kTRUE;
 }
 
 // The escapes per unit capture-line Gaussian yield, per keV at x: each line a
@@ -465,6 +499,8 @@ struct BkgGeSimResult {
 // The in-situ model's components. No high-side exponential tail: it never
 // takes an interior value across the hand-fitted runs, either switching off or
 // railing at both bounds at once.
+// The continuum is flat: a sloped one takes up shape that belongs to the
+// lines' tails, and its fits end with a forced covariance.
 const Bool_t INSITU_FLAT_BKG = kTRUE;
 const Bool_t INSITU_STEP = kFALSE;
 const Bool_t INSITU_LOW_EXP = kTRUE;
@@ -539,10 +575,12 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
     sim.LinkPeakShape("sig", i, "bkg", i);
 
   if (escapes && tail_source) {
-    AddEscapeLinesToChannel(sim, "bkg", n_bkg - 1, bkg_events, *tail_source,
-                            *escapes, fit_label + "_bkg");
-    AddEscapeLinesToChannel(sim, "sig", n_bkg - 1, sig_events, *tail_source,
-                            *escapes, fit_label + "_sig");
+    if (!AddEscapeLinesToChannel(sim, "bkg", n_bkg - 1, bkg_events,
+                                 *tail_source, *escapes, fit_label + "_bkg"))
+      return out;
+    if (!AddEscapeLinesToChannel(sim, "sig", n_bkg - 1, sig_events,
+                                 *tail_source, *escapes, fit_label + "_sig"))
+      return out;
   }
 
   sim.SeedChannel("bkg", seed);
@@ -554,7 +592,7 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
     return out;
   out.bkg_channel = results[0];
   out.sig_channel = results[1];
-  out.valid = results[1].valid;
+  out.valid = results[1].valid && FitConverged(results[1], fit_label);
   return out;
 }
 
@@ -627,8 +665,7 @@ struct RateSubResult {
   Float_t sigma = -1, bkg0 = 0, slope = 0;
   Float_t tail_amp = -1, tail_ratio = -1; // -1 when no tail was fitted
   // Production's phase-averaged fit only: the spread over bin phases, the
-  // shift to a quadratic residual background, and both with the calibration
-  // transfer in quadrature.
+  // shift to a quadratic residual background, and the two in quadrature.
   Float_t phase_rms = 0, shape_shift = 0, sys_err = 0;
   Bool_t valid = kFALSE;
 };
@@ -640,7 +677,7 @@ struct RateSubResult {
 // chi2 fit, not FittingUtils: its Poisson option assumes integer counts, but
 // this histogram holds counts/second and goes negative after subtraction. The
 // histogram must have Sumw2 set so propagated errors exist.
-inline RateSubResult FitRateSubHist(TH1F *res, Double_t lo, Double_t hi,
+inline RateSubResult FitRateSubHist(TH1D *res, Double_t lo, Double_t hi,
                                     const TString &tag,
                                     TF1 **out_model = nullptr) {
   RateSubResult out;
@@ -705,37 +742,45 @@ inline Double_t LowExpTailWindowFactor(Double_t lo, Double_t hi, Double_t mu,
 }
 
 // What the rate-sub fit takes as given: the Ge tail and the residual's
-// 95.902 keV line, whose escapes it carries (none while capture_rate is 0).
+// 95.902 keV line, whose escapes it carries with the fractions of where the
+// pair's captures happen (none while escapes is null or capture_rate is 0).
 struct RateSubShape {
   Double_t ge_tail_height_ratio = 0;
   Double_t ge_tau_over_sigma = 1;
+  const EscapeFractions *escapes = nullptr;
   Double_t capture_rate = 0; // Gaussian yield, counts/s
   Double_t capture_mu = 0;
 };
 
+const Int_t RATESUB_N_PARAMS = 14;
+
 // Ge Gaussian + tail on a linear (optionally quadratic) background, plus the
-// fixed escapes of the residual's 95.902 keV line (no shield: captures inside
-// the crystal), with Ge's width and tail. Parameters:
+// fixed escapes of the residual's 95.902 keV line, with Ge's width and tail.
+// Parameters:
 //   [0] Ge height  [1] Ge mu  [2] Ge sigma  [3] Ge tail/gaus height ratio
 //   [4] Ge tau/sigma  [5] bkg0  [6] bkg slope  [7] bkg curvature
 //   [8] 95.902 keV Gaussian yield x bin width  [9] its centroid
+//   [10-13] the escape fractions of the four series
+inline Double_t RateSubEscapes(Double_t x, const Double_t *p) {
+  if (p[8] == 0)
+    return 0.0;
+  EscapeFractions fractions = {{p[10], p[11], p[12], p[13]}};
+  return p[8] * EscapeDensity(x, p[9], p[2], p[3], p[4], fractions);
+}
+
 inline Double_t RateSubShapedModel(Double_t *x, Double_t *p) {
   Double_t ge_gaus[3] = {p[1], p[2], p[0]};
   Double_t ge_tail[6] = {p[1], p[2], p[0] * p[3], p[4], 0.0, 0.0};
   Double_t u = x[0] - 68.75;
-  Double_t escapes = 0;
-  if (p[8] != 0)
-    escapes =
-        p[8] * EscapeDensity(x[0], p[9], p[2], p[3], p[4], ESCAPES_INSIDE);
   return FittingFunctions::Gaussian(x, ge_gaus) +
          FittingFunctions::LowTail(x, ge_tail) + p[5] + p[6] * u +
-         p[7] * u * u + escapes;
+         p[7] * u * u + RateSubEscapes(x[0], p);
 }
 
 // Fit the already-subtracted residual over the production window with the
 // borrowed shape, seeded from the plain Gaussian fit. The residual
 // background is linear unless quadratic is set.
-inline RateSubResult FitRateSubHistShaped(TH1F *res, const RateSubShape &shape,
+inline RateSubResult FitRateSubHistShaped(TH1D *res, const RateSubShape &shape,
                                           const TString &tag,
                                           TF1 **out_model = nullptr,
                                           Bool_t quadratic = kFALSE) {
@@ -749,19 +794,26 @@ inline RateSubResult FitRateSubHistShaped(TH1F *res, const RateSubShape &shape,
     delete seed;
     return out;
   }
-  const char *names[10] = {
-      "GeHeight", "GeMu",     "GeSigma",      "GeTailRatio",      "GeTauRatio",
-      "Bkg0",     "BkgSlope", "BkgCurvature", "CaptureYieldBins", "CaptureMu"};
+  const char *names[RATESUB_N_PARAMS] = {
+      "GeHeight",         "GeMu",      "GeSigma",    "GeTailRatio",
+      "GeTauRatio",       "Bkg0",      "BkgSlope",   "BkgCurvature",
+      "CaptureYieldBins", "CaptureMu", "EscapeCdKa", "EscapeCdKb",
+      "EscapeTeKa",       "EscapeTeKb"};
   static Int_t model_counter = 0;
   TString mname = Form("ratesub_shaped_%s_%d", tag.Data(), ++model_counter);
-  TF1 *model = new TF1(mname, RateSubShapedModel, RATESUB_LO, RATESUB_HI, 10);
-  for (Int_t i = 0; i < 10; i++)
+  TF1 *model = new TF1(mname, RateSubShapedModel, RATESUB_LO, RATESUB_HI,
+                       RATESUB_N_PARAMS);
+  for (Int_t i = 0; i < RATESUB_N_PARAMS; i++)
     model->SetParName(i, names[i]);
   model->SetParameter(7, 0.0);
   if (!quadratic)
     model->FixParameter(7, 0.0);
-  model->FixParameter(8, shape.capture_rate * res->GetBinWidth(1));
+  Double_t capture_yield_bins =
+      shape.escapes ? shape.capture_rate * res->GetBinWidth(1) : 0.0;
+  model->FixParameter(8, capture_yield_bins);
   model->FixParameter(9, shape.capture_mu);
+  for (Int_t s = 0; s < 4; s++)
+    model->FixParameter(10 + s, shape.escapes ? shape.escapes->series[s] : 0.0);
   Double_t sigma0 = seed->GetParameter(2);
   model->SetParameter(0, seed->GetParameter(0) /
                              (sigma0 * TMath::Sqrt(2.0 * TMath::Pi())));
@@ -776,7 +828,8 @@ inline RateSubResult FitRateSubHistShaped(TH1F *res, const RateSubShape &shape,
   delete seed;
 
   TFitResultPtr fr = res->Fit(model, "S Q R N");
-  if (fr.Get() && fr->IsValid() && model->GetNDF() > 0) {
+  if (fr.Get() && fr->IsValid() && model->GetNDF() > 0 &&
+      !ParameterAtLimit(*model, 1) && !ParameterAtLimit(*model, 2)) {
     out.mu = model->GetParameter(1);
     out.mu_err = model->GetParError(1);
     out.chi2 = model->GetChisquare() / model->GetNDF();
@@ -794,19 +847,19 @@ inline RateSubResult FitRateSubHistShaped(TH1F *res, const RateSubShape &shape,
   return out;
 }
 
-// The 95.902 keV line is 1.2 times stronger in the signal runs than live time
-// predicts, so the residual keeps a share of it and of its escapes. Its
+// The 95.902 keV line is 1.08 times stronger in the 01/15 signal run than live
+// time predicts, so the residual keeps a share of it and of its escapes. Its
 // Gaussian yield and centroid in the residual of rate histograms over 88-104
 // keV at the rate-sub fit's starting points, with the Ge tail, set shape's
-// capture line; without one the fit carries no escapes.
-inline void SetResidualCaptureLine(const std::vector<TH1F *> &sigs,
-                                   const std::vector<TH1F *> &bkgs,
-                                   const TString &tag, RateSubShape &shape) {
+// capture line. False when the line cannot be measured.
+inline Bool_t SetResidualCaptureLine(const std::vector<TH1D *> &sigs,
+                                     const std::vector<TH1D *> &bkgs,
+                                     const TString &tag, RateSubShape &shape) {
   if (sigs.size() != bkgs.size() || sigs.empty())
-    return;
-  std::vector<TH1F *> residuals;
+    return kFALSE;
+  std::vector<TH1D *> residuals;
   for (size_t k = 0; k < sigs.size(); k++) {
-    TH1F *res = static_cast<TH1F *>(sigs[k]->Clone(
+    TH1D *res = static_cast<TH1D *>(sigs[k]->Clone(
         TString::Format("capture_residual_%s_%d", tag.Data(), (Int_t)k)));
     res->SetDirectory(nullptr);
     res->Add(bkgs[k], -1.0);
@@ -815,43 +868,46 @@ inline void SetResidualCaptureLine(const std::vector<TH1F *> &sigs,
   CaptureLine line =
       AverageCaptureLine(residuals, shape.ge_tail_height_ratio,
                          shape.ge_tau_over_sigma, kFALSE, "ratesub_" + tag);
-  if (line.valid) {
-    shape.capture_rate = line.gaus_yield;
-    shape.capture_mu = line.mu;
-  } else {
-    std::cerr << "WARNING: no residual 95.902 keV line for " << tag
-              << "; the rate-sub fit carries no escapes" << std::endl;
-  }
   for (size_t k = 0; k < residuals.size(); k++)
     delete residuals[k];
+  if (!line.valid) {
+    std::cerr << "ERROR: no residual 95.902 keV line for " << tag
+              << "; the rate-sub fit is abandoned" << std::endl;
+    return kFALSE;
+  }
+  shape.capture_rate = line.gaus_yield;
+  shape.capture_mu = line.mu;
+  return kTRUE;
 }
 
 // The rate-sub fit of the residuals of pairs of rate histograms binned one comb
 // period wide at N_RATESUB_PHASES starting points, averaged over the starting
 // points. The linear residual background is the central model and the
-// quadratic one its systematic. The residual is overdispersed (chi2/ndf
+// quadratic one its systematic, the mean shift over the starting points where
+// both fits converge. The residual is overdispersed (chi2/ndf
 // 1.4-1.9 on 01/15-16: the pixels' discrete energy grids, which the two runs
 // fill differently), so the fit error is scaled by sqrt(chi2/ndf). The first
-// starting point's model and residual are handed back for drawing when the
-// pointers are given (the caller then owns them).
-inline RateSubResult FitRateSubPhases(const std::vector<TH1F *> &sigs,
-                                      const std::vector<TH1F *> &bkgs,
+// converged starting point's model and residual are handed back for drawing
+// when the pointers are given (the caller then owns them).
+inline RateSubResult FitRateSubPhases(const std::vector<TH1D *> &sigs,
+                                      const std::vector<TH1D *> &bkgs,
                                       const RateSubShape &shape,
                                       const TString &tag,
                                       TF1 **out_model = nullptr,
-                                      TH1F **out_residual = nullptr) {
+                                      TH1D **out_residual = nullptr) {
   RateSubResult out;
   if (sigs.size() != bkgs.size() || sigs.empty())
     return out;
-  Double_t sum_mu = 0, sum_mu2 = 0, sum_err = 0, sum_chi2 = 0, sum_quad = 0;
-  Int_t n_linear = 0, n_quadratic = 0;
+  Double_t sum_err = 0, sum_chi2 = 0, sum_quadratic_shift = 0;
+  std::vector<Double_t> linear_mus;
+  Int_t n_quadratic = 0;
   RateSubResult fit;
   TF1 *model = nullptr;
-  TH1F *res = nullptr;
+  TH1D *res = nullptr;
   for (Int_t k = 0; k < (Int_t)sigs.size(); k++) {
     TString phase_tag = tag + Form("_phase%d", k);
-    TH1F *phase_res =
-        static_cast<TH1F *>(sigs[k]->Clone("rate_residual_" + phase_tag));
+    TH1D *phase_res =
+        static_cast<TH1D *>(sigs[k]->Clone("rate_residual_" + phase_tag));
     phase_res->SetDirectory(nullptr);
     phase_res->Add(bkgs[k], -1.0);
     TF1 *phase_model = nullptr;
@@ -865,17 +921,15 @@ inline RateSubResult FitRateSubPhases(const std::vector<TH1F *> &sigs,
               << linear.chi2 << ")   quadratic " << std::setprecision(4)
               << quadratic.mu << " +/- " << quadratic.mu_err << std::endl;
     if (linear.valid) {
-      sum_mu += linear.mu;
-      sum_mu2 += linear.mu * linear.mu;
+      linear_mus.push_back(linear.mu);
       sum_err += linear.mu_err;
       sum_chi2 += linear.chi2;
-      n_linear++;
     }
-    if (quadratic.valid) {
-      sum_quad += quadratic.mu;
+    if (linear.valid && quadratic.valid) {
+      sum_quadratic_shift += (Double_t)quadratic.mu - (Double_t)linear.mu;
       n_quadratic++;
     }
-    if (k == 0 && linear.valid && phase_model) {
+    if (!model && linear.valid && phase_model) {
       fit = linear;
       model = phase_model;
       res = phase_res;
@@ -884,33 +938,41 @@ inline RateSubResult FitRateSubPhases(const std::vector<TH1F *> &sigs,
       delete phase_res;
     }
   }
-  if (n_linear == 0 || !model) {
-    std::cerr << "WARNING: rate-sub chi2 fit failed for " << tag << std::endl;
+  const Int_t n_linear = (Int_t)linear_mus.size();
+  if (n_linear == 0 || !model || n_quadratic == 0) {
+    std::cerr << "ERROR: rate-sub fit failed for " << tag << " (" << n_linear
+              << " linear, " << n_quadratic << " quadratic of " << sigs.size()
+              << " starting points)" << std::endl;
     delete model;
     delete res;
     return out;
   }
 
-  Double_t mean = sum_mu / n_linear;
+  Double_t mean = 0;
+  for (Int_t k = 0; k < n_linear; k++)
+    mean += linear_mus[k];
+  mean /= n_linear;
+  // The spread from the deviations: E^2 - mean^2 at 68.77 keV loses the
+  // few-eV spread to rounding.
+  Double_t sum_dev2 = 0;
+  for (Int_t k = 0; k < n_linear; k++)
+    sum_dev2 += (linear_mus[k] - mean) * (linear_mus[k] - mean);
   Double_t chi2 = sum_chi2 / n_linear;
   out = fit;
   out.mu = mean;
   out.chi2 = chi2;
   out.mu_err = (sum_err / n_linear) * TMath::Sqrt(TMath::Max(chi2, 1.0));
-  out.phase_rms =
-      TMath::Sqrt(TMath::Max(sum_mu2 / n_linear - mean * mean, 0.0));
+  out.phase_rms = TMath::Sqrt(sum_dev2 / n_linear);
   out.shape_shift =
-      (n_quadratic > 0) ? TMath::Abs(sum_quad / n_quadratic - mean) : 0.0;
-  out.sys_err = TMath::Sqrt(
-      out.phase_rms * out.phase_rms + out.shape_shift * out.shape_shift +
-      RATESUB_TRANSFER_SYS_KEV * RATESUB_TRANSFER_SYS_KEV);
+      (n_quadratic > 0) ? TMath::Abs(sum_quadratic_shift / n_quadratic) : 0.0;
+  out.sys_err = TMath::Sqrt(out.phase_rms * out.phase_rms +
+                            out.shape_shift * out.shape_shift);
   std::cout << "RATESUB-FIT " << tag << ": mu = " << std::fixed
             << std::setprecision(4) << out.mu << " +/- " << out.mu_err
             << " (fit, scaled by sqrt(chi2/ndf " << std::setprecision(2) << chi2
             << ")) +/- " << std::setprecision(4) << out.sys_err
             << " (sys: bin phase " << out.phase_rms << ", quadratic "
-            << out.shape_shift << ", transfer " << RATESUB_TRANSFER_SYS_KEV
-            << ") keV   sigma = " << out.sigma << std::endl;
+            << out.shape_shift << ") keV   sigma = " << out.sigma << std::endl;
   if (out_model)
     *out_model = model;
   else

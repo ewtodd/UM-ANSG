@@ -56,6 +56,10 @@ struct Row {
   // The 95.902 keV escapes' correction, this row's Ge with them minus
   // without, charged in full as a systematic.
   Double_t escape_shift = 0;
+  // The row's Ge with the Cd-shield pairs on the inside-crystal escape
+  // fractions minus the shield's; one choice, fully correlated between the
+  // rows it moves.
+  Double_t escape_source_shift = 0;
 };
 
 // The Cd-shield runs' escapes come from photons out of the shield, with
@@ -228,13 +232,18 @@ std::set<TString> KeptInsituLabels(const std::vector<Row> &rows) {
 struct Combination {
   Double_t mean = 0, err = 0, chi2ndf = 0;
   // Exact decomposition of err^2 with the BLUE weights:
-  // stat^2 + offset^2 + mult^2 + sys^2 + model^2 + escape^2 = err^2.
+  // stat^2 + offset^2 + mult^2 + sys^2 + model^2 + escape^2 + escape_source^2
+  // = err^2.
   Double_t stat_part = 0, off_part = 0, mult_part = 0, sys_part = 0;
-  Double_t model_part = 0, escape_part = 0;
+  Double_t model_part = 0, escape_part = 0, escape_source_part = 0;
   // Each combined run: its label, BLUE weight, Ge and total error (the
   // square root of its covariance diagonal).
   std::vector<TString> labels;
   std::vector<Double_t> weights, values, total_errs;
+  // The correlated blocks of the runs, in the same order, and the BLUE error
+  // scale, for the covariance with another combination.
+  std::vector<std::vector<Double_t>> blocks;
+  Double_t scale = 1;
   Int_t n = 0;
   Bool_t valid = kFALSE;
 };
@@ -253,7 +262,7 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
   // The transfer-model shift is a third correlated block, and the escape
   // correction two more, one per set of escape fractions.
   std::vector<Double_t> mu, diag, c_ref, c_xfer, c_model, c_esc_inside,
-      c_esc_shield;
+      c_esc_shield, c_esc_source;
   // Per-row offset / multiplicative pieces of the calibration, kept apart from
   // the BLUE inputs so err can be decomposed with the weights afterwards. Rows
   // in the shared block sum coherently; own-calibration rows in quadrature.
@@ -274,6 +283,10 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
     Double_t g = r.gain_err;
     Double_t a = r.anchor_err;
     Double_t ref2 = r.cal_err * r.cal_err - g * g - a * a;
+    if (ref2 < -1e-8)
+      std::cerr << "WARNING: " << r.label << ": gain and anchor errors exceed "
+                << "cal_err by " << std::sqrt(-ref2) * 1000.0 << " eV"
+                << std::endl;
     Double_t ref = (ref2 > 0) ? std::sqrt(ref2) : 0.0;
     Double_t o = std::min(r.cal_off, ref);
     Double_t l = std::sqrt(std::max(0.0, ref * ref - o * o));
@@ -284,6 +297,7 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
     c_model.push_back(r.model_shift);
     c_esc_inside.push_back(EscapesFromShield(r) ? 0.0 : r.escape_shift);
     c_esc_shield.push_back(EscapesFromShield(r) ? r.escape_shift : 0.0);
+    c_esc_source.push_back(r.escape_source_shift);
     if (am_ref_group) {
       diag.push_back(
           std::sqrt(r.fit_err * r.fit_err + r.sys_err * r.sys_err + a * a));
@@ -315,7 +329,10 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
   corr.push_back(c_model);
   corr.push_back(c_esc_inside);
   corr.push_back(c_esc_shield);
+  corr.push_back(c_esc_source);
   Blue b = CombineBlueGen(mu, diag, corr);
+  v.blocks = corr;
+  v.scale = b.scale;
   v.mean = b.mean;
   v.err = b.err;
   v.chi2ndf = b.chi2ndf;
@@ -332,7 +349,7 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
   }
   if (b.valid) {
     Double_t stat2 = 0, so = 0, sl = 0, sx = 0, own_o2 = 0, own_l2 = 0;
-    Double_t sys2 = 0, sm = 0, se_inside = 0, se_shield = 0;
+    Double_t sys2 = 0, sm = 0, se_inside = 0, se_shield = 0, ss = 0;
     for (Int_t i = 0; i < b.n; i++) {
       Double_t wi = b.w[i];
       stat2 += wi * wi * fit[i] * fit[i];
@@ -340,6 +357,7 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
       sm += wi * c_model[i];
       se_inside += wi * c_esc_inside[i];
       se_shield += wi * c_esc_shield[i];
+      ss += wi * c_esc_source[i];
       so += wi * off[i];
       sl += wi * lev[i];
       sx += wi * c_xfer[i];
@@ -353,8 +371,46 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
     v.model_part = std::fabs(sm) * b.scale;
     v.escape_part =
         std::sqrt(se_inside * se_inside + se_shield * se_shield) * b.scale;
+    v.escape_source_part = std::fabs(ss) * b.scale;
   }
   return v;
+}
+
+// The covariance of two combinations over disjoint runs: only the correlated
+// blocks tie them (the inside-crystal escape fractions, common to Cu 01/13 and
+// 01/15).
+Double_t CrossCovariance(const Combination &a, const Combination &b) {
+  Double_t cov = 0;
+  for (size_t k = 0; k < a.blocks.size() && k < b.blocks.size(); k++) {
+    Double_t sum_a = 0, sum_b = 0;
+    for (size_t i = 0; i < a.weights.size(); i++)
+      sum_a += a.weights[i] * a.blocks[k][i];
+    for (size_t j = 0; j < b.weights.size(); j++)
+      sum_b += b.weights[j] * b.blocks[k][j];
+    cov += sum_a * sum_b;
+  }
+  return cov * a.scale * b.scale;
+}
+
+// Each row's value in the partner analysis; false when a row has none, which
+// would otherwise enter as a zero shift.
+Bool_t PartnerMus(const std::vector<Row> &rows, const std::vector<Row> &partner,
+                  const TString &partner_tag, std::vector<Double_t> &mus) {
+  mus.clear();
+  for (size_t i = 0; i < rows.size(); i++) {
+    Int_t match = -1;
+    for (size_t j = 0; j < partner.size(); j++)
+      if (partner[j].method == rows[i].method &&
+          partner[j].label == rows[i].label)
+        match = (Int_t)j;
+    if (match < 0) {
+      std::cerr << "ERROR: no " << rows[i].method << " row '" << rows[i].label
+                << "' in " << partner_tag << std::endl;
+      return kFALSE;
+    }
+    mus.push_back(partner[match].mu);
+  }
+  return kTRUE;
 }
 
 Bool_t UsedInBoth(const Row &r, const std::set<TString> &kept) {
@@ -417,7 +473,8 @@ Double_t UncorrelatedMean(const std::vector<Row> &rows,
       continue;
     Double_t var = r.fit_err * r.fit_err + r.cal_err * r.cal_err +
                    r.sys_err * r.sys_err + r.model_shift * r.model_shift +
-                   r.escape_shift * r.escape_shift;
+                   r.escape_shift * r.escape_shift +
+                   r.escape_source_shift * r.escape_source_shift;
     if (!(var > 0))
       continue;
     sw += 1.0 / var;
@@ -434,9 +491,11 @@ Double_t UncorrelatedMean(const std::vector<Row> &rows,
 // escape_tag: the same analysis without the 95.902 keV escapes; each run's
 // correction (its Ge with them minus without) is charged in full as a
 // systematic, correlated as EscapesFromShield() says. "" leaves it out.
-void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
-                     const char *alt_tag = "tau20_sigpb_esc_oxfer_pxday",
-                     const char *escape_tag = "tau20_sigpb_pxday") {
+void CombineGeResult(
+    const char *tag = "tau20_sigpb_esc_pxday",
+    const char *alt_tag = "tau20_sigpb_esc_oxfer_pxday",
+    const char *escape_tag = "tau20_sigpb_pxday",
+    const char *escape_source_tag = "tau20_sigpb_esc_cdin_pxday") {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   std::vector<Row> rows =
       ReadResult(project_root + "/results/ge_" + TString(tag) + ".result");
@@ -448,13 +507,11 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
   if (alt_tag && *alt_tag) {
     std::vector<Row> alt = ReadResult(project_root + "/results/ge_" +
                                       TString(alt_tag) + ".result");
-    if (alt.empty())
-      std::cerr << "WARNING: no results for transfer-model tag '" << alt_tag
-                << "'; the transfer-model term is left out." << std::endl;
+    std::vector<Double_t> alt_mus;
+    if (!PartnerMus(rows, alt, alt_tag, alt_mus))
+      return;
     for (size_t i = 0; i < rows.size(); i++)
-      for (size_t j = 0; j < alt.size(); j++)
-        if (alt[j].method == rows[i].method && alt[j].label == rows[i].label)
-          rows[i].model_shift = alt[j].mu - rows[i].mu;
+      rows[i].model_shift = alt_mus[i] - rows[i].mu;
     std::cout << "Transfer model, " << alt_tag << " - " << tag << " [eV]:";
     for (size_t i = 0; i < rows.size(); i++)
       std::cout << "  " << rows[i].label << " " << std::fixed
@@ -464,19 +521,32 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
   if (escape_tag && *escape_tag) {
     std::vector<Row> without = ReadResult(project_root + "/results/ge_" +
                                           TString(escape_tag) + ".result");
-    if (without.empty())
-      std::cerr << "WARNING: no results for escape tag '" << escape_tag
-                << "'; the escape term is left out." << std::endl;
+    std::vector<Double_t> without_mus;
+    if (!PartnerMus(rows, without, escape_tag, without_mus))
+      return;
     for (size_t i = 0; i < rows.size(); i++)
-      for (size_t j = 0; j < without.size(); j++)
-        if (without[j].method == rows[i].method &&
-            without[j].label == rows[i].label)
-          rows[i].escape_shift = rows[i].mu - without[j].mu;
+      rows[i].escape_shift = rows[i].mu - without_mus[i];
     std::cout << "Escape correction, " << tag << " - " << escape_tag
               << " [eV]:";
     for (size_t i = 0; i < rows.size(); i++)
       std::cout << "  " << rows[i].label << " " << std::fixed
                 << std::setprecision(1) << rows[i].escape_shift * 1000.0;
+    std::cout << std::endl;
+  }
+
+  if (escape_source_tag && *escape_source_tag) {
+    std::vector<Row> inside = ReadResult(
+        project_root + "/results/ge_" + TString(escape_source_tag) + ".result");
+    std::vector<Double_t> inside_mus;
+    if (!PartnerMus(rows, inside, escape_source_tag, inside_mus))
+      return;
+    for (size_t i = 0; i < rows.size(); i++)
+      rows[i].escape_source_shift = inside_mus[i] - rows[i].mu;
+    std::cout << "Escape source, " << escape_source_tag << " - " << tag
+              << " [eV]:";
+    for (size_t i = 0; i < rows.size(); i++)
+      std::cout << "  " << rows[i].label << " " << std::fixed
+                << std::setprecision(1) << rows[i].escape_source_shift * 1000.0;
     std::cout << std::endl;
   }
 
@@ -494,12 +564,12 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
   std::set<TString> kept = KeptInsituLabels(rows);
   Combination rs = Combine(rows, 2, kept);
 
-  // TWO INDEPENDENT MEASUREMENTS OF THE SAME QUANTITY, on disjoint datasets and
-  // with different calibrations, backgrounds and treatments of the Pb lines.
-  // Their agreement is the analysis's main internal check.
+  // TWO MEASUREMENTS OF THE SAME QUANTITY, on disjoint datasets and with
+  // different calibrations, backgrounds and treatments of the Pb lines, tied
+  // only by the shared escape fractions. Their agreement is the analysis's
+  // main internal check.
   std::cout << std::endl;
-  std::cout << "===== Two independent measurements of E(Ge-73m) ====="
-            << std::endl;
+  std::cout << "===== Two measurements of E(Ge-73m) =====" << std::endl;
   Combination in_only = Combine(rows, 0, kept);
   if (in_only.valid)
     std::cout << "  Method 1  in-situ simultaneous fit    (" << in_only.n
@@ -511,7 +581,9 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
               << std::endl;
   if (in_only.valid && rs.valid) {
     Double_t diff = std::fabs(in_only.mean - rs.mean);
-    Double_t ddiff = std::sqrt(in_only.err * in_only.err + rs.err * rs.err);
+    Double_t ddiff2 = in_only.err * in_only.err + rs.err * rs.err -
+                      2.0 * CrossCovariance(in_only, rs);
+    Double_t ddiff = std::sqrt(std::max(ddiff2, 0.0));
     std::cout << "  ---> they agree to " << diff * 1000.0 << " eV, against "
               << ddiff * 1000.0 << " eV on the difference ("
               << std::setprecision(2) << (ddiff > 0 ? diff / ddiff : 0)
@@ -533,7 +605,8 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
               << " (+) cal multiplicative " << both.mult_part
               << " (+) systematics: rate-sub " << both.sys_part
               << " (+) transfer model " << both.model_part << " (+) escapes "
-              << both.escape_part << std::endl;
+              << both.escape_part << " (+) escape source "
+              << both.escape_source_part << std::endl;
     std::cout
         << "  per run: BLUE weight, Ge - mean, and that in its own total error"
         << std::endl;
@@ -588,7 +661,8 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
             << std::setw(10) << "Eg[keV]" << std::setw(8) << "Fit"
             << std::setw(8) << "Offset" << std::setw(8) << "Mult."
             << std::setw(8) << "Sys." << std::setw(8) << "Model" << std::setw(8)
-            << "Esc." << std::setw(8) << "Total" << std::endl;
+            << "Esc." << std::setw(8) << "EscSrc" << std::setw(8) << "Total"
+            << std::endl;
   for (size_t i = 0; i < rows.size(); i++) {
     if (rows[i].method != "insitu" && rows[i].method != "ratesub")
       continue;
@@ -597,6 +671,7 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
     Double_t sys_ev = rows[i].sys_err * 1000.0;
     Double_t model_ev = rows[i].model_shift * 1000.0;
     Double_t esc_ev = rows[i].escape_shift * 1000.0;
+    Double_t src_ev = rows[i].escape_source_shift * 1000.0;
     // With the signal-run anchor, the offset is that run's own.
     Double_t off_ev = (rows[i].anchor_err > 0)
                           ? rows[i].anchor_err * 1000.0
@@ -605,14 +680,14 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
         std::sqrt(std::max(0.0, cal_ev * cal_ev - off_ev * off_ev));
     Double_t tot_ev =
         std::sqrt(fit_ev * fit_ev + cal_ev * cal_ev + sys_ev * sys_ev +
-                  model_ev * model_ev + esc_ev * esc_ev);
+                  model_ev * model_ev + esc_ev * esc_ev + src_ev * src_ev);
     std::cout << std::left << std::setw(46) << rows[i].label << std::right
               << std::fixed << std::setprecision(5) << std::setw(10)
               << rows[i].mu << std::setprecision(2) << std::setw(8) << fit_ev
               << std::setw(8) << off_ev << std::setw(8) << mult_ev
               << std::setw(8) << sys_ev << std::setw(8) << model_ev
-              << std::setw(8) << esc_ev << std::setprecision(1) << std::setw(8)
-              << tot_ev << std::endl;
+              << std::setw(8) << esc_ev << std::setw(8) << src_ev
+              << std::setprecision(1) << std::setw(8) << tot_ev << std::endl;
   }
   std::cout << std::left << std::setw(46) << "COMBINED (both methods, BLUE)"
             << std::right << std::fixed << std::setprecision(5) << std::setw(10)
@@ -621,8 +696,9 @@ void CombineGeResult(const char *tag = "tau20_sigpb_esc_pxday",
             << std::setw(8) << both.mult_part * 1000.0 << std::setw(8)
             << both.sys_part * 1000.0 << std::setw(8)
             << both.model_part * 1000.0 << std::setw(8)
-            << both.escape_part * 1000.0 << std::setprecision(1) << std::setw(8)
-            << both.err * 1000.0 << std::endl;
+            << both.escape_part * 1000.0 << std::setw(8)
+            << both.escape_source_part * 1000.0 << std::setprecision(1)
+            << std::setw(8) << both.err * 1000.0 << std::endl;
   std::cout << "  quoted Total = sqrt(" << std::setprecision(1)
             << both.err * 1000.0 << "^2 + outlier removal " << nuisance * 1000.0
             << "^2) = " << quoted_err * 1000.0 << " eV" << std::endl;

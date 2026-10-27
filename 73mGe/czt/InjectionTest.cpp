@@ -355,10 +355,15 @@ Double_t RunLiveTime(const TString &run) {
   }
   Double_t total = 0;
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
-    TParameter<Float_t> *p = static_cast<TParameter<Float_t> *>(
-        file->Get(Form("LiveTime_Filtered_Crystal%d_s", c)));
-    if (p)
-      total += p->GetVal();
+    TParameter<Double_t> *p = dynamic_cast<TParameter<Double_t> *>(
+        file->Get(Form("LiveTime_Crystal%d_s", c)));
+    if (!p) {
+      std::cerr << "INJ-FATAL: no LiveTime_Crystal" << c << "_s in " << run
+                << "; rerun Filter.cpp" << std::endl;
+      total = 0;
+      break;
+    }
+    total += p->GetVal();
   }
   file->Close();
   delete file;
@@ -521,28 +526,32 @@ RateSubResult FitRateSubtractedEvents(const std::vector<Double_t> &sig_events,
                                       const RateSubShape &tail_shape,
                                       Double_t comb_bin, const TString &tag) {
   RateSubShape shape = tail_shape;
-  if (EscapeLinesRequested()) {
-    std::vector<TH1F *> capture_sigs =
+  RateSubResult out;
+  if (shape.escapes) {
+    std::vector<TH1D *> capture_sigs =
         RateHistsFromEvents(sig_events, live_sig, "inj_capture_sig_" + tag,
                             88.0, 104.0, comb_bin, N_RATESUB_PHASES);
-    std::vector<TH1F *> capture_bkgs =
+    std::vector<TH1D *> capture_bkgs =
         RateHistsFromEvents(bkg_events, live_bkg, "inj_capture_bkg_" + tag,
                             88.0, 104.0, comb_bin, N_RATESUB_PHASES);
-    SetResidualCaptureLine(capture_sigs, capture_bkgs, tag, shape);
+    Bool_t have_line =
+        SetResidualCaptureLine(capture_sigs, capture_bkgs, tag, shape);
     for (size_t k = 0; k < capture_sigs.size(); k++)
       delete capture_sigs[k];
     for (size_t k = 0; k < capture_bkgs.size(); k++)
       delete capture_bkgs[k];
+    if (!have_line)
+      return out;
   }
-  std::vector<TH1F *> sigs = RateHistsFromEvents(
+  std::vector<TH1D *> sigs = RateHistsFromEvents(
       sig_events, live_sig, "inj_rate_sig_" + tag, RATESUB_LO - comb_bin,
       RATESUB_HI + comb_bin, comb_bin, N_RATESUB_PHASES);
-  std::vector<TH1F *> bkgs = RateHistsFromEvents(
+  std::vector<TH1D *> bkgs = RateHistsFromEvents(
       bkg_events, live_bkg, "inj_rate_bkg_" + tag, RATESUB_LO - comb_bin,
       RATESUB_HI + comb_bin, comb_bin, N_RATESUB_PHASES);
   TF1 *model = nullptr;
-  TH1F *res = nullptr;
-  RateSubResult out = FitRateSubPhases(sigs, bkgs, shape, tag, &model, &res);
+  TH1D *res = nullptr;
+  out = FitRateSubPhases(sigs, bkgs, shape, tag, &model, &res);
   for (size_t k = 0; k < sigs.size(); k++)
     delete sigs[k];
   for (size_t k = 0; k < bkgs.size(); k++)
@@ -1287,6 +1296,11 @@ void InjectionTest() {
     if (!setup.ref.ok)
       return;
     setup.rate_sub_shape = TestbedRateSubShape(setup.ref.ge);
+    // Two halves of one run subtract to no 95.902 keV line, so no escapes.
+    Bool_t residual_has_capture_line = (source != "halves");
+    setup.rate_sub_shape.escapes =
+        (EscapeLinesRequested() && residual_has_capture_line) ? pair.escapes
+                                                              : nullptr;
 
     // halves: the injected line has the signal run's Ge rate, over half the
     // background run's live time. real: the signal run's own Ge again, so

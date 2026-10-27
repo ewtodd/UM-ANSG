@@ -10,6 +10,7 @@
 #include <TSpectrum.h>
 #include <TTree.h>
 #include <future>
+#include <iomanip>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -389,8 +390,6 @@ Bool_t BuildTotalEnergyTree(TFile *file) {
   totalTree->Branch("eventTime", &outEventTime, "eventTime/i");
   totalTree->Branch("liveTime", &outLiveTime, "liveTime/I");
 
-  Float_t totalLiveTime_s = 0;
-
   Float_t event_energy = 0;
   UInt_t event_eventTime = 0;
   Int_t event_liveTime = 0;
@@ -398,11 +397,10 @@ Bool_t BuildTotalEnergyTree(TFile *file) {
   Int_t event_seen = 0;
   Bool_t event_dropped = kFALSE;
 
-  Int_t event_time_prev = -1;
-  Int_t delta_event_time = 0;
+  Long64_t previous_event_time = -1;
 
-  Int_t n_entries = tree->GetEntries();
-  for (Int_t i = 0; i < n_entries; i++) {
+  Long64_t n_entries = tree->GetEntries();
+  for (Long64_t i = 0; i < n_entries; i++) {
     tree->GetEntry(i);
 
     if (interaction == 0) {
@@ -424,27 +422,22 @@ Bool_t BuildTotalEnergyTree(TFile *file) {
 
     if (event_seen == event_n) {
       Float_t liveTime_us = event_liveTime * Constants::TENS_OF_NS_TO_S * 1e6;
-      if (event_time_prev != -1)
-        delta_event_time = (Int_t)event_eventTime - event_time_prev;
+      Bool_t same_ms_as_previous =
+          (previous_event_time == (Long64_t)event_eventTime);
       Bool_t pileup = (liveTime_us < Constants::PILEUP_LIVETIME_THRESHOLD_US &&
-                       delta_event_time == 0);
+                       same_ms_as_previous);
 
       if (!event_dropped && !pileup) {
         outEnergy = event_energy;
         outEventTime = event_eventTime;
         outLiveTime = event_liveTime;
         totalTree->Fill();
-        totalLiveTime_s += event_liveTime * Constants::TENS_OF_NS_TO_S;
       }
-      event_time_prev = (Int_t)event_eventTime;
+      previous_event_time = event_eventTime;
     }
   }
 
   totalTree->Write("", TObject::kOverwrite);
-
-  TParameter<Float_t> *ltParam =
-      new TParameter<Float_t>("LiveTime_Total_s", totalLiveTime_s);
-  ltParam->Write("", TObject::kOverwrite);
 
   {
     std::lock_guard<std::mutex> lock(print_mutex);
@@ -474,16 +467,22 @@ Bool_t FilterFile(TString filename) {
   tree->SetBranchAddress("nInteractions", &nInteractions);
   tree->SetBranchAddress("interaction", &interaction);
 
-  Int_t n_entries = tree->GetEntries();
+  Long64_t n_entries = tree->GetEntries();
 
   Float_t outEnergy = 0;
   Float_t outX = 0, outY = 0, outZ = 0;
   UInt_t outEventTime = 0;
   Int_t outLiveTime = 0;
 
-  Float_t filteredLiveTime_s[Constants::N_CRYSTALS];
+  // liveTime is the crystal's live interval since its previous event, so the
+  // crystal's live time is its sum over every event, before any cut. Summed
+  // over accepted events only it would carry the acceptance, which differs
+  // between signal and background runs. Accumulated in double: a float sum of
+  // ~1e-4 s steps stops growing at a few thousand seconds.
+  Double_t crystalLiveTime_s[Constants::N_CRYSTALS];
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++)
-    filteredLiveTime_s[c] = 0.0;
+    crystalLiveTime_s[c] = 0.0;
+  Double_t boundaryLiveTime_s = 0.0;
 
   TTree *filteredTrees[Constants::N_CRYSTALS];
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
@@ -497,13 +496,25 @@ Bool_t FilterFile(TString filename) {
     filteredTrees[c]->Branch("liveTime", &outLiveTime, "liveTime/I");
   }
 
-  Int_t event_time_prev = -1;
-  Int_t delta_event_time = 0;
+  // Pile-up is judged against the previous event in the stream, whether or not
+  // that event passed the cuts, as in BuildTotalEnergyTree.
+  Long64_t previous_event_time = -1;
+  Bool_t same_ms_as_previous = kFALSE;
 
-  for (Int_t i = 0; i < n_entries; i++) {
+  for (Long64_t i = 0; i < n_entries; i++) {
     tree->GetEntry(i);
 
     Int_t crystal = GetCrystalIndex(x, y);
+
+    if (interaction == 0) {
+      same_ms_as_previous = (previous_event_time == (Long64_t)eventTime);
+      previous_event_time = eventTime;
+      Double_t event_live_s = (Double_t)liveTime * Constants::TENS_OF_NS_TO_S;
+      if (crystal >= 0)
+        crystalLiveTime_s[crystal] += event_live_s;
+      else
+        boundaryLiveTime_s += event_live_s;
+    }
 
     if (crystal < 0)
       continue;
@@ -526,10 +537,8 @@ Bool_t FilterFile(TString filename) {
     Float_t gain_matched_energy = energy * gain;
 
     Float_t liveTime_us = liveTime * Constants::TENS_OF_NS_TO_S * 1e6;
-    if (event_time_prev != -1)
-      delta_event_time = eventTime - event_time_prev;
     if (liveTime_us < Constants::PILEUP_LIVETIME_THRESHOLD_US &&
-        delta_event_time == 0)
+        same_ms_as_previous)
       continue;
 
     outEnergy = gain_matched_energy;
@@ -540,21 +549,20 @@ Bool_t FilterFile(TString filename) {
     outLiveTime = liveTime;
 
     filteredTrees[crystal]->Fill();
-    filteredLiveTime_s[crystal] += liveTime * Constants::TENS_OF_NS_TO_S;
-
-    if (i != 0) {
-      event_time_prev = eventTime;
-    } else {
-      event_time_prev = -1;
-    }
   }
 
   {
     std::lock_guard<std::mutex> lock(print_mutex);
     for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
       std::cout << filename << " crystal " << c << ": "
-                << filteredTrees[c]->GetEntries() << " filtered" << std::endl;
+                << filteredTrees[c]->GetEntries() << " filtered, live time "
+                << std::fixed << std::setprecision(3) << crystalLiveTime_s[c]
+                << " s" << std::endl;
     }
+    if (boundaryLiveTime_s > 0)
+      std::cout << "WARNING: " << filename << ": " << std::fixed
+                << std::setprecision(3) << boundaryLiveTime_s
+                << " s of live time on events with no crystal" << std::endl;
   }
 
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
@@ -562,8 +570,8 @@ Bool_t FilterFile(TString filename) {
   }
 
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
-    TParameter<Float_t> *ltParam = new TParameter<Float_t>(
-        Form("LiveTime_Filtered_Crystal%d_s", c), filteredLiveTime_s[c]);
+    TParameter<Double_t> *ltParam = new TParameter<Double_t>(
+        Form("LiveTime_Crystal%d_s", c), crystalLiveTime_s[c]);
     ltParam->Write("", TObject::kOverwrite);
   }
 

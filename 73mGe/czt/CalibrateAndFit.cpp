@@ -11,7 +11,7 @@
 #include <TFitResult.h>
 #include <TGraph.h>
 #include <TGraphErrors.h>
-#include <TH1F.h>
+#include <TH1D.h>
 #include <TMatrixD.h>
 #include <TParameter.h>
 #include <TSystem.h>
@@ -37,19 +37,17 @@ struct DayResult {
   std::vector<Float_t> ge_mus, ge_errs, ge_chi2s;
   std::vector<Float_t> ge_cal_errs;
   // The OFFSET part of the reference calibration error: its value at the
-  // best-constrained energy. The remainder, sqrt(ref^2 - off^2), is the
-  // multiplicative term, and the gain transfer is a pure scale factor.
+  // best-constrained energy (0 under the signal-run Pb anchor, which sets the
+  // offset itself). The remainder of the reference part is multiplicative.
   std::vector<Float_t> ge_cal_offs;
-  // The TRANSFER part of ge_cal_errs, parallel to ge_*. ge_cal_err is
-  // hypot(reference_cal_err, gain_err), so the reference part -- COMMON to
-  // every run on the day -- is sqrt(cal^2 - gain^2) and the transfer part is
-  // independent per run. The combiner needs that split to build the covariance
-  // correctly instead of assuming the whole calibration is correlated or none
-  // of it is.
+  // ge_cal_err is hypot(reference part, gain_err, anchor_err). The gain
+  // transfer's share of the slope over the Pb-to-Ge distance: every run's g is
+  // measured against the same reference centroids, so the combiner correlates
+  // it between runs, as it does the reference part, which is common to every
+  // run on the day.
   std::vector<Float_t> ge_gain_errs;
-  // With the signal-run Pb anchor: the error of that run's own offset, also
-  // inside ge_cal_errs. It comes from the run's own Pb fit, so it is
-  // independent between runs, unlike the transfer.
+  // The error of the signal run's own offset from its Pb fit: independent
+  // between runs.
   std::vector<Float_t> ge_anchor_errs;
   std::vector<Float_t> ge_bkg_errs;
   std::vector<TString> rs_labels;
@@ -89,6 +87,8 @@ struct LineCalConfig {
   TString postcal_bkg;
   TString postcal_sig;
   TString ge_label;
+  // Where the day's 95.902 keV line comes from.
+  const EscapeFractions *escapes = nullptr;
 };
 
 // The tree's energies with their pixels' factors from the day's map.
@@ -144,9 +144,6 @@ void PrintAnchorFitStatus(const TString &peak_name, const TString &input_name,
               << "  tau/sigma " << std::setprecision(2)
               << fr.peaks[1].low_exp_tail_ratio;
   std::cout << std::endl;
-  if (fr.fit_status >= RooFitUtils::kFirstInvalidMinimumStatus)
-    std::cerr << "WARNING: " << peak_name << " " << input_name
-              << " ended without a valid minimum" << std::endl;
 }
 
 FitResult FitCalPeak(const std::vector<Double_t> &events,
@@ -168,6 +165,7 @@ FitResult FitCalPeak(const std::vector<Double_t> &events,
   else
     fr = fitter.FitSinglePeak(input_name, peak_name);
   PrintAnchorFitStatus(peak_name, input_name, fr);
+  fr.valid = fr.valid && FitConverged(fr, peak_name + " " + input_name);
   return fr;
 }
 
@@ -561,12 +559,12 @@ void AddGeResult(DayResult &result, const BkgGeSimResult &r,
   result.ge_bkg_errs.push_back(bkg_err);
 }
 
-Float_t LoadCrystalLiveTime(TFile *file, Int_t crystal) {
-  TParameter<Float_t> *p = static_cast<TParameter<Float_t> *>(
-      file->Get(Form("LiveTime_Filtered_Crystal%d_s", crystal)));
+Double_t LoadCrystalLiveTime(TFile *file, Int_t crystal) {
+  TParameter<Double_t> *p = dynamic_cast<TParameter<Double_t> *>(
+      file->Get(Form("LiveTime_Crystal%d_s", crystal)));
   if (!p) {
-    std::cerr << "WARNING: missing LiveTime_Filtered_Crystal" << crystal << "_s"
-              << std::endl;
+    std::cerr << "ERROR: no LiveTime_Crystal" << crystal << "_s in "
+              << file->GetName() << "; rerun Filter.cpp" << std::endl;
     return 0;
   }
   return p->GetVal();
@@ -576,10 +574,10 @@ Float_t LoadCrystalLiveTime(TFile *file, Int_t crystal) {
 // bins of width bin starting at n_phases points spaced bin / n_phases apart,
 // all filled in one pass over the run. Histogram k covers
 // [lo + k bin / n_phases, hi + k bin / n_phases).
-std::vector<TH1F *> BuildRateHists(const TString &input_name, TF1 *cal,
+std::vector<TH1D *> BuildRateHists(const TString &input_name, TF1 *cal,
                                    const TString &hname, Double_t lo,
                                    Double_t hi, Double_t bin, Int_t n_phases) {
-  std::vector<TH1F *> sums;
+  std::vector<TH1D *> sums;
   TFile *file = IO::OpenForReading("filtered/" + input_name + ".root");
   if (!file || file->IsZombie()) {
     std::cerr << "ERROR: Cannot open filtered/" << input_name << ".root"
@@ -590,7 +588,7 @@ std::vector<TH1F *> BuildRateHists(const TString &input_name, TF1 *cal,
   Int_t nbins = (Int_t)std::lround((hi - lo) / bin);
   for (Int_t k = 0; k < n_phases; k++) {
     Double_t start = lo + k * bin / n_phases;
-    TH1F *h = new TH1F(hname + Form("_phase%d", k),
+    TH1D *h = new TH1D(hname + Form("_phase%d", k),
                        ";Deposited Energy [keV]; Rate [counts/s]", nbins, start,
                        start + nbins * bin);
     h->SetDirectory(nullptr);
@@ -602,11 +600,15 @@ std::vector<TH1F *> BuildRateHists(const TString &input_name, TF1 *cal,
   for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
     TTree *tree =
         static_cast<TTree *>(file->Get(Form("crystal%d_filtered_tree", c)));
-    if (!tree)
-      continue;
-    Float_t lt = LoadCrystalLiveTime(file, c);
-    if (lt <= 0)
-      continue;
+    Double_t lt = LoadCrystalLiveTime(file, c);
+    if (!tree || lt <= 0) {
+      std::cerr << "ERROR: crystal " << c << " of " << input_name
+                << " has no filtered tree or live time" << std::endl;
+      for (size_t k = 0; k < sums.size(); k++)
+        delete sums[k];
+      sums.clear();
+      break;
+    }
     Float_t energy = 0, x = 0, y = 0;
     tree->SetBranchAddress("energykeV", &energy);
     tree->SetBranchAddress("xmm", &x);
@@ -667,26 +669,29 @@ RateSubResult FitRateSubtractedGe(const TString &sig_run,
 
   const Double_t bin = COMB_PERIOD_RAW_KEV * cal->GetParameter(1);
   RateSubShape shape = tail_shape;
-  if (EscapeLinesRequested()) {
-    std::vector<TH1F *> capture_sigs = BuildRateHists(
+  RateSubResult out;
+  if (shape.escapes) {
+    std::vector<TH1D *> capture_sigs = BuildRateHists(
         sig_run, cal, "capture_sig_" + tag, 88.0, 104.0, bin, N_RATESUB_PHASES);
-    std::vector<TH1F *> capture_bkgs = BuildRateHists(
+    std::vector<TH1D *> capture_bkgs = BuildRateHists(
         bkg_run, cal, "capture_bkg_" + tag, 88.0, 104.0, bin, N_RATESUB_PHASES);
-    SetResidualCaptureLine(capture_sigs, capture_bkgs, tag, shape);
+    Bool_t have_line =
+        SetResidualCaptureLine(capture_sigs, capture_bkgs, tag, shape);
     for (size_t k = 0; k < capture_sigs.size(); k++)
       delete capture_sigs[k];
     for (size_t k = 0; k < capture_bkgs.size(); k++)
       delete capture_bkgs[k];
+    if (!have_line)
+      return out;
   }
-  std::vector<TH1F *> sigs =
+  std::vector<TH1D *> sigs =
       BuildRateHists(sig_run, cal, "rate_sig_" + tag, lo - bin, hi + bin, bin,
                      N_RATESUB_PHASES);
-  std::vector<TH1F *> bkgs =
+  std::vector<TH1D *> bkgs =
       BuildRateHists(bkg_run, cal, "rate_bkg_" + tag, lo - bin, hi + bin, bin,
                      N_RATESUB_PHASES);
-  RateSubResult out;
   TF1 *model = nullptr;
-  TH1F *res = nullptr;
+  TH1D *res = nullptr;
   if ((Int_t)sigs.size() == N_RATESUB_PHASES &&
       (Int_t)bkgs.size() == N_RATESUB_PHASES)
     out = FitRateSubPhases(sigs, bkgs, shape, tag, &model, &res);
@@ -719,12 +724,7 @@ RateSubResult FitRateSubtractedGe(const TString &sig_run,
     total_graph->SetPoint(i, xv, model->Eval(xv));
     bkg_graph->SetPoint(i, xv, bkg_v);
     escape_graph->SetPoint(i, xv,
-                           bkg_v + model->GetParameter(8) *
-                                       EscapeDensity(xv, model->GetParameter(9),
-                                                     model->GetParameter(2),
-                                                     model->GetParameter(3),
-                                                     model->GetParameter(4),
-                                                     ESCAPES_INSIDE));
+                           bkg_v + RateSubEscapes(xv, model->GetParameters()));
   }
   bkg_graph->SetLineStyle(2);
   escape_graph->SetLineColor(kRed);
@@ -784,13 +784,14 @@ struct SignalPbAnchor {
   Bool_t valid = kFALSE;
   Double_t offset = 0;     // keV taken off the pair calibration
   Double_t offset_err = 0; // keV, at the signal run's Pb lines
+  Double_t x_pb = 0;       // raw, where the offset is pinned
 };
 
 // The pair calibration shifted by a constant so that the signal run's own Pb
 // Ka lines land on their energies, weighted by their centroid errors. The
 // slope stays the pair's, and its error only acts over the few keV from the Pb
-// lines down to Ge; applied as a gain instead, the shift (at most ~30 eV)
-// would move Ge by at most ~2 eV. The covariance is set so that
+// lines down to Ge; applied as a gain instead, the shift (at most ~31 eV)
+// would move Ge by at most 2.4 eV. The covariance is set so that
 // var E(x) = offset_err^2 + var_p1 (x - x_pb)^2.
 SignalPbAnchor AnchorOnSignalPb(const CalFit &pair_cal,
                                 const FitResult &sig_channel,
@@ -821,6 +822,7 @@ SignalPbAnchor AnchorOnSignalPb(const CalFit &pair_cal,
   out.offset = sum_wr / sum_w;
   out.offset_err = std::sqrt(1.0 / sum_w + dE_PB_KA * dE_PB_KA);
   Double_t x_pb = sum_wx / sum_w;
+  out.x_pb = x_pb;
 
   Double_t lo = 0, hi = 0;
   pair_cal.func->GetRange(lo, hi);
@@ -877,9 +879,11 @@ PairCalResult ProcessPbAnchoredPair(
                 << p.low_lin_tail_slope << std::endl;
     }
     have_am = am.valid;
-    if (!have_am)
-      std::cerr << "WARNING: Am-241 fit failed for " << am_run
-                << "; reference line will use Pb peaks only" << std::endl;
+  }
+  if (is_reference && !have_am) {
+    std::cerr << "ERROR: no Am-241 anchor for the reference pair " << pair_tag
+              << std::endl;
+    return out;
   }
 
   InSituEscapes raw_escapes;
@@ -891,18 +895,6 @@ PairCalResult ProcessPbAnchoredPair(
                   "PreCal_" + pair_tag, nullptr, nullptr, raw_escapes);
   if (!pre.valid)
     return out;
-
-  if (pre.bkg_channel.peaks.size() >= 2) {
-    Double_t mu_lo = pre.bkg_channel.peaks.at(0).mu;
-    Double_t mu_hi = pre.bkg_channel.peaks.at(1).mu;
-    Double_t g = (mu_lo + mu_hi) / (Double_t)(E_PB_KA2 + E_PB_KA1);
-    Double_t delta_raw = (Double_t)(E_PB_KA1 - E_PB_KA2) * g;
-    std::cout << "PRECAL-SEP " << pair_tag << ": fitted " << std::fixed
-              << std::setprecision(5) << (mu_hi - mu_lo) << "  expected "
-              << delta_raw << "  (excess " << std::setprecision(1)
-              << ((mu_hi - mu_lo) - delta_raw) * 1000 << " eV)"
-              << std::setprecision(4) << std::endl;
-  }
 
   for (size_t i = 0; i < pre.bkg_channel.peaks.size(); i++) {
     out.pb_mus_precal.push_back(pre.bkg_channel.peaks[i].mu);
@@ -922,7 +914,11 @@ PairCalResult ProcessPbAnchoredPair(
   Bool_t transfer_mode =
       (ref_cal != nullptr && ref_pb_mus != nullptr && ref_pb_mus->size() >= 2 &&
        pre.bkg_channel.peaks.size() >= 2);
-  Bool_t use_am_anchor = (!transfer_mode && have_am);
+  if (!is_reference && !transfer_mode) {
+    std::cerr << "ERROR: no reference calibration to transfer to " << pair_tag
+              << std::endl;
+    return out;
+  }
 
   CalFit calfit;
   GainResult gain;
@@ -964,7 +960,7 @@ PairCalResult ProcessPbAnchoredPair(
               << std::setprecision(6) << gain.g << " +/- " << gain.sigma_g
               << "  (n = " << gain.n << ", chi2/ndf = " << std::setprecision(2)
               << gain.chi2_ndf << ")" << std::endl;
-  } else if (use_am_anchor) {
+  } else {
     CalibrationData cal_am;
     AddCalPoint(cal_am, pair_tag + " Am-241 59.5", am.peaks.at(0).mu,
                 GuardedMuError(pair_tag + " Am-241", am.peaks.at(0), am),
@@ -979,11 +975,22 @@ PairCalResult ProcessPbAnchoredPair(
                 E_PB_KA1, -1, dE_PB_KA);
     PrintCalSummary(cal_am, cal_label);
     calfit = CreateAndSavePol1Cal(cal_am, cal_label);
-  } else {
-    PrintCalSummary(cal_data, cal_label);
-    calfit = CreateAndSavePol1Cal(cal_data, cal_label);
   }
   TF1 *cal = calfit.func;
+
+  // The background run's Pb Ka1-Ka2 separation on the pair's calibration
+  // against the literature's. Partly circular on the reference pair, whose
+  // line runs through both Pb lines.
+  Double_t pb_separation =
+      (pre.bkg_channel.peaks.at(1).mu - pre.bkg_channel.peaks.at(0).mu) *
+      calfit.p1;
+  Double_t pb_separation_literature = (Double_t)E_PB_KA1 - (Double_t)E_PB_KA2;
+  std::cout << "PRECAL-SEP " << pair_tag << ": calibrated " << std::fixed
+            << std::setprecision(5) << pb_separation << " keV  literature "
+            << pb_separation_literature << " keV  (excess "
+            << std::setprecision(1)
+            << (pb_separation - pb_separation_literature) * 1000.0 << " eV)"
+            << std::endl;
 
   CalFit pb_probe = calfit;
   if (have_am)
@@ -997,44 +1004,35 @@ PairCalResult ProcessPbAnchoredPair(
 
   SignalPbAnchor sig_anchor =
       AnchorOnSignalPb(calfit, pre.sig_channel, pb_mus, cal_label);
-  if (!sig_anchor.valid)
-    std::cerr << "WARNING: no signal-run Pb anchor for " << cal_label
-              << "; the signal run keeps the pair calibration" << std::endl;
-  const CalFit &sig_calfit = sig_anchor.valid ? sig_anchor.calfit : calfit;
+  if (!sig_anchor.valid) {
+    std::cerr << "ERROR: no signal-run Pb anchor for " << cal_label
+              << std::endl;
+    return out;
+  }
+  const CalFit &sig_calfit = sig_anchor.calfit;
   TF1 *sig_cal = sig_calfit.func;
 
-  if (!pre.sig_channel.peaks.empty() && sig_anchor.valid) {
-    // The signal run sets its own offset, so it inherits no reference offset
-    // (cal_off 0) and no transfer (gain 0); the anchor column carries the
-    // signal-run Pb offset error, and the rest of cal_err is the pair slope
-    // over the Pb-to-Ge distance.
-    Double_t mu_ge = pre.sig_channel.peaks.back().mu;
-    out.ge_cal_err = CalEnergyError(sig_calfit, mu_ge);
-    out.ge_gain_err = 0;
-    out.ge_anchor_err = sig_anchor.offset_err;
-    out.ge_cal_off = 0;
-    std::cout << "SIGPB-CAL " << cal_label << ": at Ge, offset term "
-              << std::fixed << std::setprecision(1)
-              << out.ge_anchor_err * 1000.0 << " eV   total cal "
-              << out.ge_cal_err * 1000.0 << " eV" << std::endl;
-  } else if (!pre.sig_channel.peaks.empty()) {
-    Double_t mu_ge = pre.sig_channel.peaks.back().mu;
-    out.ge_cal_err = CalEnergyError(calfit, mu_ge);
-    out.ge_cal_off = CalOffsetError(calfit);
-
-    if (transfer_mode) {
-      out.ge_gain_err =
-          OffsetTransferRequested()
-              ? calfit.p1 * offset.sigma
-              : GainTransferEnergyError(*ref_cal, mu_ge, gain.g, gain.sigma_g);
-      out.ge_cal_err = std::hypot(out.ge_cal_err, out.ge_gain_err);
-
-      std::cout << "GAIN-CAL " << cal_label << ": transfer term " << std::fixed
-                << std::setprecision(1) << out.ge_gain_err * 1000.0
-                << " eV   total cal " << out.ge_cal_err * 1000.0 << " eV"
-                << std::endl;
-    }
-  }
+  // The signal run sets its own offset, so it inherits no reference offset
+  // (cal_off 0); the anchor column carries the signal-run Pb offset error. The
+  // rest of cal_err is the pair slope over the Pb-to-Ge distance: the
+  // reference's, and with a gain transfer the error of g, which scales the
+  // slope. An offset transfer leaves the slope alone.
+  Double_t mu_ge = pre.sig_channel.peaks.back().mu;
+  out.ge_gain_err = 0;
+  if (transfer_mode && !OffsetTransferRequested())
+    out.ge_gain_err = std::fabs(
+        GainTransferEnergyError(*ref_cal, mu_ge, gain.g, gain.sigma_g) -
+        GainTransferEnergyError(*ref_cal, sig_anchor.x_pb, gain.g,
+                                gain.sigma_g));
+  out.ge_cal_err =
+      std::hypot(CalEnergyError(sig_calfit, mu_ge), out.ge_gain_err);
+  out.ge_anchor_err = sig_anchor.offset_err;
+  out.ge_cal_off = 0;
+  std::cout << "SIGPB-CAL " << cal_label << ": at Ge, offset term "
+            << std::fixed << std::setprecision(1) << out.ge_anchor_err * 1000.0
+            << " eV   transfer term " << out.ge_gain_err * 1000.0
+            << " eV   total cal " << out.ge_cal_err * 1000.0 << " eV"
+            << std::endl;
 
   // Cross-checks on the pair that also has Am, against a calibration through
   // its Pb lines alone. Both are evaluated at the same raw Ge centroid, so only
@@ -1067,15 +1065,11 @@ PairCalResult ProcessPbAnchoredPair(
   }
 
   std::vector<TString> pair_runs = {bkg_run};
-  if (!sig_anchor.valid)
-    pair_runs.push_back(sig_run);
   if (have_am)
     pair_runs.push_back(am_run);
   ApplyPol1Cal(pair_runs, cal, cal_label);
-  if (sig_anchor.valid) {
-    std::vector<TString> sig_runs = {sig_run};
-    ApplyPol1Cal(sig_runs, sig_cal, cal_label + "_sigPb");
-  }
+  std::vector<TString> sig_runs = {sig_run};
+  ApplyPol1Cal(sig_runs, sig_cal, cal_label + "_sigPb");
 
   std::vector<Double_t> bc = LoadCalibrated(bkg_run);
   std::vector<Double_t> sc = LoadCalibrated(sig_run);
@@ -1155,9 +1149,6 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
   std::vector<Double_t> am_events = LoadFiltered(cfg.am_run);
   FitResult am = FitCalPeak(am_events, cfg.am_run, "Am_59.5keV", cfg.am_lo,
                             cfg.am_hi, kFALSE, 0, 0);
-  if (am.valid)
-    AddCalPoint(cal_data, "Am-241 59.5", am.peaks.at(0).mu,
-                am.peaks.at(0).mu_error, E_AM241, am.reduced_chi2, dE_AM241);
 
   // 79.61 and 81.00 keV are 1.4 keV apart at sigma 0.82: two free tails are
   // degenerate (the weak line's railed, the strong line's came out at
@@ -1170,10 +1161,19 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
   FitResult ba81 =
       FitCalPeak(ba_events, cfg.ba_run, "Ba_80.98keV", ba_lo, ba_hi, kTRUE,
                  E_BA133_79, E_BA133_81, kTRUE, kTRUE, BA133_79_OVER_81);
-  if (ba81.valid)
-    AddCalPoint(cal_data, "Ba-133 80.98", ba81.peaks.at(1).mu,
-                ba81.peaks.at(1).mu_error, E_BA133_81, ba81.reduced_chi2,
-                dE_LINE);
+  DayResult result;
+  if (!am.valid || am.peaks.empty() || !ba81.valid || ba81.peaks.size() < 2) {
+    std::cerr << "ERROR: no Am-241 or Ba-133 anchor for " << cfg.date_label
+              << "; the day is not calibrated" << std::endl;
+    return result;
+  }
+  AddCalPoint(cal_data, "Am-241 59.5", am.peaks.at(0).mu,
+              GuardedMuError(cfg.date_label + " Am-241", am.peaks.at(0), am),
+              E_AM241, am.reduced_chi2, dE_AM241);
+  AddCalPoint(
+      cal_data, "Ba-133 80.98", ba81.peaks.at(1).mu,
+      GuardedMuError(cfg.date_label + " Ba-133", ba81.peaks.at(1), ba81),
+      E_BA133_81, ba81.reduced_chi2, dE_LINE);
 
   PrintCalSummary(cal_data, cfg.date_label);
   CalFit calfit = CreateAndSavePol1Cal(cal_data, cfg.date_label);
@@ -1184,17 +1184,11 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
   Double_t ge_cal_off = CalOffsetError(calfit);
   ApplyPol1Cal(cfg.day_datasets, cal, cfg.date_label);
 
-  DayResult result;
   result.cal_labels.push_back(cfg.date_label);
   result.cal_funcs.push_back(cal);
 
-  // Without the Am and Ba tails the default shape, a Gaussian, is used.
-  RateSubShape shape;
-  if (am.valid && ba81.valid && ba81.peaks.size() > 1)
-    shape = RateSubShapeFromLines(am.peaks.at(0), ba81.peaks.at(1));
-  else
-    std::cerr << "WARNING: no Am/Ba tail for " << cfg.date_label
-              << "; rate-sub falls back to a Gaussian" << std::endl;
+  RateSubShape shape = RateSubShapeFromLines(am.peaks.at(0), ba81.peaks.at(1));
+  shape.escapes = EscapeLinesRequested() ? cfg.escapes : nullptr;
   RateSubResult rs = FitRateSubtractedGe(cfg.postcal_sig, cfg.postcal_bkg, cal,
                                          cfg.date_label, shape);
   if (rs.valid) {
@@ -1245,14 +1239,16 @@ DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
   cd10.sig_run = Constants::CDSHIELDSIGNAL_10PERCENT_20260113;
   cd10.tag = "CdShield10";
   cd10.ge_label = "Cd Shield Signal 10% (01/13)";
-  cd10.escapes = &ESCAPES_OUTSIDE;
+  cd10.escapes =
+      CdInsideEscapesRequested() ? &ESCAPES_INSIDE : &ESCAPES_OUTSIDE;
   pairs.push_back(cd10);
   ShieldPair cd25;
   cd25.bkg_run = Constants::CDSHIELDBACKGROUND_25PERCENT_20260113;
   cd25.sig_run = Constants::CDSHIELDSIGNAL_25PERCENT_20260113;
   cd25.tag = "CdShield25";
   cd25.ge_label = "Cd Shield Signal 25% (01/13)";
-  cd25.escapes = &ESCAPES_OUTSIDE;
+  cd25.escapes =
+      CdInsideEscapesRequested() ? &ESCAPES_INSIDE : &ESCAPES_OUTSIDE;
   pairs.push_back(cd25);
 
   TString am_run = Constants::POSTREACTOR_AM241_20260113;
@@ -1310,6 +1306,7 @@ DayResult ProcessDay_20260115() {
   cfg.postcal_bkg = Constants::NOSHIELDBACKGROUND_5PERCENT_20260115;
   cfg.postcal_sig = Constants::NOSHIELDSIGNAL_5PERCENT_20260115;
   cfg.ge_label = "No Shield Signal 5% (01/15)";
+  cfg.escapes = &ESCAPES_INSIDE;
   return ProcessLineCalDay(cfg);
 }
 
