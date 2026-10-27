@@ -59,7 +59,7 @@ Each 01/13 signal run is shifted onto its own Pb Kα, so it inherits only its pa
 <!---->
 - Ge follows its own run's Pb: in template fits Ge − Pb within a signal run is the same in the Cd and Cu runs to ±45 eV while Pb moves up to 213 eV.
 - The Cd 10% signal run reads +36 ± 11 eV above its background run within the same crystal, pixel ring and depth slice (where the Pb lands contributes +0.2 eV): a shift of the whole run. Cu 01/13 and Cd 25% show none (+5 ± 12, +11 ± 25 eV). The cause is unknown.
-- Pb Kβ, 10 keV above the window and not used by the anchor, follows: on the anchored calibration the Cd 10% signal run's Kβ reads +46 ± 30 eV against its background run's, where a shift of the Kα lines alone would leave it at −31 eV (2.6σ away) and a shift of the whole run at 0 (1.5σ). Cu 01/13 and Cd 25% read −28 ± 37 and +30 ± 77 eV, Kα itself 0 to +7 eV in all three (comb-period bins at 20 starting points; `/tmp/73mGe-escape/PbKbetaCheck.C`, plots in `plots/czt/studies/pb_kbeta_check`).
+- Pb Kβ, 10 keV above the window and not used by the anchor, follows: on the anchored calibration the Cd 10% signal run's Kβ reads +46 ± 30 eV against its background run's, where a shift of the Kα lines alone would leave it at −31 eV (2.6σ away) and a shift of the whole run at 0 (1.5σ). Cu 01/13 and Cd 25% read −28 ± 37 and +30 ± 77 eV, Kα itself 0 to +7 eV in all three (comb-period bins at 20 starting points; plots in `plots/czt/studies/pb_kbeta_check`).
 - So Cd 10%'s low Ge, −34 eV from the mean and −1.0σ, is not an artefact of the anchor.
 <!---->
 ### Gain transfer to the Cd pairs
