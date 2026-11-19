@@ -1,12 +1,13 @@
-# Si (PSI) Ge energy, SiGeBudget.cpp, trapezoid; summed main runs, Am + Pb Ka calibration; keV
-ge 68.764824
-total 0.020538
-fit 0.017242
-calibration 0.002207
-background 0.010644
+# Si (PSI) Ge energy, SiGeBudget.cpp, trapezoid; the six day/night groups of 10/09-10/12, Am + Pb Ka calibration; keV
+ge 68.757933
+total 0.017431
+fit 0.014769
+calibration 0.002175
+background 0.008636
 window 0.002528
 # alternatives
+ge_summed_main_runs 68.765344
 ge_cal_b 68.769761
-ge_cal_c 68.768811
+ge_cal_c 68.768928
 ge_days_cal_b 68.763394
 ge_days_cal_b_err 0.016477

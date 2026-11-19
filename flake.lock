@@ -216,11 +216,11 @@
         "root-src": "root-src"
       },
       "locked": {
-        "lastModified": 1793041335,
-        "narHash": "sha256-emJIuEs0MpFuvzlSSkGL/UbZ/kbSScQH+ySN+Z/KLqQ=",
+        "lastModified": 1795128671,
+        "narHash": "sha256-4ANUlPLU8tSK8Lkbvrow/qjWjxBM0WHaaf7bdl1FSNQ=",
         "owner": "ewtodd",
         "repo": "Analysis-Utilities",
-        "rev": "3465b43878358fd132dd24c74c138d9661662839",
+        "rev": "a046ecdeee86441dfe297f1ae826d08aacf17aac",
         "type": "github"
       },
       "original": {

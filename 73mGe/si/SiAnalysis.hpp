@@ -274,14 +274,12 @@ struct LineModel {
 struct LineSpec {
   Double_t mean_guess = 0;
   Int_t sigma_slot = 0;
-  Bool_t fix_mean = kFALSE;
   // Channels either side of the guess the mean may move.
   Double_t mean_range = 15;
-  Bool_t allow_negative = kFALSE;
 };
 
 struct FitOutput {
-  Bool_t ok = kFALSE;
+  Bool_t converged = kFALSE;
   std::vector<Double_t> mean, mean_err, area, area_err;
   std::vector<Double_t> sigma, sigma_err;
   Double_t c0 = 0, c1 = 0, c2 = 0;
@@ -295,6 +293,21 @@ struct FitOutput {
 inline Int_t &FitCounter() {
   static Int_t counter = 0;
   return counter;
+}
+
+inline Int_t &UnconvergedFitCounter() {
+  static Int_t counter = 0;
+  return counter;
+}
+
+// Fit option "M" runs TMinuit's MIGRAD then IMPROVE, and adds 1000 times
+// IMPROVE's return code to the status; IMPROVE returns 4 when it finds no
+// lower minimum than MIGRAD's, so a good fit reads 4000.
+inline Bool_t FitConverged(const TFitResultPtr &result) {
+  if (!result.Get())
+    return kFALSE;
+  Int_t migrad_and_hesse_status = result->Status() % 1000;
+  return migrad_and_hesse_status == 0 && result->CovMatrixStatus() == 3;
 }
 
 // Binned Poisson likelihood fit of the lines on a background of order
@@ -343,22 +356,24 @@ inline FitOutput FitLines(TH1D *h, Double_t lo, Double_t hi,
     Int_t b = h->FindBin(lines[k].mean_guess);
     Double_t height = TMath::Max(h->GetBinContent(b) - level, 1.0);
     f.SetParameter(model.AreaPar(k), height * 2.5 * sigma_guess);
-    if (lines[k].allow_negative)
-      f.SetParLimits(model.AreaPar(k), -1e7, 1e9);
-    else
-      f.SetParLimits(model.AreaPar(k), 0.0, 1e9);
+    f.SetParLimits(model.AreaPar(k), 0.0, 1e9);
     f.SetParameter(model.MeanPar(k), lines[k].mean_guess);
-    if (lines[k].fix_mean)
-      f.FixParameter(model.MeanPar(k), lines[k].mean_guess);
-    else
-      f.SetParLimits(model.MeanPar(k),
-                     lines[k].mean_guess - lines[k].mean_range,
-                     lines[k].mean_guess + lines[k].mean_range);
+    f.SetParLimits(model.MeanPar(k), lines[k].mean_guess - lines[k].mean_range,
+                   lines[k].mean_guess + lines[k].mean_range);
   }
   h->Fit(&f, "QLRN0");
   TFitResultPtr result = h->Fit(&f, "QLRN0SM");
   out.status = result.Get() ? result->Status() : -1;
-  out.ok = out.status == 0;
+  out.converged = FitConverged(result);
+  if (!out.converged) {
+    UnconvergedFitCounter()++;
+    std::cout << "SI FIT NOT CONVERGED: " << h->GetName() << " over " << lo
+              << "-" << hi << " ch, " << lines.size() << " lines, first at "
+              << lines[0].mean_guess << " ch, background order "
+              << background_order << ", status " << out.status
+              << ", covariance status "
+              << (result.Get() ? result->CovMatrixStatus() : -1) << std::endl;
+  }
   for (size_t k = 0; k < lines.size(); k++) {
     out.mean.push_back(f.GetParameter(model.MeanPar(k)));
     out.mean_err.push_back(f.GetParError(model.MeanPar(k)));

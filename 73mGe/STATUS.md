@@ -1,4 +1,4 @@
-# 73mGe — status and plan (2026-10-27)
+# 73mGe — status and plan (2026-11-19)
 <!---->
 The energy of the bare 73mGe γ ray: in the pixelated CZT at the OSU reactor (`czt/`, January 2026), and in the Amptek CdTe and Si at PSI's BOA beamline (`cdte/`, `si/`, October 2025). ENSDF gives 68.752 ± 0.007 keV. Ge-detector values (68.79–68.82 keV) include a recoil deposit these detectors do not see, so a result there would mean a bias.
 <!---->
@@ -10,16 +10,17 @@ Why each correction is applied, how large it is, and how the CZT result moved fr
 |---|---|---|---|
 | CZT, final | **68.7567** | 0.0191 | `czt/CombineGeResult.cpp`; sent to the collaborator 2026-10-27 |
 | PSI CdTe | 68.7501 | 0.0331 | `cdte/GeBudget.cpp` → `results/cdte_ge.result` |
-| PSI Si | 68.7648 | 0.0205 | `si/SiGeBudget.cpp` → `results/si_ge.result` |
+| PSI Si | 68.7579 | 0.0174 | `si/SiGeBudget.cpp` → `results/si_ge.result` |
 <!---->
 The collaborator's draft gives CdTe 68.7484 ± 0.0189, Si-1 68.7543 ± 0.0115 and CZT 68.7606 ± 0.0146 keV.
 <!---->
 ## Running
 <!---->
-- **Shell.** `nix develop .#73mGe` from the repo root; the lock pins Analysis-Utilities 26.10.26 (3465b43), which has everything production needs.
-- **CZT.** `czt/Filter.cpp` (event selection) and `czt/PixelCalibration.cpp` (pixel gains) first. Then `czt/CalibrateAndFit.cpp` (with `czt/GainTransferFit.hpp` and `czt/PixelAlignment.hpp`) four times: production, and `TRANSFER=offset`, `ESCAPES=off` and `CD_ESCAPES=inside` for its systematics. Then `czt/CombineGeResult.cpp`. Each run takes 2–3 minutes and writes `root_files/calibrated_<tag>`, `plots/czt/calibration_low_<tag>` (with the saved fit states its fits start from) and `results/ge_<tag>.result` (columns `method ge_mu fit_err cal_err bkg_err chi2 gain_err cal_off sys_err anchor_err label`). The tags are `tau20_sigpb_esc_pxday`, `tau20_sigpb_esc_oxfer_pxday`, `tau20_sigpb_pxday` and `tau20_sigpb_esc_cdin_pxday`.
+- **Shell.** `nix develop .#73mGe` from the repo root; the lock pins Analysis-Utilities 26.11.19 (a046ecd), which has everything production needs.
+- **CZT.** `czt/Filter.cpp` (event selection) and `czt/PixelCalibration.cpp` (pixel gains) first. Then `czt/CalibrateAndFit.cpp` (with `czt/GainTransferFit.hpp` and `czt/PixelAlignment.hpp`) four times: production, and `TRANSFER=offset`, `ESCAPES=off` and `CD_ESCAPES=inside` for its systematics. Then `czt/CombineGeResult.cpp`. Each run takes 2–3 minutes and writes `root_files/calibrated_<tag>`, `plots/czt/calibration_low_<tag>` (with the saved fit states its fits start from) and `results/ge_<tag>.result` (columns `method ge_mu fit_err cal_err bkg_err chi2 gain_err cal_off sys_err anchor_err label`). The tags are `tau20_sigpb_esc_pxday`, `tau20_sigpb_esc_oxfer_pxday`, `tau20_sigpb_pxday` and `tau20_sigpb_esc_cdin_pxday`. `czt/FitFigure.cpp` redraws the production fits of the 01/13 signal runs for the paper (`plots/czt/figures`).
 - **CdTe.** `cdte/ProcessWaveforms.cpp` (raw waveforms to `features` trees), `cdte/NoGeEscapes.cpp` (the escape tie, entered as constants in `GeBudget.cpp`), then `cdte/GeBudget.cpp`.
 - **Si.** `si/ProcessWaveforms.cpp`, then `si/SiGeBudget.cpp`.
+- **Recommended value.** `evaluation/RecommendedValue.cpp` prints the averages and draws the comparison of measurements and the Jones and Kraner recalibration (`plots/evaluation`).
 - **Data.** The raw PSI waveforms in `/labdata/PSI/{CdTe,Si}` are read only; the processed trees are in `/labdata/ANSG/PSI/processed/{CdTe,Si}/features`. Line energies and escape tables shared by the three analyses are in `include/ReferenceLines.hpp`.
 <!---->
 ## Reference lines (`include/ReferenceLines.hpp`)
@@ -37,14 +38,14 @@ Final (2026-10-27): this value was sent to the collaborator and the analysis is 
 <!---->
 | Run | Method | Ge [keV] | fit | cal | sys | transfer model | escapes | escape source | χ²/ndf | BLUE weight | Ge − mean |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Cu shield 10%, 01/13 | in-situ | 68.7660 | 20.4 | 7.0 | — | 0 | −12.2 | 0 | 1.05 | 0.509 | +9.3 eV, +0.38σ |
-| Cd shield 10%, 01/13 | in-situ | 68.7302 | 31.1 | 7.2 | — | +9.7 | −0.6 | −12.3 | 1.48 | 0.216 | −26.5 eV, −0.74σ |
-| Cd shield 25%, 01/13 | in-situ | 68.7435 | 33.2 | 19.8 | — | +11.8 | −1.1 | −13.5 | 1.54 | 0.138 | −13.1 eV, −0.31σ |
-| No shield 5%, 01/15 | rate-sub | 68.7771 | 42.4 | 6.2 | 20.4 | 0 | −2.6 | 0 | 1.22 | 0.136 | +20.4 eV, +0.43σ |
+| Cu shield 10%, 01/13 | in-situ | 68.7660 | 20.4 | 7.0 | — | 0 | −12.1 | 0 | 1.33 | 0.510 | +9.3 eV, +0.38σ |
+| Cd shield 10%, 01/13 | in-situ | 68.7302 | 31.1 | 7.1 | — | +9.6 | −0.5 | −12.3 | 1.31 | 0.216 | −26.5 eV, −0.74σ |
+| Cd shield 25%, 01/13 | in-situ | 68.7435 | 33.2 | 19.8 | — | +11.8 | −1.1 | −13.5 | 1.65 | 0.138 | −13.2 eV, −0.31σ |
+| No shield 5%, 01/15 | rate-sub | 68.7771 | 42.4 | 6.2 | 20.4 | 0 | −2.5 | 0 | 1.22 | 0.136 | +20.4 eV, +0.43σ |
 <!---->
 Errors and corrections in eV; Ge − mean in each run's own total error.
 <!---->
-- **Quoted** 68.7567 ± 0.0191 keV, +4.7 eV from ENSDF: the BLUE of the four runs, 68.7567 ± 0.0180 keV (χ²/ndf 0.30; statistics 14.4, calibration offset 4.2 and multiplicative 3.6, systematics: rate-sub 2.8, transfer model 3.7, escapes 6.6 and escape source 4.5 eV), with 6.4 eV of outlier removal (the BLUE without Cd 10%, the lowest run) in quadrature. Method 1 (68.7535 ± 0.0193) and Method 2 (68.7771 ± 0.0475 keV) agree to 24 ± 51 eV, the shared escape fractions included.
+- **Quoted** 68.7567 ± 0.0191 keV, +4.7 eV from ENSDF: the BLUE of the four runs, 68.7567 ± 0.0180 keV (χ²/ndf 0.30; statistics 14.4, calibration offset 4.2 and multiplicative 3.6, systematics: rate-sub 2.8, transfer model 3.7, escapes 6.5 and escape source 4.5 eV), with 6.4 eV of outlier removal (the BLUE without Cd 10%, the lowest run) in quadrature. Method 1 (68.7536 ± 0.0193) and Method 2 (68.7771 ± 0.0475 keV) agree to 24 ± 51 eV, the shared escape fractions included.
 - **Selection and pixel gains.** Single-interaction events within 2 mm of the cathode (z ≥ 8 mm) on a pixel centre, without pile-up (under 3 µs of live time and in the same millisecond as the previous event), each energy times its pixel's gain: 558.456 keV over its 558 keV centroid in the 01/16 graphite-castle run.
 - **Day pixel map.** Near 70–96 keV the 558 keV gains leave the crystals 80–300 eV apart and the pixels 110 eV rms (`CORRECTIONS.md`). Every event is aligned on its day's map (`czt/PixelAlignment.hpp`): each pixel's line position against its run's summed spectrum, averaged over the day's beam runs, on Pb Kα on 01/13 and on the 95.902 keV line on 01/15, where Pb Kα barely stands above the continuum. A pixel measured to 100 eV or better at 68.75 keV gets the factor μ_run/μ_pixel; a day's source runs take its map.
 - **Method 1, 01/13, in-situ.** Each background run (Pb Kα2/Kα1) is fitted together with its signal run (the same lines plus Ge) over 65–80 keV in an unbinned likelihood, first in raw energy, with one Pb shape and one low tail (a Gaussian with an exponential tail, τ/σ ≤ 20) on a flat continuum. Cu 10% is calibrated with a pol1 through Am-241 and its background run's Pb Kα; the Cd pairs inherit it as a gain through their own Pb Kα, and each signal run is shifted onto its own Pb Kα.
@@ -74,13 +75,14 @@ The CdTe (DT5780 channel 1) on `PulseHeightProcessor` energies, in rise-time sli
 <!---->
 ## PSI Si (`si/`)
 <!---->
-The Si (DT5780 channel 0) on the trapezoid of the processed waveforms (rise 4 µs, flat top 1 µs, baseline up to 75 samples before the trigger; `si/SiShapingScan.cpp` chose it by the Am and Pb Kα widths), the collaborator's way: one Gaussian on a linear background over 66.5–71 keV in the summed main Ge runs (10/10–10/12; BeamTurnOn_4 of 10/09 is outside the result), calibrated with Am-241 from the source runs and the beam runs' own Pb Kα (cal A). Errors: fit, calibration offset and slope, background (|linear − flat|), window (RMS over 15 windows).
+The Si (DT5780 channel 0) on the trapezoid of the processed waveforms (rise 4 µs, flat top 1 µs, baseline up to 75 samples before the trigger; `si/SiShapingScan.cpp` chose it by the Am and Pb Kα widths), built like the collaborator's Si-1: the Ge runs of 10/09–10/12 in the same six day/night groups, each fitted with one Gaussian on a linear background over 66.5–71 keV and calibrated with Am-241 from the source runs and the group's own Pb Kα, then the groups' error-weighted mean. Errors: fit, calibration (the Am position shared by the groups, the Pb positions each group's own), background (|linear − flat|), window (RMS over 15 windows of the summed spectrum).
 <!---->
-- **Result** 68.7648 ± 0.0205 keV (fit 17.2, calibration 2.2, background 10.6, window 2.5 eV).
-- **The digitiser's on-board energy is not used.** On the same records it read 68.7698 ± 0.0196 keV, −4.9 ± 15.1 eV from the trapezoid by bootstrap, so the choice is not a systematic. The trapezoid has the steadier Pb Kα1 run to run (χ² 6.4/7 against 18.1/7), per-run Ge χ² 9.8/6 against 13.9/6, physical per-run widths and no channel comb.
-- **Checks** (eV from cal A): cal B (Am + Ba-133) +5.0; per-day mean −5.9; without GeTarget_1 −5.5; with the W Kβ group −10.4; quadratic cal B −6.5 against linear cal B; isolated records +2.3; the 53.44 keV line 53.4201 ± 0.0319 keV.
-- **GeTarget_1** (the first 1.6 h of the 10/10 acquisition) reads 2.9σ high, but the seven runs give χ² 9.8/6 and nothing besides its value argues for dropping it.
-- **The collaborator's Si-1** averages six day/night runs from 10/09 to 10/12, so it includes 10/09.
+- **Result** 68.7579 ± 0.0174 keV (fit 14.8, calibration 2.2, background 8.6, window 2.5 eV). The six groups give χ² 3.2/5.
+- **Against the draft's groups** (ours − draft): Thu 10/09 −39.4, Fri night +62.8, Sat day −9.9, Sat night +8.5, Sun day +27.6, Sun night +2.3 eV, each group with a 25–74 eV error. The means differ by +3.6 eV (Si-1 68.7543 ± 0.0115). The draft does not say how each group was fitted. Plot: `plots/si/ge_budget/psi_si_ge_groups.png`.
+- **The summed spectrum** of the 10/10–10/12 runs reads 68.7653 ± 0.0205 keV, +7.4 eV from the groups.
+- **The digitiser's on-board energy is not used.** On the summed spectrum the two energies differ by 4.9 ± 15.1 eV (bootstrap on the same records), so the choice is not a systematic. The trapezoid has the steadier Pb Kα1 run to run (χ² 6.4/7 against 18.1/7), per-run Ge χ² 9.8/6 against 13.9/6, physical per-run widths and no channel comb.
+- **Checks** on the summed spectrum (eV from its Am + Pb Kα value): Am + Ba-133 calibration +4.5; per-day mean −5.9; quadratic against linear Am + Ba −6.5; isolated records +2.3; the 53.44 keV line 53.4201 ± 0.0319 keV.
+- **Every fit is checked for convergence** (MIGRAD and HESSE status 0, full covariance). Only the Am fit of one low-count source run fails, and the line-stability check skips that run.
 - **Records whose baseline sits at the bottom of the ADC range** are dropped (`CORRECTIONS.md`).
 <!---->
 ## Findings behind open questions
@@ -94,5 +96,5 @@ The Si (DT5780 channel 0) on the trapezoid of the processed waveforms (rise 4 µ
 ## Plan
 <!---->
 1. **The CdTe extrapolation term**: the full curvature-free shift or the curvature's quadrature cost, and whether to move the slice edges off the rise estimator's sawtooth peaks (280, 300, 320 ns).
-2. **The Si in the combination**: whether it joins, and with which correlations (the Si and CdTe share the PSI beam time and the Pb Kα and Am reference energies, not the calibration fits).
+2. **Recommended value** for the paper: an error-weighted average of the CZT (this work), the collaborator's CdTe and Si, and Jones and Kraner (1971, 1975), as in the collaborator's paper (adopted 68.7536 ± 0.0034 keV there); our CdTe and Si (the collaborator's six Si groups as they are) are cross-checks of the same data. Only measurements without a Ge detector enter: neutrons cannot be kept out of a detector (the CZT sees ¹¹³Cd(n,γ) from its own crystal in every configuration, behind the Cd foil too), and captures on a Ge detector's own ⁷²Ge add the recoil to the 68.75 keV line. That leaves out Collar et al. (with it the value moves −0.6 eV) and any Jones and Kraner value taken with a Ge(Li) detector. Their 1971 paper (Phys. Rev. C 4, 125) lists seven energies, (p,p′γ) ×4, (n,γ), (α,α′γ) ×2, from "both Ge(Li) and Si(Li) detectors" without saying which; only a (p,p′) spectrum is shown as Si(Li). The 1975 value (Phys. Rev. A 11, 1347), 68.755 ± 0.005 keV, is ⁷²Ge(n,γ) on a GeO₂ sample seen with a Si(Li). Both papers calibrate on Am 59.537 keV and Bearden's Pb Kα; on DDEP and SRD 128 their energies rise by +1.99 to +2.17 eV for any linear or quadratic calibration through those three lines (their lines on a fake ADC, linear on their scale, recalibrated every way), so they take +2.08 ± 0.09 eV (`evaluation/RecommendedValue.cpp`, `plots/evaluation`). With the 1971 (p,p′γ) group (its spectrum shown taken with a Si(Li)) and the 1975 value: 68.7547 ± 0.0037 keV (χ²/ndf 0.8/5; 68.7532 unadjusted). Open: correlations among the Jones and Kraner values (J&K 1975 carries 49% of the weight), the reference energies behind each input, and which Si values are the collaborator's latest.
 3. **Write-up**: the step-by-step move from 68.7502 keV (`CORRECTIONS.md`), with each step's size measured.

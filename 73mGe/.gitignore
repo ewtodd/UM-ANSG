@@ -8,10 +8,13 @@ ConvertBEF*
 
 # Results of configurations production does not use, and the testbed's
 # reference fit states, which every testbed run rewrites. The CZT production
-# results and its two partners', the CdTe's and the Si's are tracked; a new
+# results and its three partners', the CdTe's and the Si's are tracked; a new
 # one to keep needs `git add -f`.
 results/ge_tau20_*.result
 plots/testbed/injection_*/reference/
+
+# Links to every fit plot of the CZT production chain, for viewing.
+plots/czt/production/
 
 # Local ROOT outputs, and the macros and logs Geant4 runs leave beside their
 # output (the simulation and its macros live in the Geant4 repository).

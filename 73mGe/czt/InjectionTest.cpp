@@ -736,17 +736,16 @@ FitOutcome OutcomeOf(const BkgGeSimResult &sim, Double_t range_lo,
 // Production's in-situ fit from the state `start`, which the caller has put
 // where the fitter looks for it (<plots dir>/fits/<fit_label>_<sig_label>
 // .simroofits).
-BkgGeSimResult RunInSituFromState(const FitState &start,
-                                  const std::vector<Double_t> &bkg_events,
-                                  const std::vector<Double_t> &sig_events,
-                                  const TString &bkg_label,
-                                  const TString &sig_label,
-                                  const TString &fit_label,
-                                  const InSituEscapes &escapes) {
+BkgGeSimResult RunInSituFromState(
+    const FitState &start, const std::vector<Double_t> &bkg_events,
+    const std::vector<Double_t> &sig_events, const TString &bkg_label,
+    const TString &sig_label, const TString &fit_label,
+    const InSituEscapes &escapes, Double_t bin_kev) {
   FitResult bkg_seed = ChannelSeed(start, "bkg");
   FitResult sig_seed = ChannelSeed(start, "sig");
   return RunBkgGeSim(bkg_events, sig_events, PbKaEnergies(), bkg_label,
-                     sig_label, fit_label, &bkg_seed, &sig_seed, escapes);
+                     sig_label, fit_label, bin_kev, &bkg_seed, &sig_seed,
+                     escapes);
 }
 
 Bool_t CopyFile(const TString &source, const TString &target) {
@@ -789,7 +788,7 @@ PairReference RunReferenceFit(const InjPair &pair,
     return ref;
   BkgGeSimResult first =
       RunInSituFromState(production, bkg_all, sig_all, bkg_label, sig_label,
-                         first_label, InSituEscapes());
+                         first_label, InSituEscapes(), comb_bin);
   FitState converged =
       FitStateOf(first, production.range_lo, production.range_hi);
   BkgGeSimResult fit = first;
@@ -803,7 +802,7 @@ PairReference RunReferenceFit(const InjPair &pair,
                                       ".simroofits"))
       return ref;
     fit = RunInSituFromState(converged, bkg_all, sig_all, bkg_label, sig_label,
-                             label, escapes);
+                             label, escapes, comb_bin);
   }
   ref.state = FitStateOf(fit, production.range_lo, production.range_hi);
   ref.ge = GeShapeOf(ref.state);
@@ -1153,15 +1152,17 @@ TrialOutcome RunOneTrial(const PairSetup &setup, const TString &shape,
   }
 
   const Double_t lo = start.range_lo, hi = start.range_hi;
-  out.sim = OutcomeOf(RunInSituFromState(start, bkg_events, sig_events,
-                                         "Bkg_" + trial_tag, sig_label,
-                                         fit_labels[0], with_escapes),
-                      lo, hi);
+  out.sim =
+      OutcomeOf(RunInSituFromState(start, bkg_events, sig_events,
+                                   "Bkg_" + trial_tag, sig_label, fit_labels[0],
+                                   with_escapes, setup.comb_bin),
+                lo, hi);
   if (fit_without) {
-    out.sim_noesc = OutcomeOf(
-        RunInSituFromState(start, bkg_events, sig_events, "Bkg_" + trial_tag,
-                           sig_label, fit_labels[1], InSituEscapes()),
-        lo, hi);
+    out.sim_noesc = OutcomeOf(RunInSituFromState(start, bkg_events, sig_events,
+                                                 "Bkg_" + trial_tag, sig_label,
+                                                 fit_labels[1], InSituEscapes(),
+                                                 setup.comb_bin),
+                              lo, hi);
     out.have_sim_noesc = kTRUE;
   }
 

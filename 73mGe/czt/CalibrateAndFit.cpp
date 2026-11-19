@@ -12,6 +12,8 @@
 #include <TGraph.h>
 #include <TGraphErrors.h>
 #include <TH1D.h>
+#include <TLegend.h>
+#include <TLine.h>
 #include <TMatrixD.h>
 #include <TParameter.h>
 #include <TSystem.h>
@@ -154,7 +156,7 @@ FitResult FitCalPeak(const std::vector<Double_t> &events,
                      Double_t gaus_yield_ratio = 0.0) {
   if (events.empty())
     return {};
-  RooFitUtils fitter(events, fit_low, fit_high, Constants::BIN_WIDTH_KEV, kTRUE,
+  RooFitUtils fitter(events, fit_low, fit_high, COMB_PERIOD_RAW_KEV, kTRUE,
                      kFALSE, kTRUE, kFALSE, kFALSE);
   fitter.SetTailRatioMax(TAIL_RATIO_MAX);
   fitter.SetInteractive();
@@ -253,6 +255,95 @@ void FillCalCovariance(CalFit &c, const std::vector<Float_t> &x,
     c.func->SetParError(k, std::sqrt(std::max(0.0, H(k, k))));
 }
 
+// The calibration line through its anchors above, and below each anchor's
+// calibrated minus reference energy, its error the centroid's through the
+// slope and the reference energy's.
+void DrawCalibration(const CalibrationData &cal_data,
+                     const std::vector<Float_t> &ex,
+                     const std::vector<Float_t> &ey, TF1 *cal, Double_t lo,
+                     Double_t hi, const TString &file_name) {
+  const Int_t colors[5] = {kRed + 1, kBlue + 1, kGreen + 2, kMagenta + 1,
+                           kOrange + 7};
+  Int_t n = (Int_t)cal_data.mu.size();
+  std::vector<TString> labels;
+  for (Int_t i = 0; i < n; i++)
+    labels.push_back(Form("%s, %.4f keV", cal_data.run_names[i].Data(),
+                          cal_data.calibration_values_keV[i]));
+  labels.push_back("Linear calibration");
+  Double_t legend_w = PlottingUtils::LegendWidthPx(labels);
+  TPad *plot = nullptr, *legend_pad = nullptr;
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
+      plot, legend_pad, (Int_t)legend_w, 1300);
+  TPad *upper = nullptr, *lower = nullptr;
+  PlottingUtils::SplitPadForPanel(plot, 500, upper, lower);
+
+  upper->cd();
+  TH1D *frame = new TH1D(file_name + "_frame",
+                         ";Precalibrated Energy [keV];Deposited Energy [keV]",
+                         100, lo, hi);
+  frame->SetMinimum(lo);
+  frame->SetMaximum(hi);
+  frame->SetStats(kFALSE);
+  frame->GetXaxis()->SetLabelSize(0);
+  frame->GetXaxis()->SetTitleSize(0);
+  frame->Draw("AXIS");
+  cal->SetLineColor(kBlack);
+  cal->SetLineWidth(2);
+  cal->Draw("SAME");
+  std::vector<TGraphErrors *> anchors, residuals;
+  Double_t res_max = 0;
+  for (Int_t i = 0; i < n; i++) {
+    Int_t color = colors[i % 5];
+    TGraphErrors *a = new TGraphErrors(1);
+    a->SetPoint(0, cal_data.mu[i], cal_data.calibration_values_keV[i]);
+    a->SetMarkerStyle(20);
+    a->SetMarkerSize(2.0);
+    a->SetMarkerColor(color);
+    a->SetLineColor(color);
+    a->Draw("P SAME");
+    anchors.push_back(a);
+
+    Double_t res_ev = 1000.0 * (cal->Eval(cal_data.mu[i]) -
+                                cal_data.calibration_values_keV[i]);
+    Double_t err_ev = 1000.0 * std::hypot(cal->GetParameter(1) * ex[i], ey[i]);
+    TGraphErrors *r = new TGraphErrors(1);
+    r->SetPoint(0, cal_data.mu[i], res_ev);
+    r->SetPointError(0, 0, err_ev);
+    r->SetMarkerStyle(20);
+    r->SetMarkerSize(2.0);
+    r->SetMarkerColor(color);
+    r->SetLineColor(color);
+    r->SetLineWidth(2);
+    residuals.push_back(r);
+    res_max = std::max(res_max, std::fabs(res_ev) + err_ev);
+  }
+
+  lower->cd();
+  Double_t y_span = 1.3 * std::max(res_max, 1.0);
+  TH1D *res_frame =
+      new TH1D(file_name + "_res_frame",
+               ";Precalibrated Energy [keV];Calibrated #minus reference [eV]",
+               100, lo, hi);
+  res_frame->SetMinimum(-y_span);
+  res_frame->SetMaximum(y_span);
+  res_frame->SetStats(kFALSE);
+  res_frame->GetYaxis()->SetNdivisions(504);
+  res_frame->Draw("AXIS");
+  TLine *zero = new TLine(lo, 0, hi, 0);
+  zero->SetLineStyle(2);
+  zero->Draw();
+  for (Int_t i = 0; i < n; i++)
+    residuals[i]->Draw("P SAME");
+
+  TLegend *leg =
+      PlottingUtils::AddSideLegend(upper, legend_pad, (Int_t)labels.size());
+  for (Int_t i = 0; i < n; i++)
+    leg->AddEntry(anchors[i], labels[i], "p");
+  leg->AddEntry(cal, labels[n], "l");
+  PlottingUtils::ScaleFigure(plot);
+  PlottingUtils::SaveFigure(canvas, file_name, "", PlotSaveOptions::kLINEAR);
+}
+
 CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
                             const TString &date_label) {
   Int_t n = (Int_t)cal_data.mu.size();
@@ -280,22 +371,12 @@ CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
   }
   draw_lo -= 3.0;
   draw_hi += 3.0;
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
-  PlottingUtils::ConfigureGraph(
-      graph, kBlue, "; Precalibrated Energy [keV]; Deposited Energy [keV]");
-  graph->GetXaxis()->SetRangeUser(draw_lo, draw_hi);
-  graph->GetYaxis()->SetRangeUser(draw_lo, draw_hi);
-  graph->GetXaxis()->SetNdivisions(506);
-  graph->SetMarkerStyle(5);
-  graph->SetMarkerSize(2);
-  graph->Draw("AP");
 
   TF1 *cal = new TF1("cal_low_" + date_label, "pol1", draw_lo, draw_hi);
   cal->SetParameter(0, 0);
   cal->SetParameter(1, 1);
   cal->SetNpx(1000);
   TFitResultPtr fr = graph->Fit(cal, "E S Q");
-  cal->Draw("SAME");
 
   CalFit out;
   out.func = cal;
@@ -311,8 +392,8 @@ CalFit CreateAndSavePol1Cal(const CalibrationData &cal_data,
               << std::setprecision(1) << CalOffsetError(out) * 1000.0 << " eV"
               << std::endl;
 
-  PlottingUtils::SaveFigure(canvas, "calibration_low_" + date_label, "",
-                            PlotSaveOptions::kLINEAR);
+  DrawCalibration(cal_data, ex, ey, cal, draw_lo, draw_hi,
+                  "calibration_low_" + date_label);
   return out;
 }
 
@@ -890,9 +971,9 @@ PairCalResult ProcessPbAnchoredPair(
   raw_escapes.fractions = escapes;
   raw_escapes.units_per_kev = 1.0 / RAW_KEV_PER_UNIT_0113;
   raw_escapes.comb_period = COMB_PERIOD_RAW_KEV;
-  BkgGeSimResult pre =
-      RunBkgGeSim(bkg_events, sig_events, pb_mus, bkg_run, sig_run,
-                  "PreCal_" + pair_tag, nullptr, nullptr, raw_escapes);
+  BkgGeSimResult pre = RunBkgGeSim(
+      bkg_events, sig_events, pb_mus, bkg_run, sig_run, "PreCal_" + pair_tag,
+      COMB_PERIOD_RAW_KEV, nullptr, nullptr, raw_escapes);
   if (!pre.valid)
     return out;
 
@@ -1103,10 +1184,10 @@ PairCalResult ProcessPbAnchoredPair(
   calibrated_escapes.fractions = escapes;
   calibrated_escapes.units_per_kev = 1.0;
   calibrated_escapes.comb_period = COMB_PERIOD_RAW_KEV * cal_p1;
-  out.postcal =
-      RunBkgGeSim(bc, sc, pb_mus, bkg_run + "_postcal_" + pair_tag,
-                  sig_run + "_postcal_" + pair_tag, "PostCal_" + pair_tag,
-                  &bkg_seed_post, &sig_seed_post, calibrated_escapes);
+  out.postcal = RunBkgGeSim(bc, sc, pb_mus, bkg_run + "_postcal_" + pair_tag,
+                            sig_run + "_postcal_" + pair_tag,
+                            "PostCal_" + pair_tag, COMB_PERIOD_RAW_KEV * cal_p1,
+                            &bkg_seed_post, &sig_seed_post, calibrated_escapes);
 
   if (out.postcal.valid) {
     std::cout << "Post-cal FREE Pb mu for " << cal_label << ":" << std::endl;
@@ -1329,11 +1410,13 @@ void CalibrateAndFit() {
             << ", 95.902 keV escapes "
             << (EscapeLinesRequested() ? "on" : "off") << ", ROOT "
             << gROOT->GetVersion() << std::endl;
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
                                 project_root + "/plots/czt/calibration_low_" +
                                     RESULT_TAG,
                                 project_root + "/root_files");
   PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
+  // For FitFigure.cpp, which redraws the production fits for the paper.
+  PlottingUtils::SetFitFigureObjectsSaved();
   PairCalResult ref_pair;
   DayResult d13 = ProcessDay_20260113(ref_pair);
   DayResult d15 = ProcessDay_20260115();

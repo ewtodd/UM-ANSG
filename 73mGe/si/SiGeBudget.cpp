@@ -1,22 +1,26 @@
 // The 68.75 keV 72Ge(n,g) line in the PSI Amptek Si, from the trapezoid of
 // the processed waveforms (ProcessWaveforms.cpp; the digitiser's own on-board
-// energy is not used). Done the collaborator's way: a Gaussian on a linear
-// background over 66.5-71 keV, calibrated with Am-241 59.5409 keV (source
-// runs) and the beam runs' own Pb Ka2/Ka1 (cal A, the result). Alternatives:
+// energy is not used). Done the collaborator's way: every Ge beam run of the
+// first PSI run (10/09-10/12) in its six day/night groups, each a Gaussian
+// on a linear background over 66.5-71 keV, calibrated with Am-241 59.5409
+// keV (source runs) and the group's own Pb Ka2/Ka1 (cal A); the result is
+// the groups' error-weighted mean. The summed spectrum is a check.
+// Alternatives:
 // Am-241 and Ba-133 53.1622, 79.6142, 80.9979 keV (cal B, source lines
 // only) and all six lines (cal C).
 // Uncertainties: the Ge centroid fit, the calibration offset and slope (the
 // pivot at the calibration points' weighted centroid, where the two are
 // uncorrelated), the background (|linear - flat|) and the fit window (RMS
-// over a window scan). Checks: per run, per day, the width fixed, the W Kb
-// group from the collimator, the 53.44 keV line, calibration variants,
-// isolated events, and the run-to-run stability of the line positions.
+// over a window scan). Checks: per run, per day, the width fixed, the 53.44
+// keV line, calibration variants, isolated events, and the run-to-run
+// stability of the line positions.
 //
 // Writes results/si_ge.result, the spectra to
 // /labdata/ANSG/PSI/processed/Si/ge_spectra.root, and the figures to
 // plots/si/ge_budget.
 //
 // Usage: root -b -q 'SiGeBudget.cpp+'
+#include "FigureStyle.hpp"
 #include "SiAnalysis.hpp"
 
 #include <TBox.h>
@@ -44,9 +48,6 @@ const Double_t E_GE_GUESS = 68.75;
 const Double_t BA133_53 = 53.1622;
 const Double_t AM241_ERR = 0.0001, BA133_53_ERR = 0.0006, BA133_79_ERR = 0.0019,
                BA133_81_ERR = 0.0011, PB_KA_ERR = 0.0009;
-// W K X-rays from the Amptek's collimator.
-const Double_t W_KA2 = 57.9817, W_KA1 = 59.3182;
-const Double_t W_KB3 = 66.9514, W_KB1 = 67.2443, W_KB2 = 69.067;
 // The 53.44 keV line of 73mGe, as a check of the scale below Am.
 const Double_t GE73M_53 = 53.440;
 
@@ -139,6 +140,7 @@ std::vector<TString> BaRuns(Int_t day) {
 struct Point {
   TString name;
   Double_t ch = 0, ch_err = 0, e = 0, e_err = 0, sigma = 0, area = 0;
+  Bool_t converged = kFALSE;
 };
 
 // Variations of the calibration-line fits: channels added to each side of
@@ -158,6 +160,7 @@ Point MakePoint(const TString &name, const FitOutput &f, Int_t k, Double_t e,
   p.e_err = e_err;
   p.sigma = f.sigma[0];
   p.area = f.area[k];
+  p.converged = f.converged;
   return p;
 }
 
@@ -211,21 +214,22 @@ Calibration Calibrate(const std::vector<Point> &points) {
 // ----------------------------------------------------------------- Ge fits
 
 struct GeFit {
-  Bool_t ok = kFALSE;
+  Bool_t converged = kFALSE;
+  // A physical width and an area above twice its error.
+  Bool_t plausible_line = kFALSE;
   Double_t mu = 0, mu_err = 0, sigma = 0, sigma_err = 0, area = 0, area_err = 0;
   Double_t chi2 = 0;
   Int_t ndf = 0;
   Double_t lo = 0, hi = 0;
   Double_t c0 = 0, c1 = 0, c2 = 0;
-  // The W Kb group, when fitted.
-  Double_t w_area = 0, w_area_err = 0;
   Int_t status = -1;
 };
 
 GeFit FromOutput(const FitOutput &f) {
   GeFit g;
   g.status = f.status;
-  g.ok =
+  g.converged = f.converged;
+  g.plausible_line =
       f.sigma[0] > 1.05 && f.sigma[0] < 39.0 && f.area[0] > 2.0 * f.area_err[0];
   g.mu = f.mean[0];
   g.mu_err = f.mean_err[0];
@@ -254,57 +258,6 @@ GeFit FitGe(TH1D *h, const Calibration &cal, Double_t lo_kev, Double_t hi_kev,
   FitOutput f = FitLines(h, cal.Channel(lo_kev), cal.Channel(hi_kev), one, 1,
                          background, fix ? fixed_sigma : 6.2, fix);
   return FromOutput(f);
-}
-
-// Ge plus the W Kb3/Kb1/Kb2 group from the Amptek collimator, the W lines at
-// their calibrated positions with one free (signed) amplitude and fixed
-// relative intensities, all sharing the Ge width.
-const Double_t W_RATIO_KB3 = 0.52, W_RATIO_KB2 = 0.34;
-struct GeWModel {
-  Double_t x_ref;
-  Double_t position[3];
-  Double_t ratio[3];
-  Double_t operator()(Double_t *x, Double_t *p) {
-    Double_t v = p[0] + p[1] * (x[0] - x_ref);
-    Double_t norm = 1.0 / (TMath::Sqrt(2.0 * TMath::Pi()) * p[2]);
-    Double_t z = (x[0] - p[4]) / p[2];
-    v += p[3] * norm * TMath::Exp(-0.5 * z * z);
-    for (Int_t k = 0; k < 3; k++) {
-      Double_t zw = (x[0] - position[k]) / p[2];
-      v += p[5] * ratio[k] * norm * TMath::Exp(-0.5 * zw * zw);
-    }
-    return v;
-  }
-};
-
-GeFit FitGeWithW(TH1D *h, const Calibration &cal, Double_t lo_kev,
-                 Double_t hi_kev) {
-  GeFit seed = FitGe(h, cal, lo_kev, hi_kev, 1);
-  GeWModel model;
-  Double_t lo = cal.Channel(lo_kev), hi = cal.Channel(hi_kev);
-  model.x_ref = 0.5 * (lo + hi);
-  model.position[0] = cal.Channel(W_KB3);
-  model.position[1] = cal.Channel(W_KB1);
-  model.position[2] = cal.Channel(W_KB2);
-  model.ratio[0] = W_RATIO_KB3;
-  model.ratio[1] = 1.0;
-  model.ratio[2] = W_RATIO_KB2;
-  TF1 f(Form("gew_%d", FitCounter()++), model, lo, hi, 6);
-  f.SetParameters(seed.c0, seed.c1, seed.sigma, seed.area, seed.mu, 0.0);
-  f.SetParLimits(2, 1.0, 40.0);
-  f.SetParLimits(4, seed.mu - 12, seed.mu + 12);
-  h->Fit(&f, "QLRN0");
-  TFitResultPtr r = h->Fit(&f, "QLRN0SM");
-  GeFit g;
-  g.ok = r.Get() && r->Status() == 0;
-  g.mu = f.GetParameter(4);
-  g.mu_err = f.GetParError(4);
-  g.sigma = f.GetParameter(2);
-  g.area = f.GetParameter(3);
-  g.area_err = f.GetParError(3);
-  g.w_area = f.GetParameter(5);
-  g.w_area_err = f.GetParError(5);
-  return g;
 }
 
 // ------------------------------------------------------- energy breakdown
@@ -339,7 +292,10 @@ void PrintEnergy(const TString &label, const GeEnergy &r, const GeFit &lin,
             << " win = " << 1000 * r.total << " eV  chi2/ndf "
             << std::setprecision(1) << lin.chi2 << "/" << lin.ndf << "  sigma "
             << std::setprecision(0) << 1000 * cal.c1 * lin.sigma << " eV  area "
-            << lin.area << " +- " << lin.area_err << "  status " << lin.status
+            << lin.area << " +- " << lin.area_err << "  "
+            << (lin.converged
+                    ? "converged"
+                    : TString::Format("NOT CONVERGED (status %d)", lin.status))
             << std::endl;
 }
 
@@ -478,8 +434,7 @@ Double_t ModelPerChannel(const GeFit &g, Double_t ch) {
 }
 
 void DrawSumFit(TH1D *h, const Calibration &cal, const GeFit &lin,
-                const GeFit &flat, const GeEnergy &result,
-                const TString &label) {
+                const GeFit &flat, const TString &label) {
   const Int_t rebin = 2;
   const Double_t show_lo = 65.5, show_hi = 72.0;
   TH1D *data = ToKeV(h, cal, rebin, show_lo, show_hi, "sum_kev");
@@ -495,8 +450,7 @@ void DrawSumFit(TH1D *h, const Calibration &cal, const GeFit &lin,
     g_flat->SetPoint(i, e, rebin * ModelPerChannel(flat, ch));
     g_background->SetPoint(i, e, rebin * BackgroundPerChannel(lin, ch));
   }
-  TH1D *pulls = static_cast<TH1D *>(data->Clone("pulls"));
-  pulls->Reset();
+  TGraph *pulls = new TGraph();
   for (Int_t b = 1; b <= data->GetNbinsX(); b++) {
     Double_t ch_lo = cal.Channel(data->GetBinLowEdge(b));
     if (ch_lo < lin.lo - 0.01 || ch_lo + rebin > lin.hi + 1.01)
@@ -504,20 +458,21 @@ void DrawSumFit(TH1D *h, const Calibration &cal, const GeFit &lin,
     Double_t expected = 0;
     for (Int_t k = 0; k < rebin; k++)
       expected += ModelPerChannel(lin, ch_lo + 0.5 + k);
-    pulls->SetBinContent(b, (data->GetBinContent(b) - expected) /
-                                TMath::Sqrt(expected));
+    pulls->SetPoint(pulls->GetN(), data->GetBinCenter(b),
+                    (data->GetBinContent(b) - expected) /
+                        TMath::Sqrt(expected));
   }
   std::vector<TString> labels;
   labels.push_back(label);
-  labels.push_back("Gaussian + linear background");
+  labels.push_back(Form("Gaussian + linear background, #chi^{2}/ndf = %.3f",
+                        lin.chi2 / lin.ndf));
   labels.push_back("Gaussian + flat background");
   labels.push_back("Linear background");
-  Double_t legend_w = PlottingUtils::LegendWidthPx(labels);
-  TPad *plot = nullptr, *legend_pad = nullptr;
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
-      plot, legend_pad, (Int_t)legend_w, 1100);
+  const Int_t canvas_w = 1400, plot_h = 800, panel_h = 300;
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  canvas->SetCanvasSize(canvas_w, plot_h + panel_h);
   TPad *upper = nullptr, *lower = nullptr;
-  PlottingUtils::SplitPadForPanel(plot, 300, upper, lower);
+  PlottingUtils::SplitPadForPanel(canvas, panel_h, upper, lower);
   upper->cd();
   PlottingUtils::ConfigureHistogram(
       data, kBlack, Form(";Energy [keV];Counts / %.0f eV", bin_ev));
@@ -537,44 +492,15 @@ void DrawSumFit(TH1D *h, const Calibration &cal, const GeFit &lin,
   g_background->Draw("L SAME");
   g_flat->Draw("L SAME");
   g_lin->Draw("L SAME");
-  Double_t w_lines[2] = {W_KB1, W_KB2};
-  const char *w_names[2] = {"W K#beta_{1}", "W K#beta_{2}"};
-  for (Int_t k = 0; k < 2; k++) {
-    TLine *l =
-        new TLine(w_lines[k], data->GetMinimum(), w_lines[k], 1.04 * data_max);
-    l->SetLineStyle(3);
-    l->SetLineColor(kGreen + 3);
-    l->Draw();
-    TLatex *t = new TLatex(w_lines[k] + 0.05, 1.02 * data_max, w_names[k]);
-    t->SetTextFont(43);
-    t->SetTextSize(24);
-    t->SetTextColor(kGreen + 3);
-    t->Draw();
-  }
-  TLatex *res = new TLatex(
-      show_lo + 0.15, 1.12 * data_max,
-      Form("E_{#gamma} = %.4f keV (fit #pm %.0f eV), #chi^{2}/ndf = %.0f/%d",
-           result.e, 1000 * result.fit, lin.chi2, lin.ndf));
-  res->SetTextFont(43);
-  res->SetTextSize(28);
-  res->Draw();
-  lower->cd();
-  PlottingUtils::ConfigureHistogram(pulls, kBlack, ";Energy [keV];Pull");
-  pulls->SetMinimum(-3.9);
-  pulls->SetMaximum(3.9);
-  pulls->GetYaxis()->SetNdivisions(504);
-  pulls->SetFillColor(kGray + 1);
-  pulls->SetFillStyle(1001);
-  pulls->Draw("HIST");
-  TLine *zero = new TLine(show_lo, 0, data->GetXaxis()->GetXmax(), 0);
-  zero->Draw();
-  TLegend *leg =
-      PlottingUtils::AddSideLegend(upper, legend_pad, (Int_t)labels.size());
+  TLegend *leg = FigureStyle::AddFrameLegend(upper, labels, kFALSE);
   leg->AddEntry(data, labels[0], "lep");
   leg->AddEntry(g_lin, labels[1], "l");
   leg->AddEntry(g_flat, labels[2], "l");
   leg->AddEntry(g_background, labels[3], "l");
-  PlottingUtils::ScaleFigure(plot);
+  lower->cd();
+  FigureStyle::DrawPullPanel(pulls, data->GetXaxis()->GetXmin(),
+                             data->GetXaxis()->GetXmax(), "Energy [keV]");
+  PlottingUtils::ScaleFigure(canvas, canvas_w, plot_h);
   PlottingUtils::SaveFigure(canvas, "psi_si_ge_sum_fit", "",
                             PlotSaveOptions::kLINEAR);
 }
@@ -641,32 +567,30 @@ void DrawCalibration(const Calibration &cal_a, const Calibration &cal_b,
                             PlotSaveOptions::kLINEAR);
 }
 
-struct RunValue {
+struct GroupValue {
   TString label;
-  Double_t e_free, err_free, e_fixed, err_fixed;
+  Double_t e, err, draft_e;
 };
 
-// Per-run energies (Am + the run's own Pb Ka calibration) with the width
-// free and fixed, against the summed-spectrum result and the per-run
-// weighted means.
-void DrawPerRun(const std::vector<RunValue> &values, Double_t sigma_fixed_ev,
-                Double_t sum_e, Double_t sum_err, Double_t mean_free,
-                Double_t mean_fixed) {
+// The six day/night groups the result averages (Am + each group's own Pb
+// Ka calibration, total errors) beside the collaborator's draft values, with
+// the result and the draft's Si-1 mean.
+void DrawGroups(const std::vector<GroupValue> &values, Double_t result_e,
+                Double_t result_err, Double_t draft_mean) {
   Int_t n = (Int_t)values.size();
   std::vector<TString> labels;
-  labels.push_back("Per run, width free");
-  labels.push_back(Form("Per run, width fixed (%.0f eV)", sigma_fixed_ev));
-  labels.push_back("Weighted mean, width free");
-  labels.push_back("Weighted mean, width fixed");
-  labels.push_back("Summed runs, total error");
+  labels.push_back("This analysis, total error");
+  labels.push_back("Collaborator's draft");
+  labels.push_back("Weighted mean, total error");
+  labels.push_back("Draft's Si-1 mean");
   Double_t legend_w = PlottingUtils::LegendWidthPx(labels);
   TPad *plot = nullptr, *legend_pad = nullptr;
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
       plot, legend_pad, (Int_t)legend_w);
   plot->cd();
   plot->SetBottomMargin(0.27);
-  const Double_t y_lo = 68.45, y_hi = 69.12;
-  TH1D *frame = new TH1D("per_run_frame", "", n, 0.5, n + 0.5);
+  const Double_t y_lo = 68.60, y_hi = 68.95;
+  TH1D *frame = new TH1D("groups_frame", "", n, 0.5, n + 0.5);
   frame->SetDirectory(nullptr);
   for (Int_t i = 0; i < n; i++)
     frame->GetXaxis()->SetBinLabel(i + 1, values[i].label);
@@ -677,49 +601,42 @@ void DrawPerRun(const std::vector<RunValue> &values, Double_t sigma_fixed_ev,
   frame->SetMaximum(y_hi);
   frame->SetStats(0);
   frame->Draw("AXIS");
-  TLine *divider = new TLine(n - 0.5, y_lo, n - 0.5, y_hi);
-  divider->SetLineStyle(3);
-  divider->SetLineColor(kGray + 2);
-  divider->Draw();
-  TBox *band = new TBox(0.5, sum_e - sum_err, n + 0.5, sum_e + sum_err);
+  TBox *band =
+      new TBox(0.5, result_e - result_err, n + 0.5, result_e + result_err);
   band->SetFillColorAlpha(kGray, 0.6);
   band->SetLineWidth(0);
   band->Draw();
-  TLine *sum_line = new TLine(0.5, sum_e, n + 0.5, sum_e);
-  sum_line->SetLineColor(kGray + 2);
-  sum_line->SetLineWidth(2);
-  sum_line->Draw();
-  TLine *free_line = new TLine(0.5, mean_free, n + 0.5, mean_free);
-  free_line->SetLineColor(kBlack);
-  free_line->SetLineStyle(2);
-  free_line->SetLineWidth(2);
-  free_line->Draw();
-  TLine *fixed_line = new TLine(0.5, mean_fixed, n + 0.5, mean_fixed);
-  fixed_line->SetLineColor(kAzure + 2);
-  fixed_line->SetLineStyle(7);
-  fixed_line->SetLineWidth(2);
-  fixed_line->Draw();
-  TGraphErrors *g_free = new TGraphErrors(n), *g_fixed = new TGraphErrors(n);
+  TLine *result_line = new TLine(0.5, result_e, n + 0.5, result_e);
+  result_line->SetLineColor(kGray + 2);
+  result_line->SetLineWidth(2);
+  result_line->Draw();
+  TLine *draft_line = new TLine(0.5, draft_mean, n + 0.5, draft_mean);
+  draft_line->SetLineColor(kRed + 1);
+  draft_line->SetLineStyle(2);
+  draft_line->SetLineWidth(2);
+  draft_line->Draw();
+  TGraphErrors *g_ours = new TGraphErrors(n);
+  TGraph *g_draft = new TGraph(n);
   for (Int_t i = 0; i < n; i++) {
-    g_free->SetPoint(i, i + 1 - 0.12, values[i].e_free);
-    g_free->SetPointError(i, 0, values[i].err_free);
-    g_fixed->SetPoint(i, i + 1 + 0.12, values[i].e_fixed);
-    g_fixed->SetPointError(i, 0, values[i].err_fixed);
+    g_ours->SetPoint(i, i + 1 - 0.1, values[i].e);
+    g_ours->SetPointError(i, 0, values[i].err);
+    g_draft->SetPoint(i, i + 1 + 0.1, values[i].draft_e);
   }
-  PlottingUtils::ConfigureGraph(g_free, kBlack);
-  PlottingUtils::ConfigureGraph(g_fixed, kAzure + 2);
-  g_fixed->SetMarkerStyle(24);
-  g_free->Draw("P SAME");
-  g_fixed->Draw("P SAME");
+  PlottingUtils::ConfigureGraph(g_ours, kBlack);
+  PlottingUtils::ConfigureGraph(g_draft, kRed + 1);
+  g_draft->SetMarkerStyle(24);
+  g_draft->SetMarkerColor(kRed + 1);
+  g_draft->SetMarkerSize(1.6);
+  g_ours->Draw("P SAME");
+  g_draft->Draw("P SAME");
   frame->Draw("AXIS SAME");
   TLegend *leg =
       PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
-  leg->AddEntry(g_free, labels[0], "lep");
-  leg->AddEntry(g_fixed, labels[1], "lep");
-  leg->AddEntry(free_line, labels[2], "l");
-  leg->AddEntry(fixed_line, labels[3], "l");
-  leg->AddEntry(band, labels[4], "f");
-  PlottingUtils::SaveFigure(canvas, "psi_si_ge_per_run", "",
+  leg->AddEntry(g_ours, labels[0], "lep");
+  leg->AddEntry(g_draft, labels[1], "p");
+  leg->AddEntry(band, labels[2], "f");
+  leg->AddEntry(draft_line, labels[3], "l");
+  PlottingUtils::SaveFigure(canvas, "psi_si_ge_groups", "",
                             PlotSaveOptions::kLINEAR);
 }
 
@@ -782,11 +699,11 @@ void PrintStability(const TString &label, const std::vector<Double_t> &ch,
 TString SpectraFile() { return TString(SPECTRA_DIR) + "/ge_spectra.root"; }
 
 void WriteResult(const TString &path, const GeEnergy &result,
-                 const GeEnergy &cal_b, const GeEnergy &cal_c,
-                 const Combined &days_b) {
+                 const GeEnergy &summed, const GeEnergy &cal_b,
+                 const GeEnergy &cal_c, const Combined &days_b) {
   std::ofstream out(path.Data());
-  out << "# Si (PSI) Ge energy, SiGeBudget.cpp, trapezoid; summed main runs, "
-         "Am + Pb Ka calibration; keV"
+  out << "# Si (PSI) Ge energy, SiGeBudget.cpp, trapezoid; the six day/night "
+         "groups of 10/09-10/12, Am + Pb Ka calibration; keV"
       << std::endl;
   out << std::fixed << std::setprecision(6);
   out << "ge " << result.e << std::endl;
@@ -796,6 +713,7 @@ void WriteResult(const TString &path, const GeEnergy &result,
   out << "background " << result.background << std::endl;
   out << "window " << result.window << std::endl;
   out << "# alternatives" << std::endl;
+  out << "ge_summed_main_runs " << summed.e << std::endl;
   out << "ge_cal_b " << cal_b.e << std::endl;
   out << "ge_cal_c " << cal_c.e << std::endl;
   out << "ge_days_cal_b " << days_b.e << std::endl;
@@ -803,6 +721,116 @@ void WriteResult(const TString &path, const GeEnergy &result,
 }
 
 // ----------------------------------------------------------------- budget
+
+// The result, the collaborator's Si-1 the way the draft describes it
+// (main.tex): six day/night groups of the first PSI run, each calibrated
+// with Am-241 and its own Pb K-alpha, its Ge line a Gaussian on a linear
+// background with uncertainties from the centroid, the calibration's offset
+// and slope, and linear against flat background; then their error-weighted
+// mean, the Am position shared by every group's calibration. Printed beside
+// the draft's own per-group values.
+const Int_t N_GROUPS = 6;
+const char *const GROUP_NAMES[N_GROUPS] = {"Thu 10/09",     "Fri night 10/10",
+                                           "Sat day 10/11", "Sat night 10/11",
+                                           "Sun day 10/12", "Sun night 10/12"};
+// Each group's runs, by GeRuns() label.
+const char *const GROUP_RUNS[N_GROUPS][2] = {
+    {"BeamTurnOn_4", ""},    {"GeTarget_1", "GeTarget_2"},
+    {"SiYesGe_1056", ""},    {"Ge_1715_1", "Ge_1715_2"},
+    {"LongWf500V_1001", ""}, {"LongWf_1517", ""}};
+// The draft's values (its comments to the Si-1 table), keV.
+const Double_t DRAFT_GROUP_E[N_GROUPS] = {68.78295, 68.78285, 68.73901,
+                                          68.74103, 68.72764, 68.75110};
+const Double_t DRAFT_MEAN = 68.7543, DRAFT_MEAN_ERR = 0.0115;
+
+GeEnergy CollaboratorGroups(const std::vector<GeRun> &runs,
+                            const std::vector<TH1D *> &h_run, const Point &am,
+                            const LineSetting &nominal, Double_t window_err,
+                            std::vector<GroupValue> &group_values) {
+  std::vector<Double_t> e, e_flat, total_err, fit_err;
+  std::vector<Double_t> d_am, pb_var;
+  for (Int_t g = 0; g < N_GROUPS; g++) {
+    TH1D *h = NewSpectrum(Form("collab_group_%d", g));
+    for (size_t i = 0; i < runs.size(); i++)
+      for (Int_t k = 0; k < 2; k++)
+        if (TString(GROUP_RUNS[g][k]) != "" &&
+            runs[i].label == GROUP_RUNS[g][k])
+          h->Add(h_run[i]);
+    Point k2, k1;
+    FitPb(h, nominal, k2, k1);
+    std::vector<Point> p;
+    p.push_back(am);
+    p.push_back(k2);
+    p.push_back(k1);
+    Calibration cal = Calibrate(p);
+    GeFit lin = FitGe(h, cal, WIN_LO, WIN_HI, 1);
+    GeFit flat = FitGe(h, cal, WIN_LO, WIN_HI, 0);
+    GeEnergy r = Energy(lin, flat, cal, 0);
+    PrintEnergy(Form("GROUP %s", GROUP_NAMES[g]), r, lin, cal);
+    // The energy's derivatives with respect to the calibration lines'
+    // positions: Am's is shared by the groups, the Pb lines' are each
+    // group's own.
+    const Double_t delta = 0.1;
+    Double_t derivative[3];
+    for (Int_t k = 0; k < 3; k++) {
+      std::vector<Point> q = p;
+      q[k].ch += delta;
+      derivative[k] = (Calibrate(q).Energy(lin.mu) - r.e) / delta;
+    }
+    d_am.push_back(derivative[0]);
+    pb_var.push_back(TMath::Power(derivative[1] * k2.ch_err, 2) +
+                     TMath::Power(derivative[2] * k1.ch_err, 2));
+    e_flat.push_back(cal.Energy(flat.mu));
+    std::cout << "SIGE GROUP " << std::left << std::setw(16) << GROUP_NAMES[g]
+              << std::right << " ours " << std::fixed << std::setprecision(4)
+              << r.e << " +- " << std::setprecision(1) << 1000 * r.total
+              << " eV, draft " << std::setprecision(4) << DRAFT_GROUP_E[g]
+              << ": ours - draft " << std::showpos << std::setprecision(1)
+              << 1000 * (r.e - DRAFT_GROUP_E[g]) << std::noshowpos << " eV"
+              << std::endl;
+    e.push_back(r.e);
+    total_err.push_back(r.total);
+    fit_err.push_back(r.fit);
+    GroupValue value = {GROUP_NAMES[g], r.e, r.total, DRAFT_GROUP_E[g]};
+    group_values.push_back(value);
+    delete h;
+  }
+  Combined by_total = WeightedMean(e, total_err);
+  Combined by_fit = WeightedMean(e, fit_err);
+  GeEnergy result;
+  Double_t sw = 0, sum_flat = 0, var_fit = 0, sum_dam = 0, var_pb = 0;
+  for (size_t g = 0; g < e.size(); g++) {
+    Double_t w = 1.0 / (total_err[g] * total_err[g]);
+    sw += w;
+    sum_flat += w * e_flat[g];
+    var_fit += w * w * fit_err[g] * fit_err[g];
+    sum_dam += w * d_am[g];
+    var_pb += w * w * pb_var[g];
+  }
+  result.e = by_total.e;
+  result.fit = TMath::Sqrt(var_fit) / sw;
+  result.cal = TMath::Sqrt(TMath::Power(sum_dam * am.ch_err, 2) + var_pb) / sw;
+  result.background = TMath::Abs(result.e - sum_flat / sw);
+  result.window = window_err;
+  result.total = TMath::Sqrt(result.fit * result.fit + result.cal * result.cal +
+                             result.background * result.background +
+                             result.window * result.window);
+  std::cout << "SIGE GROUPS error-weighted mean: " << std::setprecision(4)
+            << by_total.e << " +- " << std::setprecision(1)
+            << 1000 * by_total.fit << " eV (total errors), "
+            << std::setprecision(4) << by_fit.e << " +- "
+            << std::setprecision(1) << 1000 * by_fit.fit
+            << " eV (fit errors); draft " << std::setprecision(4) << DRAFT_MEAN
+            << " +- " << std::setprecision(1) << 1000 * DRAFT_MEAN_ERR << " eV"
+            << std::endl;
+  std::cout << "SIGE RESULT six groups: " << std::setprecision(4) << result.e
+            << " keV +- " << std::setprecision(1) << 1000 * result.fit
+            << " fit +- " << 1000 * result.cal << " cal +- "
+            << 1000 * result.background << " bkg +- " << 1000 * result.window
+            << " win = " << 1000 * result.total << " eV, chi2/ndf "
+            << by_total.chi2 << "/" << by_total.ndf << std::endl;
+  return result;
+}
 
 void Budget(const TString &project_root) {
   // ------------------------------------------------------------ spectra
@@ -904,7 +932,6 @@ void Budget(const TString &project_root) {
   GeFit quad = FitGe(h_sum, cal_a, WIN_LO, WIN_HI, 2);
   GeFit lin_fixed = FitGe(h_sum, cal_a, WIN_LO, WIN_HI, 1, sigma_ge_ch);
   GeFit flat_fixed = FitGe(h_sum, cal_a, WIN_LO, WIN_HI, 0, sigma_ge_ch);
-  GeFit with_w = FitGeWithW(h_sum, cal_a, WIN_LO, WIN_HI);
   ScanResult scan = ScanWindows(h_sum, cal_a, cal_a.Energy(lin.mu));
   std::cout << "SIGE SUM Ge mu " << std::setprecision(3) << lin.mu << " +- "
             << lin.mu_err << " ch  sigma " << lin.sigma << " +- "
@@ -928,36 +955,13 @@ void Budget(const TString &project_root) {
             << std::setprecision(4) << cal_a.Energy(lin_fixed.mu) << " +- "
             << std::setprecision(1) << 1000 * cal_a.c1 * lin_fixed.mu_err
             << " eV, flat " << std::setprecision(4)
-            << cal_a.Energy(flat_fixed.mu)
-            << "  | with W Kb group: " << cal_a.Energy(with_w.mu) << " +- "
-            << std::setprecision(1) << 1000 * cal_a.c1 * with_w.mu_err
-            << " eV, W Kb1 area " << std::setprecision(0) << with_w.w_area
-            << " +- " << with_w.w_area_err << " (Ge area " << with_w.area << ")"
-            << std::endl;
+            << cal_a.Energy(flat_fixed.mu) << std::endl;
   std::cout << "SIGE SUM chi2/ndf linear " << std::setprecision(1) << lin.chi2
             << "/" << lin.ndf << "  flat " << flat.chi2 << "/" << flat.ndf
             << "  quadratic " << quad.chi2 << "/" << quad.ndf << "  bkg slope "
             << std::setprecision(4) << lin.c1 / lin.c0 * 100 << " %/ch"
             << std::endl;
 
-  // W K alpha in the Ge runs: positions fixed by cal A, width by the Am
-  // line.
-  {
-    std::vector<LineSpec> w(2);
-    w[0].mean_guess = cal_a.Channel(W_KA2);
-    w[0].fix_mean = kTRUE;
-    w[0].allow_negative = kTRUE;
-    w[1].mean_guess = cal_a.Channel(W_KA1);
-    w[1].fix_mean = kTRUE;
-    w[1].allow_negative = kTRUE;
-    FitOutput fw = FitLines(h_sum, cal_a.Channel(56.5), cal_a.Channel(62.0), w,
-                            1, 1, am.sigma, kTRUE);
-    std::cout << "SIGE W Ka2 (57.98) area " << std::setprecision(0)
-              << fw.area[0] << " +- " << fw.area_err[0]
-              << "  W Ka1 (59.32) area " << fw.area[1] << " +- "
-              << fw.area_err[1] << "  chi2/ndf " << std::setprecision(1)
-              << fw.chi2 << "/" << fw.ndf << std::endl;
-  }
   {
     std::vector<LineSpec> one(1);
     one[0].mean_guess = cal_a.Channel(GE73M_53);
@@ -1122,7 +1126,6 @@ void Budget(const TString &project_root) {
   }
 
   // ----------------------------------------------------------- per run
-  std::vector<RunValue> plot_values;
   std::vector<Double_t> e_a, f_a, e_a_flat, f_a_flat, e_b, f_b, e_b_flat,
       f_b_flat, e_a_fix, f_a_fix;
   std::vector<Double_t> e_a8, f_a8, e_b8, f_b8;
@@ -1145,7 +1148,7 @@ void Budget(const TString &project_root) {
     GeFit lfix = FitGe(h, cal, WIN_LO, WIN_HI, 1, sigma_ge_ch);
     GeEnergy ra = Energy(l, fl, cal, 0);
     GeEnergy rb = Energy(l, fl, cal_b, 0);
-    TString tag = runs[i].label + (l.ok ? "" : " [weak fit]");
+    TString tag = runs[i].label + (l.plausible_line ? "" : " [weak fit]");
     PrintEnergy("RUN " + tag + " cal A", ra, l, cal);
     PrintEnergy("RUN " + tag + " cal B", rb, l, cal_b);
     GeFit flfix = FitGe(h, cal, WIN_LO, WIN_HI, 0, sigma_ge_ch);
@@ -1179,19 +1182,6 @@ void Budget(const TString &project_root) {
     q = p;
     q[2].ch += delta;
     Double_t dk1 = (Calibrate(q).Energy(l.mu) - ra.e) / delta;
-    Double_t fix_err = TMath::Sqrt(TMath::Power(cal.c1 * lfix.mu_err, 2) +
-                                   TMath::Power(cal.Error(lfix.mu), 2));
-    TString short_label = runs[i].label;
-    short_label.ReplaceAll("GeTarget", "GeTgt")
-        .ReplaceAll("SiYesGe_1056", "SiYesGe")
-        .ReplaceAll("LongWf500V_1001", "LWf500V");
-    short_label.ReplaceAll("LongWf_1517", "LWf")
-        .ReplaceAll("BeamTurnOn", "TurnOn")
-        .ReplaceAll("Ge_1715", "Ge");
-    RunValue rv = {Form("10/%02d %s", runs[i].day, short_label.Data()), ra.e,
-                   TMath::Sqrt(ra.fit * ra.fit + ra.cal * ra.cal),
-                   cal.Energy(lfix.mu), fix_err};
-    plot_values.push_back(rv);
     e_a8.push_back(ra.e);
     f_a8.push_back(ra.fit);
     e_b8.push_back(rb.e);
@@ -1275,6 +1265,10 @@ void Budget(const TString &project_root) {
             << cb8.e << " +- " << std::setprecision(1) << 1000 * cb8.fit
             << " eV chi2/ndf " << cb8.chi2 << "/" << cb8.ndf << std::endl;
 
+  std::vector<GroupValue> group_values;
+  GeEnergy groups =
+      CollaboratorGroups(runs, h_run, am, nominal, scan.rms, group_values);
+
   // ----------------------------------------------------------- per day
   std::vector<Double_t> day_e_a, day_f_a, day_e_b, day_f_b;
   for (std::map<Int_t, TH1D *>::iterator it = h_day.begin(); it != h_day.end();
@@ -1346,18 +1340,28 @@ void Budget(const TString &project_root) {
       TH1D *h = NewSpectrum("stability_am");
       FillSpectrum(h, am_runs[i], Selection());
       Point p = FitAm(h, nominal);
+      delete h;
+      if (!p.converged) {
+        std::cout << "SIGE STABILITY skips " << am_runs[i]
+                  << ": its Am fit did not converge" << std::endl;
+        continue;
+      }
       am_ch.push_back(p.ch);
       am_err.push_back(p.ch_err);
-      delete h;
     }
     for (size_t i = 0; i < ba_runs.size(); i++) {
       TH1D *h = NewSpectrum("stability_ba");
       FillSpectrum(h, ba_runs[i], Selection());
       Point p80, p81;
       FitBa8081(h, nominal, p80, p81);
+      delete h;
+      if (!p81.converged) {
+        std::cout << "SIGE STABILITY skips " << ba_runs[i]
+                  << ": its Ba fit did not converge" << std::endl;
+        continue;
+      }
       ba_ch.push_back(p81.ch);
       ba_err.push_back(p81.ch_err);
-      delete h;
     }
     Double_t ev_per_ch = 1000 * cal_a.c1;
     PrintStability("Am59", am_ch, am_err, ev_per_ch);
@@ -1367,11 +1371,10 @@ void Budget(const TString &project_root) {
 
   // ------------------------------------------------------------- output
   DrawCalibration(cal_a, cal_b, all_lines);
-  DrawSumFit(h_sum, cal_a, lin, flat, sum_a,
-             "Ge runs, Am + Pb K#alpha calibration");
-  DrawPerRun(plot_values, 1000 * sigma_ge_kev, sum_a.e, sum_a.total, ca.e,
-             ca_fix.e);
-  WriteResult(project_root + "/results/si_ge.result", sum_a, sum_b, sum_c, db);
+  DrawSumFit(h_sum, cal_a, lin, flat, "Ge runs 10/10#minus10/12, summed");
+  DrawGroups(group_values, groups.e, groups.total, DRAFT_MEAN);
+  WriteResult(project_root + "/results/si_ge.result", groups, sum_a, sum_b,
+              sum_c, db);
 
   TFile out(SpectraFile(), "RECREATE");
   TVectorD calibration(3);
@@ -1386,6 +1389,9 @@ void Budget(const TString &project_root) {
   for (size_t i = 0; i < h_run.size(); i++)
     h_run[i]->Write();
   out.Close();
+
+  std::cout << "SIGE FITS not converged: " << UnconvergedFitCounter()
+            << std::endl;
 }
 
 } // namespace SiGe
@@ -1393,7 +1399,8 @@ void Budget(const TString &project_root) {
 void SiGeBudget() {
   using namespace SiGe;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(
-      PlotSaveFormat::kPNG, project_root + "/plots/si/ge_budget", SPECTRA_DIR);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
+                                project_root + "/plots/si/ge_budget",
+                                SPECTRA_DIR);
   Budget(project_root);
 }

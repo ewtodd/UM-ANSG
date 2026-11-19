@@ -509,12 +509,14 @@ const Bool_t INSITU_HIGH_EXP = kFALSE;
 
 // One simultaneous fit of a pair, from its background-run seed. With escapes,
 // each channel also carries its own run's 95.902 keV escapes as fixed lines
-// with the Pb Ka1 shape, the line measured with tail_source's tail.
+// with the Pb Ka1 shape, the line measured with tail_source's tail. The fit
+// is unbinned; bin_kev only bins its plots and chi2, one comb period in the
+// events' units so that each bin holds one tooth of the comb.
 inline BkgGeSimResult FitBkgGeSimFromSeed(
     const std::vector<Double_t> &bkg_events,
     const std::vector<Double_t> &sig_events,
     const std::vector<Double_t> &bkg_peak_mus, const TString &sig_label,
-    const TString &fit_label, const FitResult &seed,
+    const TString &fit_label, Double_t bin_kev, const FitResult &seed,
     const FitResult *precomputed_sig_seed, const InSituEscapes *escapes,
     const PeakFitResult *tail_source) {
   BkgGeSimResult out;
@@ -539,14 +541,14 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
   sig_step[n_bkg] = kFALSE;
 
   // The slope is held only for the flat model; a linear one fits it.
-  sim.AddChannel("bkg", bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
-                 Constants::BIN_WIDTH_KEV, n_bkg, bkg_peak_mus, INSITU_FLAT_BKG,
-                 INSITU_STEP, INSITU_LOW_EXP, INSITU_LOW_LIN, INSITU_HIGH_EXP,
-                 bkg_fixed, kFALSE, INSITU_FLAT_BKG, kFALSE);
-  sim.AddChannel("sig", sig_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
-                 Constants::BIN_WIDTH_KEV, n_bkg + 1, sig_mus, INSITU_FLAT_BKG,
-                 INSITU_STEP, INSITU_LOW_EXP, INSITU_LOW_LIN, INSITU_HIGH_EXP,
-                 sig_fixed, kFALSE, INSITU_FLAT_BKG, kFALSE, sig_step);
+  sim.AddChannel("bkg", bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH, bin_kev,
+                 n_bkg, bkg_peak_mus, INSITU_FLAT_BKG, INSITU_STEP,
+                 INSITU_LOW_EXP, INSITU_LOW_LIN, INSITU_HIGH_EXP, bkg_fixed,
+                 kFALSE, INSITU_FLAT_BKG, kFALSE);
+  sim.AddChannel("sig", sig_events, CAL_RANGE_LOW, CAL_RANGE_HIGH, bin_kev,
+                 n_bkg + 1, sig_mus, INSITU_FLAT_BKG, INSITU_STEP,
+                 INSITU_LOW_EXP, INSITU_LOW_LIN, INSITU_HIGH_EXP, sig_fixed,
+                 kFALSE, INSITU_FLAT_BKG, kFALSE, sig_step);
   // Share ONE low-side tail across both Pb-Ka lines and the Ge peak, tied to
   // bkg:Ka1. Fit independently, Ka1 inflates its own tail to absorb the
   // inter-peak fill so neither Ka tail is trustworthy, and the Ge tail rails
@@ -611,7 +613,7 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
             const std::vector<Double_t> &sig_events,
             const std::vector<Double_t> &bkg_peak_mus, const TString &bkg_label,
             const TString &sig_label, const TString &fit_label,
-            const FitResult *precomputed_bkg_seed = nullptr,
+            Double_t bin_kev, const FitResult *precomputed_bkg_seed = nullptr,
             const FitResult *precomputed_sig_seed = nullptr,
             const InSituEscapes &escapes = InSituEscapes()) {
   BkgGeSimResult out;
@@ -624,10 +626,9 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
   if (precomputed_bkg_seed) {
     seed = *precomputed_bkg_seed;
   } else {
-    RooFitUtils bkg_fitter(bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH,
-                           Constants::BIN_WIDTH_KEV, INSITU_FLAT_BKG,
-                           INSITU_STEP, INSITU_LOW_EXP, INSITU_LOW_LIN,
-                           INSITU_HIGH_EXP);
+    RooFitUtils bkg_fitter(bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH, bin_kev,
+                           INSITU_FLAT_BKG, INSITU_STEP, INSITU_LOW_EXP,
+                           INSITU_LOW_LIN, INSITU_HIGH_EXP);
     bkg_fitter.SetTailRatioMax(TAIL_RATIO_MAX);
     bkg_fitter.SetInteractive();
     TString seed_label = fit_label + "_BkgSeed";
@@ -642,20 +643,20 @@ RunBkgGeSim(const std::vector<Double_t> &bkg_events,
 
   if (!escapes.fractions)
     return FitBkgGeSimFromSeed(bkg_events, sig_events, bkg_peak_mus, sig_label,
-                               fit_label, seed, precomputed_sig_seed, nullptr,
-                               nullptr);
+                               fit_label, bin_kev, seed, precomputed_sig_seed,
+                               nullptr, nullptr);
   if (precomputed_bkg_seed && !seed.peaks.empty())
     return FitBkgGeSimFromSeed(bkg_events, sig_events, bkg_peak_mus, sig_label,
-                               fit_label, seed, precomputed_sig_seed, &escapes,
-                               &seed.peaks.back());
+                               fit_label, bin_kev, seed, precomputed_sig_seed,
+                               &escapes, &seed.peaks.back());
   BkgGeSimResult without = FitBkgGeSimFromSeed(
-      bkg_events, sig_events, bkg_peak_mus, sig_label, fit_label, seed,
+      bkg_events, sig_events, bkg_peak_mus, sig_label, fit_label, bin_kev, seed,
       precomputed_sig_seed, nullptr, nullptr);
   if (!without.valid || without.bkg_channel.peaks.empty())
     return without;
   return FitBkgGeSimFromSeed(bkg_events, sig_events, bkg_peak_mus, sig_label,
-                             fit_label, seed, precomputed_sig_seed, &escapes,
-                             &without.bkg_channel.peaks.back());
+                             fit_label, bin_kev, seed, precomputed_sig_seed,
+                             &escapes, &without.bkg_channel.peaks.back());
 }
 
 // ------------------------------------------------------------- rate-sub fit
