@@ -1,0 +1,13 @@
+# RecoilEnergy.cpp: 73Ge recoil after thermal capture on 72Ge (ENSDF 2019) and the Lindhard comparison; eV unless noted
+primary_recoil_931 251.987
+primary_recoil_915 253.380
+primary_share_931 0.747
+feeding_share_931 0.773
+mean_primary_recoil 252.303
+mean_total_recoil 255.118
+feeding_fraction_of_68 0.389
+kinematic_max_recoil 338.656
+lindhard_ionization_at_max 50.152
+lindhard_recoil_needed 406.115
+quenching_factor_percent 24.150
+quenching_factor_err_percent 2.324

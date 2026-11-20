@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <vector>
@@ -51,10 +52,27 @@ Double_t JKEnergyKeV(Double_t channel) {
   return channel / ADC_CHANNELS_PER_KEV;
 }
 
+// The weighted least-squares line y = intercept + slope * x through three
+// points; two nonzero weights give the line through those two.
+void WeightedLine(const Double_t x[N_REF], const Double_t y[N_REF],
+                  const Double_t weights[N_REF], Double_t &intercept,
+                  Double_t &slope) {
+  Double_t sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
+  for (Int_t i = 0; i < N_REF; i++) {
+    Double_t w = weights[i];
+    sw += w;
+    swx += w * x[i];
+    swy += w * y[i];
+    swxx += w * x[i] * x[i];
+    swxy += w * x[i] * y[i];
+  }
+  slope = (sw * swxy - swx * swy) / (sw * swxx - swx * swx);
+  intercept = (swy - slope * swx) / sw;
+}
+
 // The ADC calibrated on today's reference energies: a weighted least-squares
-// line through the three lines' channels (two nonzero weights give the line
-// through those two), or, with all weights zero, the quadratic through all
-// three.
+// line through the three lines' channels, or, with all weights zero, the
+// quadratic through all three.
 Double_t CalibratedKeV(const Double_t weights[N_REF], Double_t channel) {
   if (weights[0] == 0 && weights[1] == 0 && weights[2] == 0) {
     Double_t e = 0;
@@ -68,20 +86,43 @@ Double_t CalibratedKeV(const Double_t weights[N_REF], Double_t channel) {
     }
     return e;
   }
-  Double_t sw = 0, swx = 0, swy = 0, swxx = 0, swxy = 0;
-  for (Int_t i = 0; i < N_REF; i++) {
-    Double_t w = weights[i];
-    Double_t x = Channel(JK_REF_KEV[i]);
-    Double_t y = CURRENT_REF_KEV[i];
-    sw += w;
-    swx += w * x;
-    swy += w * y;
-    swxx += w * x * x;
-    swxy += w * x * y;
-  }
-  Double_t slope = (sw * swxy - swx * swy) / (sw * swxx - swx * swx);
-  Double_t intercept = (swy - slope * swx) / sw;
+  Double_t channels[N_REF];
+  for (Int_t i = 0; i < N_REF; i++)
+    channels[i] = Channel(JK_REF_KEV[i]);
+  Double_t intercept = 0, slope = 0;
+  WeightedLine(channels, CURRENT_REF_KEV, weights, intercept, slope);
   return intercept + slope * channel;
+}
+
+// The collaborator's calibration energies: Am-241 at DDEP's 59.5409 keV and
+// Bearden's Pb K-alpha2 and K-alpha1, as stated in Phys. Rev. D 110, 083043
+// (2024), and assumed for the PSI values of arXiv:2609.20848, which do not
+// state them.
+const Double_t BEARDEN_PB_REF_KEV[N_REF] = {59.5409, 72.8042, 74.9694};
+
+// How far today's Pb K-alpha energies move an energy read on a weighted
+// least-squares line through BEARDEN_PB_REF_KEV, in eV.
+Double_t BeardenPbShiftEV(const Double_t weights[N_REF], Double_t energy_kev) {
+  Double_t intercept = 0, slope = 0;
+  WeightedLine(BEARDEN_PB_REF_KEV, CURRENT_REF_KEV, weights, intercept, slope);
+  return 1000.0 * (intercept + slope * energy_kev - energy_kev);
+}
+
+// The range of that shift over lines in which Am-241 weighs at least as much
+// as each Pb line: both papers calibrate on it, and it is the best-measured
+// line (long source runs; in the PSI Si data its position is twice as precise
+// as Pb K-alpha1's).
+void BeardenPbEnvelopeEV(Double_t energy_kev, Double_t &low, Double_t &high) {
+  low = 1e30;
+  high = -1e30;
+  for (Int_t a = -16; a <= 0; a++)
+    for (Int_t b = -16; b <= 0; b++) {
+      Double_t weights[N_REF] = {1.0, std::pow(10.0, a / 4.0),
+                                 std::pow(10.0, b / 4.0)};
+      Double_t s = BeardenPbShiftEV(weights, energy_kev);
+      low = std::min(low, s);
+      high = std::max(high, s);
+    }
 }
 
 // How far a calibration on today's values reads a channel above Jones and
@@ -112,11 +153,35 @@ struct Calibration {
   Int_t marker;
 };
 
+// The reference energies a value was calibrated on.
+enum ReferenceSet { kTodaysReferences, kJonesKraner, kBeardenPb };
+
 struct Input {
-  TString name;
+  TString name;     // printed
+  TString label;    // in the figure
   Double_t mu, err; // keV
-  Bool_t jones_kraner;
+  ReferenceSet references;
 };
+
+// The shifts that put each reference set on today's energies, keV.
+struct Adjustment {
+  Double_t jk = 0, jk_err = 0;
+  Double_t bearden_pb = 0, bearden_pb_err = 0;
+};
+
+void Adjust(ReferenceSet references, const Adjustment &adjustment, Double_t &mu,
+            Double_t &err) {
+  Double_t shift = 0, shift_err = 0;
+  if (references == kJonesKraner) {
+    shift = adjustment.jk;
+    shift_err = adjustment.jk_err;
+  } else if (references == kBeardenPb) {
+    shift = adjustment.bearden_pb;
+    shift_err = adjustment.bearden_pb_err;
+  }
+  mu += shift;
+  err = std::sqrt(err * err + shift_err * shift_err);
+}
 
 TGraph *ShiftCurve(const Calibration &cal, Double_t ch_lo, Double_t ch_hi) {
   const Int_t n_points = 400;
@@ -291,17 +356,14 @@ void PlotRecalibration(const std::vector<Calibration> &cals) {
                             PlotSaveOptions::kLINEAR);
 }
 
-void PrintAverage(const std::vector<Input> &inputs, Double_t jk_shift_kev,
-                  Double_t jk_shift_err_kev, const TString &title,
+void PrintAverage(const std::vector<Input> &inputs,
+                  const Adjustment &adjustment, const TString &title,
                   Double_t &mean_kev, Double_t &mean_err_kev) {
   std::vector<Double_t> mus, errs;
   for (size_t i = 0; i < inputs.size(); i++) {
     Double_t mu = inputs[i].mu;
     Double_t err = inputs[i].err;
-    if (inputs[i].jones_kraner) {
-      mu += jk_shift_kev;
-      err = std::sqrt(err * err + jk_shift_err_kev * jk_shift_err_kev);
-    }
+    Adjust(inputs[i].references, adjustment, mu, err);
     mus.push_back(mu);
     errs.push_back(err);
   }
@@ -335,26 +397,30 @@ struct Row {
 };
 
 // Every measurement against the recommended value: the rows that enter the
-// mean first, then the ones left out, top to bottom.
+// mean first, then the ones left out, top to bottom. The rows fill the frame,
+// so the legend sits beside it.
 void PlotComparison(const std::vector<Row> &rows, Double_t mean_kev,
                     Double_t mean_err_kev) {
   Int_t n = (Int_t)rows.size();
-  // Empty rows above the data hold the legend.
-  const Int_t legend_rows = 4;
-  const Double_t e_lo = 68.700, e_hi = 68.825;
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
-  canvas->SetCanvasSize(1400, 800);
-  canvas->SetLeftMargin(0.40);
-  canvas->SetGridy(kFALSE);
-  TH2D *frame = new TH2D("comparison_frame", "", 100, e_lo, e_hi,
-                         n + legend_rows, 0.5, n + legend_rows + 0.5);
+  const Double_t e_lo = 68.700, e_hi = 68.900;
+  std::vector<TString> labels;
+  labels.push_back("No Ge detector: in the mean");
+  labels.push_back("Ge or unstated detector");
+  labels.push_back(Form("Mean: %.4f #pm %.4f keV", mean_kev, mean_err_kev));
+  Double_t legend_w = PlottingUtils::LegendWidthPx(labels);
+  TPad *plot = nullptr, *legend_pad = nullptr;
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
+      plot, legend_pad, (Int_t)legend_w);
+  plot->cd();
+  plot->SetLeftMargin(0.42);
+  plot->SetGridy(kFALSE);
+  TH2D *frame =
+      new TH2D("comparison_frame", "", 100, e_lo, e_hi, n, 0.5, n + 0.5);
   frame->SetDirectory(nullptr);
   frame->SetStats(kFALSE);
   PlottingUtils::ConfigureHistogram(frame, kBlack, ";E_{#gamma} [keV];");
   for (Int_t i = 0; i < n; i++)
     frame->GetYaxis()->SetBinLabel(n - i, rows[i].label);
-  for (Int_t k = 1; k <= legend_rows; k++)
-    frame->GetYaxis()->SetBinLabel(n + k, "");
   frame->GetYaxis()->SetTickLength(0);
   frame->GetXaxis()->SetNdivisions(505);
   frame->Draw("AXIS");
@@ -406,11 +472,8 @@ void PlotComparison(const std::vector<Row> &rows, Double_t mean_kev,
   evaluation->Draw("P SAME");
   frame->Draw("AXIS SAME");
 
-  std::vector<TString> labels;
-  labels.push_back("No Ge detector: in the mean");
-  labels.push_back("Ge or unstated detector");
-  labels.push_back(Form("Mean: %.4f #pm %.4f keV", mean_kev, mean_err_kev));
-  TLegend *leg = FigureStyle::AddFrameLegend(canvas, labels, kFALSE);
+  TLegend *leg =
+      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
   leg->AddEntry(in_mean, labels[0], "pe");
   leg->AddEntry(left_out, labels[1], "pe");
   leg->AddEntry(band, labels[2], "f");
@@ -466,71 +529,130 @@ void RecommendedValue() {
 
   PlotRecalibration(cals);
 
-  // The adjustment is the middle of every calibration's shift, its error the
+  // Each adjustment is the middle of its range of shifts, its error the
   // half-range.
-  Double_t jk_shift_kev = 0.5 * (low + high) / 1000.0;
-  Double_t jk_shift_err_kev = 0.5 * (high - low) / 1000.0;
+  Adjustment adjustment;
+  adjustment.jk = 0.5 * (low + high) / 1000.0;
+  adjustment.jk_err = 0.5 * (high - low) / 1000.0;
   std::cout << "Jones and Kraner adjustment: " << std::setprecision(2)
-            << jk_shift_kev * 1000.0 << " +/- " << jk_shift_err_kev * 1000.0
+            << adjustment.jk * 1000.0 << " +/- " << adjustment.jk_err * 1000.0
             << " eV" << std::endl;
+  Double_t pb_low = 0, pb_high = 0;
+  BeardenPbEnvelopeEV(GE_JK_KEV, pb_low, pb_high);
+  adjustment.bearden_pb = 0.5 * (pb_low + pb_high) / 1000.0;
+  adjustment.bearden_pb_err = 0.5 * (pb_high - pb_low) / 1000.0;
+  const Double_t equal_weights[N_REF] = {1, 1, 1};
+  std::cout << "Bearden Pb K-alpha adjustment (Am weighted at least as each Pb "
+               "line): "
+            << pb_low << " to " << pb_high << " eV, equal weights "
+            << BeardenPbShiftEV(equal_weights, GE_JK_KEV) << " eV -> "
+            << adjustment.bearden_pb * 1000.0 << " +/- "
+            << adjustment.bearden_pb_err * 1000.0 << " eV" << std::endl;
 
   // This work's CZT (CombineGeResult.cpp); the collaborator's CdTe and Si
-  // (their draft's table); Jones and Kraner's 1971 (p,p'gamma) group, taken
-  // with a Si(Li) (their Fig. 2), and their 1975 (n,gamma) value, taken with
-  // a Si(Li).
+  // (arXiv:2609.20848, Table III); Jones and Kraner's 1971 (p,p'gamma) group,
+  // taken with a Si(Li) (their Fig. 2), and their 1975 (n,gamma) value, taken
+  // with a Si(Li).
   std::vector<Input> inputs;
-  Input czt = {"CZT (this work)", 68.7567, 0.0191, kFALSE};
-  Input cdte = {"CdTe (collaborator)", 68.7484, 0.0189, kFALSE};
-  Input si1 = {"Si-1 (collaborator)", 68.7529, 0.0114, kFALSE};
-  Input si2 = {"Si-2 (collaborator)", 68.7555, 0.0128, kFALSE};
-  Input jk71 = {"Jones and Kraner 1971 (p,p'g)", 68.7465, 0.0090, kTRUE};
-  Input jk75 = {"Jones and Kraner 1975 (n,g)", 68.7550, 0.0050, kTRUE};
-  inputs.push_back(czt);
+  // Named by year and detector, as in the paper.
+  Input jk71 = {"1971 Jones and Kraner (p,p'g)",
+                "1971 Jones & Kraner (p,p'#gamma)", 68.7465, 0.0090,
+                kJonesKraner};
+  Input jk75 = {"1975 Jones and Kraner (n,g)", "1975 Jones & Kraner (n,#gamma)",
+                68.7550, 0.0050, kJonesKraner};
+  Input cdte = {"2025 CdTe", "2025 CdTe", 68.7484, 0.0189, kBeardenPb};
+  Input si1 = {"2025 Si 1", "2025 Si 1", 68.7529, 0.0114, kBeardenPb};
+  Input si2 = {"2025 Si 2", "2025 Si 2", 68.7555, 0.0128, kBeardenPb};
+  Input czt = {"2026 CZT", "2026 CZT", 68.7567, 0.0191, kTodaysReferences};
+  inputs.push_back(jk71);
+  inputs.push_back(jk75);
   inputs.push_back(cdte);
   inputs.push_back(si1);
   inputs.push_back(si2);
-  inputs.push_back(jk71);
-  inputs.push_back(jk75);
+  inputs.push_back(czt);
 
   std::cout << std::endl;
+  Adjustment none;
   Double_t published_mean = 0, published_err = 0;
-  PrintAverage(inputs, 0.0, 0.0, "As published", published_mean, published_err);
+  PrintAverage(inputs, none, "As published", published_mean, published_err);
+  Adjustment jk_only = adjustment;
+  jk_only.bearden_pb = 0;
+  jk_only.bearden_pb_err = 0;
+  Double_t jk_only_mean = 0, jk_only_err = 0;
+  PrintAverage(inputs, jk_only, "Jones and Kraner adjusted only", jk_only_mean,
+               jk_only_err);
   Double_t mean = 0, mean_err = 0;
-  PrintAverage(inputs, jk_shift_kev, jk_shift_err_kev,
-               "Jones and Kraner on DDEP and SRD 128", mean, mean_err);
+  PrintAverage(inputs, adjustment, "All on DDEP and SRD 128", mean, mean_err);
+
+  // The ionization from the recoil: the summed gamma-plus-recoil peak of
+  // Phys. Rev. D 110, 083043 (68.8158 keV, calibrated on Bearden's Pb
+  // K-alpha, so it takes the same adjustment) minus the recommended value.
+  // Its other uncertainty, 4.6 eV, is that paper's total on the summed peak.
+  // RecoilEnergy.cpp turns it into a quenching factor.
+  const Double_t SUM_PEAK_KEV = 68.8158, SUM_PEAK_ERR_KEV = 0.0046;
+  Double_t sum_low = 0, sum_high = 0;
+  BeardenPbEnvelopeEV(SUM_PEAK_KEV, sum_low, sum_high);
+  Double_t sum_shift_kev = 0.5 * (sum_low + sum_high) / 1000.0;
+  Double_t sum_shift_err_kev = 0.5 * (sum_high - sum_low) / 1000.0;
+  Double_t sum_kev = SUM_PEAK_KEV + sum_shift_kev;
+  Double_t sum_err_kev = std::sqrt(SUM_PEAK_ERR_KEV * SUM_PEAK_ERR_KEV +
+                                   sum_shift_err_kev * sum_shift_err_kev);
+  Double_t ionization_ev = 1000.0 * (sum_kev - mean);
+  Double_t ionization_err_ev =
+      1000.0 * std::sqrt(sum_err_kev * sum_err_kev + mean_err * mean_err);
+  std::cout << std::endl
+            << "Summed peak on today's references: " << std::setprecision(4)
+            << sum_kev << " keV (" << std::showpos << std::setprecision(2)
+            << 1000.0 * sum_shift_kev << std::noshowpos << " +/- "
+            << 1000.0 * sum_shift_err_kev << " eV)" << std::endl;
+  std::cout << "Ionization: " << std::setprecision(1) << ionization_ev
+            << " +/- " << ionization_err_ev << " eV" << std::endl;
+
+  std::ofstream result(
+      (project_root + "/results/recommended_value.result").Data());
+  result << "# RecommendedValue.cpp: the 68.75 keV gamma ray from measurements "
+            "without a Ge detector, and the ionization of the 2024 summed "
+            "peak; keV unless noted"
+         << std::endl;
+  result << std::fixed << std::setprecision(6);
+  result << "mean " << mean << std::endl;
+  result << "mean_err " << mean_err << std::endl;
+  result << "mean_unadjusted " << published_mean << std::endl;
+  result << "jk_shift " << adjustment.jk << std::endl;
+  result << "jk_shift_err " << adjustment.jk_err << std::endl;
+  result << "bearden_pb_shift " << adjustment.bearden_pb << std::endl;
+  result << "bearden_pb_shift_err " << adjustment.bearden_pb_err << std::endl;
+  result << "sum_peak " << sum_kev << std::endl;
+  result << "sum_peak_err " << sum_err_kev << std::endl;
+  result << std::setprecision(3);
+  result << "ionization_ev " << ionization_ev << std::endl;
+  result << "ionization_err_ev " << ionization_err_ev << std::endl;
 
   // The figure: the inputs as averaged, then the values left out. Jones and
   // Kraner's other 1971 values do not say which detector took them (Phys.
   // Rev. C 4, 125); they share the inputs' calibration, so they take the same
-  // adjustment. Collar et al. (Phys. Rev. D 103, 122003) used a Ge detector.
+  // adjustment. Collar et al. (Phys. Rev. D 103, 122003) used a Ge detector,
+  // Weishaupt and Rabenstein (Z. Phys. A 251, 105) Ge(Li) detectors.
   // ENSDF's adopted energy is shown for comparison.
   std::vector<Row> rows;
-  const char *const labels[6] = {"OSU CZT",
-                                 "PSI CdTe",
-                                 "PSI Si, run 1",
-                                 "PSI Si, run 2",
-                                 "Jones & Kraner 1971, (p,p'#gamma)",
-                                 "Jones & Kraner 1975, (n,#gamma)"};
   for (size_t i = 0; i < inputs.size(); i++) {
-    Row r = {labels[i], inputs[i].mu, inputs[i].err, 20, kTRUE};
-    if (inputs[i].jones_kraner) {
-      r.mu += jk_shift_kev;
-      r.err = std::sqrt(r.err * r.err + jk_shift_err_kev * jk_shift_err_kev);
-    }
+    Row r = {inputs[i].label, inputs[i].mu, inputs[i].err, 20, kTRUE};
+    Adjust(inputs[i].references, adjustment, r.mu, r.err);
     rows.push_back(r);
   }
-  Double_t jk_alpha_err =
-      std::sqrt(0.0127 * 0.0127 + jk_shift_err_kev * jk_shift_err_kev);
-  Double_t jk_capture_err =
-      std::sqrt(0.0180 * 0.0180 + jk_shift_err_kev * jk_shift_err_kev);
-  Row jk71_alpha = {"Jones & Kraner 1971, (#alpha,#alpha'#gamma)",
-                    68.7660 + jk_shift_kev, jk_alpha_err, 24, kFALSE};
-  Row jk71_capture = {"Jones & Kraner 1971, (n,#gamma)", 68.7460 + jk_shift_kev,
-                      jk_capture_err, 24, kFALSE};
-  Row collar = {"Collar et al. 2021, Ge", 68.734, 0.020, 24, kFALSE};
-  Row ensdf = {"ENSDF", ReferenceLines::GE73M_ENSDF, 0.007, 25, kFALSE};
+  Row jk71_alpha = {"1971 Jones & Kraner (#alpha,#alpha'#gamma)", 68.7660,
+                    0.0127, 24, kFALSE};
+  Adjust(kJonesKraner, adjustment, jk71_alpha.mu, jk71_alpha.err);
+  Row jk71_capture = {"1971 Jones & Kraner (n,#gamma)", 68.7460, 0.0180, 24,
+                      kFALSE};
+  Adjust(kJonesKraner, adjustment, jk71_capture.mu, jk71_capture.err);
+  Row weishaupt = {"1972 Weishaupt & Rabenstein", 68.84, 0.05, 24, kFALSE};
+  Row collar = {"2021 Collar et al.", 68.734, 0.020, 24, kFALSE};
+  Row ensdf = {"2019 ENSDF evaluation", ReferenceLines::GE73M_ENSDF, 0.007, 25,
+               kFALSE};
   rows.push_back(jk71_alpha);
   rows.push_back(jk71_capture);
+  rows.push_back(weishaupt);
   rows.push_back(collar);
   rows.push_back(ensdf);
   PlotComparison(rows, mean, mean_err);
