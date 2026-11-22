@@ -137,9 +137,6 @@ def _plot_classified_spectra(features, source_name, method_name, alpha_mask,
     ROOT.PlottingUtils.SaveFigure(canvas, output_path, "",
                                   ROOT.PlotSaveOptions.kLOG)
     canvas.Close()
-    h_all.Delete()
-    h_alpha.Delete()
-    h_gamma.Delete()
 
     print(
         f"  [{method_name}] alpha-like: {n_alpha} ({n_alpha/total*100:.1f}%), "

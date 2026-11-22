@@ -1073,10 +1073,6 @@ def _plot_lo_overlay(am_unmod,
     ROOT.PlottingUtils.SaveFigure(canvas, output_name, output_subdir,
                                   ROOT.PlotSaveOptions.kLOG)
     canvas.Close()
-    h_am_u.Delete()
-    h_am_n.Delete()
-    h_na_u.Delete()
-    h_na_n.Delete()
 
 
 def _plot_noise_light_output(alpha_test, gamma_test, noise_levels, noise_fn,

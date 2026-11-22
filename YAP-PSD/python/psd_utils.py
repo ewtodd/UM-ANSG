@@ -984,8 +984,6 @@ def _plot_score_histogram(alpha_scores,
         ROOT.PlotSaveOptions.kLOG,
     )
     canvas.Close()
-    h_alpha.Delete()
-    h_gamma.Delete()
 
 
 def _plot_roc_curves(test_features, y_true, methods, method_names,
