@@ -21,12 +21,15 @@ A line break
 <!---->
 ## Project layout
 <!---->
-- This is an umbrella repo: one flake, one dev shell per project. The
+- This is an umbrella repo: one flake, one dev shell per project.
+The
   projects are `73mGe`, `78mBr`, `YAG-PreProcessing`, and `YAP-PSD`.
 - The 73mGe shell starts in `73mGe/czt`, the CZT analysis; the PSI CdTe
   analysis of the same line is in `73mGe/cdte`, and header-only code both
-  use is in `73mGe/include`. The 78mBr shell starts in `78mBr/macros`; the
-  YAG and YAP shells start in the project root. Each shell wires that project's
+  use is in `73mGe/include`.
+  The 78mBr shell starts in `78mBr/macros`; the
+  YAG and YAP shells start in the project root.
+  Each shell wires that project's
   `include/` into `CPLUS_INCLUDE_PATH`/`ROOT_INCLUDE_PATH` and `lib/` into
   `LD_LIBRARY_PATH`.
 - Backend per project: `73mGe` uses the CUDA Analysis-Utilities build
@@ -99,6 +102,9 @@ Do not
   `fix(78mBr): …`, `docs: …`), a blank line, then a body that explains
   what changed and why.
 - Agent commits: `--author="son-of-anton-bot <307402699+son-of-anton-bot@users.noreply.github.com>"`.
+- End an agent commit's body with a `Model:` trailer naming the model 
+  that wrote it: son-of-anton instances use `$SOA_MODEL` (e.g. `Model:   radiance/qwen3.8-27b`); other agents give their own model ID
+  (e.g. `Model: claude-opus-5-5`).
 - A `pre-commit` hook in `.githooks/` clang-formats staged C/C++ with
   `LLVM, BreakStringLiterals: false` and re-stages the result.
   `BreakStringLiterals` is deliberately off, so do not reformat string
