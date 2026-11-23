@@ -96,8 +96,9 @@ Double_t CalibratedKeV(const Double_t weights[N_REF], Double_t channel) {
 
 // The collaborator's calibration energies: Am-241 at DDEP's 59.5409 keV and
 // Bearden's Pb K-alpha2 and K-alpha1, as stated in Phys. Rev. D 110, 083043
-// (2024), and assumed for the PSI values of arXiv:2609.20848, which do not
-// state them.
+// (2024). arXiv:2609.20848 does not state them for the PSI values, but the
+// collaborator's fit notebook for a PSI CdTe run (Fit_ThursdayNight.ipynb)
+// uses the same Pb energies.
 const Double_t BEARDEN_PB_REF_KEV[N_REF] = {59.5409, 72.8042, 74.9694};
 
 // How far today's Pb K-alpha energies move an energy read on a weighted
@@ -356,6 +357,11 @@ void PlotRecalibration(const std::vector<Calibration> &cals) {
                             PlotSaveOptions::kLINEAR);
 }
 
+// An error-weighted mean with every value independent; Jones and Kraner's two
+// were taken four years apart. What the values do share, the reference
+// energies and each group's adjustment, is under 0.3 eV and nearly equal
+// for all of them: a BLUE with it off the diagonal gives the same mean to
+// 0.01 eV.
 void PrintAverage(const std::vector<Input> &inputs,
                   const Adjustment &adjustment, const TString &title,
                   Double_t &mean_kev, Double_t &mean_err_kev) {

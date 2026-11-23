@@ -191,7 +191,6 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   labels.push_back("^{73m}Ge, 68.75 keV");
   labels.push_back("Pb K#alpha_{2}, K#alpha_{1}");
   labels.push_back("^{113}Cd(n,#gamma) 95.9 keV escapes");
-  labels.push_back("Continuum");
 
   const Int_t canvas_w = 1400, plot_h = 800, panel_h = 300;
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
@@ -204,12 +203,12 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   data->SetMarkerStyle(20);
   data->SetMarkerSize(0.9);
   data->SetMinimum(0.85 * bkg_min);
-  data->SetMaximum(1.35 * data_max);
+  data->SetMaximum(1.6 * data_max);
   data->GetXaxis()->SetLabelSize(0);
   data->GetXaxis()->SetTitleSize(0);
   data->Draw("E");
-  StyleCurve(fit.background, kGray + 2, 1);
-  fit.background->Draw("L SAME");
+  // The continuum is not drawn on its own: every line sits on it, and its
+  // legend entry would push the legend onto the spectrum.
   if (fit.fixed_lines) {
     StyleCurve(fit.fixed_lines, kMagenta + 1, 1);
     fit.fixed_lines->Draw("L SAME");
@@ -233,7 +232,6 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
     leg->AddEntry(lead[0], labels[3], "l");
   if (fit.fixed_lines)
     leg->AddEntry(fit.fixed_lines, labels[4], "l");
-  leg->AddEntry(fit.background, labels[5], "l");
 
   lower->cd();
   FigureStyle::DrawPullPanel(pulls, SHOW_LO_KEV, SHOW_HI_KEV, "Energy [keV]");
