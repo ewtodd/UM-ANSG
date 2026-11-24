@@ -20,6 +20,7 @@
 #include <TFile.h>
 #include <TFitResult.h>
 #include <TH1D.h>
+#include <TH2D.h>
 #include <TMath.h>
 #include <TString.h>
 #include <TTree.h>
@@ -93,6 +94,47 @@ inline Bool_t CdInsideEscapesRequested() {
   return env && TString(env) == "inside";
 }
 
+// For the dissertation's account of what the pixel gain matching does to the
+// results, not for a systematic: PIXEL_MAP=off leaves out the day pixel map
+// below, and PIXEL_GAINS=off also undoes the 558 keV gains the filter
+// applied (each energy over its pixel's gain), which implies PIXEL_MAP=off.
+inline Bool_t PixelGainsRequested() {
+  const char *env = getenv("PIXEL_GAINS");
+  return !(env && TString(env) == "off");
+}
+
+inline Bool_t PixelMapRequested() {
+  const char *env = getenv("PIXEL_MAP");
+  return PixelGainsRequested() && !(env && TString(env) == "off");
+}
+
+// Read once, since every event's energy checks them.
+const Bool_t PIXEL_GAINS_ON = PixelGainsRequested();
+const Bool_t PIXEL_MAP_ON = PixelMapRequested();
+
+// The 558 keV gain table the filter applied (PixelCalibration.cpp), indexed
+// as PixelAlignment::PixelIndexOf, for PIXEL_GAINS=off.
+inline const std::vector<Double_t> &PixelGains558() {
+  static std::vector<Double_t> gains;
+  if (!gains.empty())
+    return gains;
+  gains.assign(PixelAlignment::N_PIXELS, 0.0);
+  TFile *file = IO::OpenForReading("pixel_calibration.root");
+  TH2D *table = file ? static_cast<TH2D *>(file->Get("pixel_gain")) : nullptr;
+  if (!table) {
+    std::cerr << "ERROR: no pixel_gain in root_files/pixel_calibration.root"
+              << std::endl;
+    return gains;
+  }
+  for (Int_t ix = 0; ix < PixelAlignment::N_SIDE; ix++)
+    for (Int_t iy = 0; iy < PixelAlignment::N_SIDE; iy++)
+      gains[ix * PixelAlignment::N_SIDE + iy] =
+          table->GetBinContent(ix + 1, iy + 1);
+  file->Close();
+  delete file;
+  return gains;
+}
+
 // ---------------------------------------------------------------- pixel map
 
 // Every event is aligned on its day's pixel map (PixelAlignment.hpp) before
@@ -132,16 +174,22 @@ inline std::vector<TString> PixelMapRuns(const TString &date) {
 // The map run's pixels take, or null for a run outside the two days.
 inline const PixelAlignment::RunAlignment *PixelMapFor(const TString &run) {
   const TString date = RunDate(run);
-  if (date == "")
+  if (date == "" || !PIXEL_MAP_ON)
     return nullptr;
   const Int_t line = (date == "20260113") ? PixelAlignment::LINE_PB_KA
                                           : PixelAlignment::LINE_CAPTURE_96;
   return &PixelAlignment::AlignmentOfDay(date, PixelMapRuns(date), line);
 }
 
-// An event's energy with its pixel's factor.
+// An event's energy with its pixel's factor (or, with PIXEL_GAINS=off,
+// without its 558 keV gain).
 inline Double_t AlignedEnergy(const PixelAlignment::RunAlignment *map,
                               Float_t energy, Float_t x_mm, Float_t y_mm) {
+  if (!PIXEL_GAINS_ON) {
+    Int_t pixel = PixelAlignment::PixelIndexOf(x_mm, y_mm);
+    Double_t gain = (pixel >= 0) ? PixelGains558()[pixel] : 0.0;
+    return (gain > 0) ? energy / gain : energy;
+  }
   if (!map)
     return energy;
   return energy * map->Factor(PixelAlignment::PixelIndexOf(x_mm, y_mm));
@@ -155,11 +203,14 @@ const Double_t TAIL_RATIO_MAX = 20.0;
 // Fixed when the macro loads, so production and its systematic partners
 // each write their own calibrated trees, plots and results. The fixed parts
 // of the name are where the saved fit states live: tau20 the tail bound,
-// sigpb the signal-run Pb anchor, pxday the day pixel map.
+// sigpb the signal-run Pb anchor, pxday the day pixel map (pxoff without it,
+// nogain without the 558 keV gains either; their states are copies of
+// production's).
 const TString RESULT_TAG =
     TString("tau20_sigpb") + (EscapeLinesRequested() ? "_esc" : "") +
     (OffsetTransferRequested() ? "_oxfer" : "") +
-    (CdInsideEscapesRequested() ? "_cdin" : "") + "_pxday";
+    (CdInsideEscapesRequested() ? "_cdin" : "") +
+    (!PIXEL_GAINS_ON ? "_nogain" : (PIXEL_MAP_ON ? "_pxday" : "_pxoff"));
 const TString OUT_SUBDIR = "calibrated_" + RESULT_TAG;
 
 // ------------------------------------------------------------------- events
@@ -537,9 +588,6 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
   std::vector<Bool_t> bkg_fixed(n_bkg, kFALSE);
   std::vector<Bool_t> sig_fixed(n_bkg + 1, kFALSE);
 
-  std::vector<Bool_t> sig_step(n_bkg + 1, kTRUE);
-  sig_step[n_bkg] = kFALSE;
-
   // The slope is held only for the flat model; a linear one fits it.
   sim.AddChannel("bkg", bkg_events, CAL_RANGE_LOW, CAL_RANGE_HIGH, bin_kev,
                  n_bkg, bkg_peak_mus, INSITU_FLAT_BKG, INSITU_STEP,
@@ -548,7 +596,7 @@ inline BkgGeSimResult FitBkgGeSimFromSeed(
   sim.AddChannel("sig", sig_events, CAL_RANGE_LOW, CAL_RANGE_HIGH, bin_kev,
                  n_bkg + 1, sig_mus, INSITU_FLAT_BKG, INSITU_STEP,
                  INSITU_LOW_EXP, INSITU_LOW_LIN, INSITU_HIGH_EXP, sig_fixed,
-                 kFALSE, INSITU_FLAT_BKG, kFALSE, sig_step);
+                 kFALSE, INSITU_FLAT_BKG, kFALSE);
   // Share ONE low-side tail across both Pb-Ka lines and the Ge peak, tied to
   // bkg:Ka1. Fit independently, Ka1 inflates its own tail to absorb the
   // inter-peak fill so neither Ka tail is trustworthy, and the Ge tail rails

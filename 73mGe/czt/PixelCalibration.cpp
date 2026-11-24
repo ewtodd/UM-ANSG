@@ -370,6 +370,23 @@ void PrintSummary(const std::vector<PixelRow> &rows) {
     std::cout << "  crystal " << it->first << ": " << bad_per_crystal[it->first]
               << " / " << it->second << std::endl;
   }
+
+  std::vector<Float_t> kept_sigmas;
+  for (size_t i = 0; i < rows.size(); i++) {
+    if (rows[i].bad || !rows[i].valid || !std::isfinite(rows[i].sigma))
+      continue;
+    kept_sigmas.push_back(rows[i].sigma);
+  }
+  if (!kept_sigmas.empty()) {
+    const Double_t fwhm_per_sigma = TMath::Sqrt(8.0 * TMath::Log(2.0));
+    Float_t median_sigma = Median(kept_sigmas);
+    Double_t median_fwhm = fwhm_per_sigma * median_sigma;
+    std::cout << std::fixed << std::setprecision(3)
+              << "Kept pixels' resolution at " << E_CD558
+              << " keV: median sigma " << median_sigma << " keV, FWHM "
+              << median_fwhm << " keV (" << std::setprecision(2)
+              << 100.0 * median_fwhm / E_CD558 << "%)" << std::endl;
+  }
 }
 
 void PixelCalibration() {

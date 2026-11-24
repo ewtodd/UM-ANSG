@@ -125,7 +125,8 @@ std::vector<Double_t> LoadFiltered(const TString &input_name) {
     if (!tree)
       continue;
     std::vector<Double_t> ch =
-        map ? LoadAlignedEnergies(tree, map)
+        (map || !PIXEL_GAINS_ON)
+            ? LoadAlignedEnergies(tree, map)
             : RooFitUtils::LoadEventsFromTree(tree, "energykeV");
     events.insert(events.end(), ch.begin(), ch.end());
   }
