@@ -1,23 +1,22 @@
 // Final-budget combiner for the Ge-73m gamma energy.
 //
 // Reads the per-run rows written by CalibrateAndFit.cpp:
-//   method(insitu|ratesub) ge_mu fit_err cal_err bkg_err chi2 gain_err
+//   method(insitu|direct) ge_mu fit_err cal_err bkg_err chi2 gain_err
 //   cal_off sys_err anchor_err label
 //
 // The quoted value is the BLUE of every run of both methods: Method 1
-// (in-situ, 01/13) and Method 2 (rate subtraction, 01/15, with its own
-// systematics in sys_err: bin phase, residual-background shape, calibration
-// transfer). The calibration is split into its correlated (Am reference) and
-// independent (signal-run Pb pin) parts, and the transfer model (gain against
-// offset, from a second result set; each run at the midpoint of the two, half
-// the difference charged) is a third correlated part. The 95.902 keV
-// escapes are a fourth: every run's escape fractions moved up and down by
-// their measured uncertainty (two more result sets), half the difference
-// charged, correlated between all runs since every run takes the same
-// measured fractions. The correction itself (from a result set without the
-// escapes) is printed, not charged. On top comes the
-// published budget's outlier removal, in quadrature: the largest shift of the
-// BLUE without its highest run, its lowest, or both. Method 1 alone and the
+// (in-situ, 01/13) and Method 2 (the direct fit of the no-shield run, 01/15,
+// with its own systematic in sys_err: the Ge tail held or free). The
+// calibration is split into its correlated (Am reference) and independent
+// (signal-run Pb pin) parts, and the transfer model (gain against offset, from
+// a second result set; each run at the midpoint of the two, half the difference
+// charged) is a third correlated part. The 95.902 keV escapes are a fourth:
+// every run's escape fractions moved up and down by their measured uncertainty
+// (two more result sets), half the difference charged, correlated between all
+// runs since every run takes the same measured fractions. The correction itself
+// (from a result set without the escapes) is printed, not charged. On top comes
+// the published budget's outlier removal, in quadrature: the largest shift of
+// the BLUE without its highest run, its lowest, or both. Method 1 alone and the
 // uncorrelated weighted mean are printed for comparison.
 //
 // The calibration term is reported as offset (+) multiplicative. Offset is the
@@ -43,7 +42,7 @@
 
 // Fit-quality cut on the in-situ fits. chi2/ndf carries no information about
 // where mu landed, so it cannot bias the result. A rejected run drops out of
-// Method 1; no in-situ run also has a rate-sub row.
+// Method 1; no in-situ run also has a direct row.
 const Double_t INSITU_CHI2_MAX = 3.0;
 
 struct Row {
@@ -223,7 +222,7 @@ std::set<TString> KeptInsituLabels(const std::vector<Row> &rows) {
 }
 
 // One combination over the rows the mode selects.
-// mode 0 = in-situ only, 1 = in-situ + rate-sub, 2 = rate-sub only.
+// mode 0 = in-situ only, 1 = in-situ + direct, 2 = direct only.
 // err ALREADY CONTAINS the calibration; never add a calibration term again.
 struct Combination {
   Double_t mean = 0, err = 0, chi2ndf = 0;
@@ -267,7 +266,7 @@ Combination Combine(const std::vector<Row> &rows, Int_t mode,
     if (r.method == "insitu") {
       if (mode == 2 || kept_insitu.find(r.label) == kept_insitu.end())
         continue;
-    } else if (r.method == "ratesub") {
+    } else if (r.method == "direct") {
       if (mode == 0)
         continue;
     } else {
@@ -399,7 +398,7 @@ Bool_t PartnerMus(const std::vector<Row> &rows, const std::vector<Row> &partner,
 }
 
 Bool_t UsedInBoth(const Row &r, const std::set<TString> &kept) {
-  if (r.method == "ratesub")
+  if (r.method == "direct")
     return kTRUE;
   return r.method == "insitu" && kept.find(r.label) != kept.end();
 }
@@ -580,7 +579,7 @@ void CombineGeResult(
               << " datasets, 01/13): " << in_only.mean << " +/- " << in_only.err
               << " keV" << std::endl;
   if (rs.valid)
-    std::cout << "  Method 2  live-time rate subtraction  (" << rs.n
+    std::cout << "  Method 2  direct no-shield fit       (" << rs.n
               << " datasets, 01/15): " << rs.mean << " +/- " << rs.err << " keV"
               << std::endl;
   if (in_only.valid && rs.valid) {
@@ -607,7 +606,7 @@ void CombineGeResult(
     std::cout << "  split of err with the BLUE weights: stat " << both.stat_part
               << " (+) cal offset " << both.off_part
               << " (+) cal multiplicative " << both.mult_part
-              << " (+) systematics: rate-sub " << both.sys_part
+              << " (+) systematics: Ge tail " << both.sys_part
               << " (+) transfer model " << both.model_part
               << " (+) escape fractions " << both.escape_part << std::endl;
     std::cout
@@ -651,24 +650,26 @@ void CombineGeResult(
 
   // Comparison table in the collaborator's format: Eg in keV, uncertainties in
   // eV. Offset^2 + Mult.^2 = cal^2, see the file-top note for the definition;
-  // Sys. is the rate-sub rows' own systematic, Model the transfer-model shift
-  // and Esc. the escape-fraction systematic. Syst. is a run's systematics
-  // together, sys (+) model (+) esc, the paper's per-run column, and Total =
-  // fit (+) cal (+) Syst.; the combined row is the quoted BLUE.
+  // Sys. is the direct rows' own systematic (the Ge tail), Model the
+  // transfer-model shift and Esc. the escape-fraction systematic. Syst. is a
+  // run's systematics together, sys (+) model (+) esc, the paper's per-run
+  // column, and Total = fit (+) cal (+) Syst.; the combined row is the quoted
+  // BLUE.
   std::cout << std::endl;
   std::cout << "----- Comparison table (Eg keV, uncertainties eV) -----"
             << std::endl;
   std::cout << "  (offset = cal error at its best-constrained energy; mult. = "
-               "its growth to the Ge line + gain transfer)"
+               "its growth to the Ge line + gain transfer; cal. = the two in "
+               "quadrature)"
             << std::endl;
   std::cout << std::left << std::setw(46) << "Run" << std::right
             << std::setw(10) << "Eg[keV]" << std::setw(8) << "Fit"
             << std::setw(8) << "Offset" << std::setw(8) << "Mult."
-            << std::setw(8) << "Sys." << std::setw(8) << "Model" << std::setw(8)
-            << "Esc." << std::setw(8) << "Syst." << std::setw(8) << "Total"
-            << std::endl;
+            << std::setw(8) << "Cal." << std::setw(8) << "Sys." << std::setw(8)
+            << "Model" << std::setw(8) << "Esc." << std::setw(8) << "Syst."
+            << std::setw(8) << "Total" << std::endl;
   for (size_t i = 0; i < rows.size(); i++) {
-    if (rows[i].method != "insitu" && rows[i].method != "ratesub")
+    if (rows[i].method != "insitu" && rows[i].method != "direct")
       continue;
     Double_t fit_ev = rows[i].fit_err * 1000.0;
     Double_t cal_ev = rows[i].cal_err * 1000.0;
@@ -689,9 +690,10 @@ void CombineGeResult(
               << std::fixed << std::setprecision(5) << std::setw(10)
               << rows[i].mu << std::setprecision(2) << std::setw(8) << fit_ev
               << std::setw(8) << off_ev << std::setw(8) << mult_ev
-              << std::setw(8) << sys_ev << std::setw(8) << model_ev
-              << std::setw(8) << esc_ev << std::setw(8) << syst_ev
-              << std::setprecision(1) << std::setw(8) << tot_ev << std::endl;
+              << std::setw(8) << cal_ev << std::setw(8) << sys_ev
+              << std::setw(8) << model_ev << std::setw(8) << esc_ev
+              << std::setw(8) << syst_ev << std::setprecision(1) << std::setw(8)
+              << tot_ev << std::endl;
   }
   Double_t both_syst_ev =
       1000.0 * std::sqrt(both.sys_part * both.sys_part +
@@ -702,7 +704,9 @@ void CombineGeResult(
             << both.mean << std::setprecision(2) << std::setw(8)
             << both.stat_part * 1000.0 << std::setw(8) << both.off_part * 1000.0
             << std::setw(8) << both.mult_part * 1000.0 << std::setw(8)
-            << both.sys_part * 1000.0 << std::setw(8)
+            << 1000.0 * std::sqrt(both.off_part * both.off_part +
+                                  both.mult_part * both.mult_part)
+            << std::setw(8) << both.sys_part * 1000.0 << std::setw(8)
             << both.model_part * 1000.0 << std::setw(8)
             << both.escape_part * 1000.0 << std::setw(8) << both_syst_ev
             << std::setprecision(1) << std::setw(8) << both.err * 1000.0
@@ -727,7 +731,7 @@ void CombineGeResult(
   out << "statistical " << both.stat_part << std::endl;
   out << "calibration_offset " << both.off_part << std::endl;
   out << "calibration_gain " << both.mult_part << std::endl;
-  out << "rate_subtraction " << both.sys_part << std::endl;
+  out << "direct_fit_tail " << both.sys_part << std::endl;
   out << "transfer_model " << both.model_part << std::endl;
   out << "escape_fractions " << both.escape_part << std::endl;
   out << "blue_chi2_ndf " << both.chi2ndf << std::endl;

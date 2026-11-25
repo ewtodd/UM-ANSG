@@ -52,9 +52,10 @@ struct DayResult {
   // between runs.
   std::vector<Float_t> ge_anchor_errs;
   std::vector<Float_t> ge_bkg_errs;
-  std::vector<TString> rs_labels;
-  std::vector<Float_t> rs_mus, rs_errs, rs_chi2s, rs_cal_errs, rs_gain_errs;
-  std::vector<Float_t> rs_cal_offs, rs_sys_errs;
+  std::vector<TString> direct_labels;
+  std::vector<Float_t> direct_mus, direct_errs, direct_chi2s, direct_cal_errs,
+      direct_gain_errs;
+  std::vector<Float_t> direct_cal_offs, direct_sys_errs;
 };
 
 struct CalFit {
@@ -633,176 +634,201 @@ void AddGeResult(DayResult &result, const BkgGeSimResult &r,
   result.ge_bkg_errs.push_back(bkg_err);
 }
 
-Double_t LoadCrystalLiveTime(TFile *file, Int_t crystal) {
-  TParameter<Double_t> *p = dynamic_cast<TParameter<Double_t> *>(
-      file->Get(Form("LiveTime_Crystal%d_s", crystal)));
-  if (!p) {
-    std::cerr << "ERROR: no LiveTime_Crystal" << crystal << "_s in "
-              << file->GetName() << "; rerun Filter.cpp" << std::endl;
-    return 0;
-  }
-  return p->GetVal();
-}
+// ----------------------------------------------- Method 2: the no-shield run
 
-// Rate histograms (each crystal's counts over its live time, summed) with
-// bins of width bin starting at n_phases points spaced bin / n_phases apart,
-// all filled in one pass over the run. Histogram k covers
-// [lo + k bin / n_phases, hi + k bin / n_phases).
-std::vector<TH1D *> BuildRateHists(const TString &input_name, TF1 *cal,
-                                   const TString &hname, Double_t lo,
-                                   Double_t hi, Double_t bin, Int_t n_phases) {
-  std::vector<TH1D *> sums;
-  TFile *file = IO::OpenForReading("filtered/" + input_name + ".root");
-  if (!file || file->IsZombie()) {
-    std::cerr << "ERROR: Cannot open filtered/" << input_name << ".root"
-              << std::endl;
+// The Ge line fitted in the 01/15 no-shield signal run alone, without its
+// background run. The structure near Ge that once made a background
+// subtraction necessary is the 95.902 keV line's Cd and Te K X-ray escapes,
+// which the fit carries: an unbinned likelihood over DIRECT_WINDOW_LO-HI of the
+// run's calibrated events, the Ge line on a linear continuum (the no-shield
+// continuum is not flat here) with the escapes as fixed lines of the Ge peak's
+// shape. The Ge tail is held at the day's source-run tail, the Am-241 and
+// Ba-133 80.998 keV lines interpolated to Ge. The escapes sit at the 95.902
+// keV line's centroid minus the SRD 128 X-ray energies, with yields of the
+// day's escape fractions times its Gaussian yield, the line measured in the
+// same run on comb-period bins with the Ge tail. The same fit with Ge's tail
+// free, started from the held one, gives the tail systematic: both the source
+// lines' tail and Ge's own can be defended. The fit starts cold; it needs no
+// saved seed.
+const Double_t DIRECT_WINDOW_LO = 62.0;
+const Double_t DIRECT_WINDOW_HI = 78.0;
+// The 95.902 keV line's window, as AverageCaptureLine's callers bin it.
+const Double_t DIRECT_CAPTURE_LO = 88.0;
+const Double_t DIRECT_CAPTURE_WIDTH = 16.0;
+// RooFitUtils draws 0.85 times a window's low edge to 1.15 times its high
+// edge; the events loaded cover that and the capture line's window.
+const Double_t DIRECT_DISPLAY_LOW_FACTOR = 0.85;
+const Double_t DIRECT_DISPLAY_HIGH_FACTOR = 1.15;
+
+struct DirectGeResult {
+  Double_t mu = 0, mu_err = 0, chi2 = 0, sigma = 0;
+  // Free tail minus held tail, keV, when the free-tail fit converged
+  // (tail_valid). The result sets that only move a model input (the escape
+  // fractions) need the held fit alone; production needs both.
+  Double_t tail_shift = 0;
+  Bool_t tail_valid = kFALSE;
+  Bool_t valid = kFALSE;
+};
+
+std::vector<Double_t> LoadDirectFitEvents(const TString &input_name) {
+  std::vector<Double_t> events;
+  TFile *file = IO::OpenForReading(OUT_SUBDIR + "/" + input_name + ".root");
+  TTree *tree =
+      file ? static_cast<TTree *>(file->Get("calibrated_tree")) : nullptr;
+  if (!tree) {
+    std::cerr << "ERROR: no calibrated_tree in " << OUT_SUBDIR << "/"
+              << input_name << ".root" << std::endl;
     delete file;
-    return sums;
+    return events;
   }
-  Int_t nbins = (Int_t)std::lround((hi - lo) / bin);
-  for (Int_t k = 0; k < n_phases; k++) {
-    Double_t start = lo + k * bin / n_phases;
-    TH1D *h = new TH1D(hname + Form("_phase%d", k),
-                       ";Deposited Energy [keV]; Rate [counts/s]", nbins, start,
-                       start + nbins * bin);
-    h->SetDirectory(nullptr);
-    h->Sumw2();
-    sums.push_back(h);
-  }
-
-  const PixelAlignment::RunAlignment *map = PixelMapFor(input_name);
-  for (Int_t c = 0; c < Constants::N_CRYSTALS; c++) {
-    TTree *tree =
-        static_cast<TTree *>(file->Get(Form("crystal%d_filtered_tree", c)));
-    Double_t lt = LoadCrystalLiveTime(file, c);
-    if (!tree || lt <= 0) {
-      std::cerr << "ERROR: crystal " << c << " of " << input_name
-                << " has no filtered tree or live time" << std::endl;
-      for (size_t k = 0; k < sums.size(); k++)
-        delete sums[k];
-      sums.clear();
-      break;
-    }
-    Float_t energy = 0, x = 0, y = 0;
-    tree->SetBranchAddress("energykeV", &energy);
-    tree->SetBranchAddress("xmm", &x);
-    tree->SetBranchAddress("ymm", &y);
-    Long64_t n = tree->GetEntries();
-    for (Long64_t j = 0; j < n; j++) {
-      tree->GetEntry(j);
-      Double_t e = cal->Eval(AlignedEnergy(map, energy, x, y));
-      for (Int_t k = 0; k < n_phases; k++)
-        sums[k]->Fill(e, 1.0 / lt);
-    }
-    tree->ResetBranchAddresses();
+  const Double_t lo = DIRECT_DISPLAY_LOW_FACTOR * DIRECT_WINDOW_LO;
+  const Double_t hi = TMath::Max(DIRECT_DISPLAY_HIGH_FACTOR * DIRECT_WINDOW_HI,
+                                 DIRECT_CAPTURE_LO + DIRECT_CAPTURE_WIDTH);
+  Float_t energy = 0;
+  tree->SetBranchAddress("depositedEnergykeV", &energy);
+  Long64_t n_entries = tree->GetEntries();
+  for (Long64_t j = 0; j < n_entries; j++) {
+    tree->GetEntry(j);
+    if (energy >= lo && energy <= hi)
+      events.push_back(energy);
   }
   file->Close();
   delete file;
-  return sums;
+  return events;
 }
 
-void PrintRateSubShape(const TString &tag, const RateSubShape &s) {
-  std::cout << "RATESUB-SHAPE " << tag << ": window " << std::fixed
-            << std::setprecision(1) << RATESUB_LO << "-" << RATESUB_HI
-            << " keV   Ge tail/gaus height " << std::setprecision(4)
-            << s.ge_tail_height_ratio << "   tau/sigma " << std::setprecision(3)
-            << s.ge_tau_over_sigma << std::endl;
-}
-
-// Method 2 for one day: the residual's 95.902 keV line (for its escapes) and
-// the phase-averaged rate-sub fit of the live-time residual, signal minus
-// background, from each run's rate histograms (FitRateSubPhases in
-// GainTransferFit.hpp), then the plot of the first starting point's fit.
-RateSubResult FitRateSubtractedGe(const TString &sig_run,
-                                  const TString &bkg_run, TF1 *cal,
-                                  const TString &tag,
-                                  const RateSubShape &tail_shape) {
-  const Float_t lo = RATESUB_LO, hi = RATESUB_HI;
-  PrintRateSubShape(tag, tail_shape);
-
-  const Double_t bin = COMB_PERIOD_RAW_KEV * cal->GetParameter(1);
-  RateSubShape shape = tail_shape;
-  RateSubResult out;
-  if (shape.escapes) {
-    std::vector<TH1D *> capture_sigs = BuildRateHists(
-        sig_run, cal, "capture_sig_" + tag, 88.0, 104.0, bin, N_RATESUB_PHASES);
-    std::vector<TH1D *> capture_bkgs = BuildRateHists(
-        bkg_run, cal, "capture_bkg_" + tag, 88.0, 104.0, bin, N_RATESUB_PHASES);
-    Bool_t have_line =
-        SetResidualCaptureLine(capture_sigs, capture_bkgs, tag, shape);
-    for (size_t k = 0; k < capture_sigs.size(); k++)
-      delete capture_sigs[k];
-    for (size_t k = 0; k < capture_bkgs.size(); k++)
-      delete capture_bkgs[k];
-    if (!have_line)
-      return out;
+// The run's 95.902 keV line on comb-period bins at N_RATESUB_PHASES starting
+// points, with the Ge tail.
+CaptureLine MeasureDirectCaptureLine(const std::vector<Double_t> &events,
+                                     Double_t bin_kev,
+                                     const RateSubShape &shape,
+                                     const TString &tag) {
+  const Int_t n_bins = (Int_t)std::lround(DIRECT_CAPTURE_WIDTH / bin_kev);
+  std::vector<TH1D *> hists;
+  for (Int_t k = 0; k < N_RATESUB_PHASES; k++) {
+    Double_t start = DIRECT_CAPTURE_LO + k * bin_kev / N_RATESUB_PHASES;
+    TH1D *h = new TH1D(Form("direct_capture_%s_%d", tag.Data(), k), "", n_bins,
+                       start, start + n_bins * bin_kev);
+    h->SetDirectory(nullptr);
+    for (size_t i = 0; i < events.size(); i++)
+      h->Fill(events[i]);
+    hists.push_back(h);
   }
-  std::vector<TH1D *> sigs =
-      BuildRateHists(sig_run, cal, "rate_sig_" + tag, lo - bin, hi + bin, bin,
-                     N_RATESUB_PHASES);
-  std::vector<TH1D *> bkgs =
-      BuildRateHists(bkg_run, cal, "rate_bkg_" + tag, lo - bin, hi + bin, bin,
-                     N_RATESUB_PHASES);
-  TF1 *model = nullptr;
-  TH1D *res = nullptr;
-  if ((Int_t)sigs.size() == N_RATESUB_PHASES &&
-      (Int_t)bkgs.size() == N_RATESUB_PHASES)
-    out = FitRateSubPhases(sigs, bkgs, shape, tag, &model, &res);
-  for (size_t k = 0; k < sigs.size(); k++)
-    delete sigs[k];
-  for (size_t k = 0; k < bkgs.size(); k++)
-    delete bkgs[k];
-  if (!out.valid || !model || !res) {
-    delete model;
-    delete res;
+  CaptureLine line =
+      AverageCaptureLine(hists, shape.ge_tail_height_ratio,
+                         shape.ge_tau_over_sigma, kTRUE, "direct_" + tag);
+  for (size_t k = 0; k < hists.size(); k++)
+    delete hists[k];
+  return line;
+}
+
+// One direct fit: the Ge tail held at the source-run tail, or free. A seed,
+// when given, starts the fit.
+FitResult FitDirectGeOnce(const std::vector<Double_t> &events, Double_t bin_kev,
+                          const RateSubShape &shape,
+                          const std::vector<Double_t> &escape_mus,
+                          const std::vector<Double_t> &escape_yields,
+                          Bool_t hold_tail, const FitResult *seed,
+                          const TString &input_name, const TString &label) {
+  RooFitUtils sim;
+  sim.SetTailRatioMax(TAIL_RATIO_MAX);
+  std::vector<Double_t> mus(1, (Double_t)E_NEAR_GE);
+  const Bool_t flat_continuum = kFALSE;
+  sim.AddChannel("direct", events, DIRECT_WINDOW_LO, DIRECT_WINDOW_HI, bin_kev,
+                 1, mus, flat_continuum, kFALSE, kTRUE, kFALSE, kFALSE);
+  if (hold_tail) {
+    sim.HoldParameter("direct:LowExpTailAmplitude1",
+                      FullRangeTailRatio(shape.ge_tail_height_ratio,
+                                         shape.ge_tau_over_sigma));
+    sim.HoldParameter("direct:LowExpTailRatio1", shape.ge_tau_over_sigma);
+  }
+  if (!escape_mus.empty())
+    sim.AddFixedLines("direct", 0, escape_mus, escape_yields);
+  if (seed && seed->valid)
+    sim.SeedChannel("direct", *seed);
+  std::vector<FitResult> results = sim.FitSimultaneous(input_name, label);
+  if (results.empty())
+    return FitResult();
+  // Per-bin data, model and pull, for the residual check and the figure.
+  sim.DumpChannelCSV("direct",
+                     PlottingUtils::GetPlotsBaseDir() + "/fits/" + label);
+  FitResult fit = results[0];
+  fit.valid = fit.valid && !fit.peaks.empty() && fit.fit_status == 0 &&
+              fit.cov_qual == 3;
+  return fit;
+}
+
+void PrintDirectFit(const TString &label, const FitResult &fit) {
+  if (!fit.valid) {
+    std::cout << "DIRECT-FIT " << label << ": failed (status " << fit.fit_status
+              << ", covQual " << fit.cov_qual << ")" << std::endl;
+    return;
+  }
+  const PeakFitResult &ge = fit.peaks[0];
+  // The tail as RooFitUtils' full-range ratio to the Gaussian yield.
+  Double_t tail_ratio = (ge.gaus_amplitude > 0)
+                            ? ge.low_exp_tail_amplitude / ge.gaus_amplitude
+                            : 0.0;
+  std::cout << "DIRECT-FIT " << label << ": Ge " << std::fixed
+            << std::setprecision(4) << ge.mu << " +/- " << ge.mu_error
+            << " keV, sigma " << ge.sigma << ", Gaussian yield "
+            << std::setprecision(0) << ge.gaus_amplitude << ", tail ratio "
+            << std::setprecision(4) << tail_ratio << " tau/sigma "
+            << std::setprecision(3) << ge.low_exp_tail_ratio << "   chi2/ndf "
+            << fit.reduced_chi2 << std::endl;
+}
+
+// Method 2 for one day: the held-tail fit, the free-tail fit and their shift.
+DirectGeResult FitDirectGe(const TString &sig_run, TF1 *cal, const TString &tag,
+                           const RateSubShape &shape) {
+  DirectGeResult out;
+  const Double_t bin_kev = COMB_PERIOD_RAW_KEV * cal->GetParameter(1);
+  std::cout << "DIRECT-SHAPE " << tag << ": window " << std::fixed
+            << std::setprecision(1) << DIRECT_WINDOW_LO << "-"
+            << DIRECT_WINDOW_HI << " keV   Ge tail/gaus height "
+            << std::setprecision(4) << shape.ge_tail_height_ratio
+            << "   tau/sigma " << std::setprecision(3)
+            << shape.ge_tau_over_sigma << std::endl;
+  std::vector<Double_t> events = LoadDirectFitEvents(sig_run);
+  if (events.empty())
     return out;
+
+  std::vector<Double_t> escape_mus, escape_yields;
+  if (shape.escapes) {
+    CaptureLine line = MeasureDirectCaptureLine(events, bin_kev, shape, tag);
+    if (!line.valid) {
+      std::cerr << "ERROR: no 95.902 keV line in " << sig_run
+                << "; the direct fit is abandoned" << std::endl;
+      return out;
+    }
+    EscapeLinesOf(line, *shape.escapes, 1.0, escape_mus, escape_yields);
   }
 
-  res->GetYaxis()->SetTitle(
-      Form("Counts/s / %.0f eV", 1000.0 * res->GetBinWidth(1)));
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
-  PlottingUtils::ConfigureAndDrawHistogram(res, kBlack);
-  PlottingUtils::SaveFigure(canvas, "rate_residual_" + tag, "fits",
-                            PlotSaveOptions::kLINEAR);
+  const TString label = "Direct_" + tag;
+  FitResult held =
+      FitDirectGeOnce(events, bin_kev, shape, escape_mus, escape_yields, kTRUE,
+                      nullptr, sig_run, label);
+  PrintDirectFit(label, held);
+  if (!held.valid)
+    return out;
+  FitResult free_tail =
+      FitDirectGeOnce(events, bin_kev, shape, escape_mus, escape_yields, kFALSE,
+                      &held, sig_run, label + "_free_tail");
+  PrintDirectFit(label + "_free_tail", free_tail);
 
-  const Int_t kNPts = 400;
-  Double_t xstep = (hi - lo) / (kNPts - 1);
-  TGraph *total_graph = new TGraph(kNPts);
-  TGraph *bkg_graph = new TGraph(kNPts);
-  TGraph *escape_graph = new TGraph(kNPts);
-  for (Int_t i = 0; i < kNPts; i++) {
-    Double_t xv = lo + i * xstep;
-    Double_t bkg_v =
-        model->GetParameter(5) + model->GetParameter(6) * (xv - 68.75);
-    total_graph->SetPoint(i, xv, model->Eval(xv));
-    bkg_graph->SetPoint(i, xv, bkg_v);
-    escape_graph->SetPoint(i, xv,
-                           bkg_v + RateSubEscapes(xv, model->GetParameters()));
+  out.mu = held.peaks[0].mu;
+  out.mu_err = held.peaks[0].mu_error;
+  out.chi2 = held.reduced_chi2;
+  out.sigma = held.peaks[0].sigma;
+  out.valid = kTRUE;
+  if (free_tail.valid) {
+    out.tail_shift = free_tail.peaks[0].mu - held.peaks[0].mu;
+    out.tail_valid = kTRUE;
+  } else {
+    std::cerr << "ERROR: the free-tail fit of " << sig_run
+              << " did not converge; this result set has no tail systematic"
+              << std::endl;
   }
-  bkg_graph->SetLineStyle(2);
-  escape_graph->SetLineColor(kRed);
-  escape_graph->SetLineStyle(2);
-  std::vector<TGraph *> components = {bkg_graph};
-  if (model->GetParameter(8) != 0)
-    components.push_back(escape_graph);
-
-  res->GetXaxis()->SetRangeUser(lo, hi);
-  Double_t ymin = 1e30, ymax = -1e30;
-  for (Int_t b = res->FindBin(lo); b <= res->FindBin(hi - 1e-6); b++) {
-    Double_t v = res->GetBinContent(b);
-    Double_t e = res->GetBinError(b);
-    if (v - e < ymin)
-      ymin = v - e;
-    if (v + e > ymax)
-      ymax = v + e;
-  }
-  Double_t pad = 0.12 * (ymax - ymin);
-  res->SetMinimum(ymin - pad);
-  res->SetMaximum(ymax + pad);
-  PlottingUtils::PlotFitWithResiduals(res, total_graph, components, lo, hi,
-                                      "ratesub_fit_" + tag, "fits",
-                                      "Rate-subtracted " + tag, kFALSE);
-  delete res;
   return out;
 }
 
@@ -1259,21 +1285,24 @@ DayResult ProcessLineCalDay(const LineCalConfig &cfg) {
 
   RateSubShape shape = RateSubShapeFromLines(am.peaks.at(0), ba81.peaks.at(1));
   shape.escapes = EscapeLinesRequested() ? cfg.escapes : nullptr;
-  RateSubResult rs = FitRateSubtractedGe(cfg.postcal_sig, cfg.postcal_bkg, cal,
-                                         cfg.date_label, shape);
-  if (rs.valid) {
-    result.rs_labels.push_back(cfg.ge_label + " [rate-sub]");
-    result.rs_mus.push_back(rs.mu);
-    result.rs_errs.push_back(rs.mu_err);
-    result.rs_chi2s.push_back(rs.chi2);
-    result.rs_cal_errs.push_back(ge_cal_err);
-    result.rs_cal_offs.push_back(ge_cal_off);
-    result.rs_gain_errs.push_back(0.0f);
-    result.rs_sys_errs.push_back(rs.sys_err);
-    std::cout << "Rate-sub Ge mu for " << cfg.date_label << ": " << std::fixed
-              << std::setprecision(4) << rs.mu << " +/- " << rs.mu_err
-              << " (fit) +/- " << rs.sys_err
-              << " (sys) keV (chi2/ndf = " << std::setprecision(3) << rs.chi2
+  DirectGeResult direct =
+      FitDirectGe(cfg.postcal_sig, cal, cfg.date_label, shape);
+  if (direct.valid) {
+    // The tail systematic is the whole free - held shift.
+    Double_t tail_sys = TMath::Abs(direct.tail_shift);
+    result.direct_labels.push_back(cfg.ge_label + " [direct]");
+    result.direct_mus.push_back(direct.mu);
+    result.direct_errs.push_back(direct.mu_err);
+    result.direct_chi2s.push_back(direct.chi2);
+    result.direct_cal_errs.push_back(ge_cal_err);
+    result.direct_cal_offs.push_back(ge_cal_off);
+    result.direct_gain_errs.push_back(0.0f);
+    result.direct_sys_errs.push_back(tail_sys);
+    std::cout << "Direct Ge mu for " << cfg.date_label << ": " << std::fixed
+              << std::setprecision(4) << direct.mu << " +/- " << direct.mu_err
+              << " (fit) +/- " << tail_sys << " (sys: free tail "
+              << std::showpos << direct.tail_shift << std::noshowpos
+              << ") keV (chi2/ndf = " << std::setprecision(3) << direct.chi2
               << ")" << std::endl;
   }
   return result;
@@ -1464,26 +1493,30 @@ void CalibrateAndFit() {
   }
 
   std::cout << std::endl;
-  std::cout << "Method 2 -- live-time rate subtraction (Ge Peak mu):"
+  std::cout << "Method 2 -- direct fit of the no-shield run (Ge Peak mu):"
             << std::endl;
   for (Int_t d = 0; d < n_days; d++) {
-    for (size_t i = 0; i < days[d]->rs_labels.size(); i++) {
+    for (size_t i = 0; i < days[d]->direct_labels.size(); i++) {
       Float_t ce =
-          i < days[d]->rs_cal_errs.size() ? days[d]->rs_cal_errs[i] : 0;
+          i < days[d]->direct_cal_errs.size() ? days[d]->direct_cal_errs[i] : 0;
       Float_t se =
-          i < days[d]->rs_sys_errs.size() ? days[d]->rs_sys_errs[i] : 0;
-      out << "ratesub  " << days[d]->rs_mus[i] << "  " << days[d]->rs_errs[i]
-          << "  " << ce << "  " << 0.0 << "  " << days[d]->rs_chi2s[i] << "  "
-          << (i < days[d]->rs_gain_errs.size() ? days[d]->rs_gain_errs[i]
-                                               : 0.0f)
+          i < days[d]->direct_sys_errs.size() ? days[d]->direct_sys_errs[i] : 0;
+      out << "direct  " << days[d]->direct_mus[i] << "  "
+          << days[d]->direct_errs[i] << "  " << ce << "  " << 0.0 << "  "
+          << days[d]->direct_chi2s[i] << "  "
+          << (i < days[d]->direct_gain_errs.size()
+                  ? days[d]->direct_gain_errs[i]
+                  : 0.0f)
           << "  "
-          << (i < days[d]->rs_cal_offs.size() ? days[d]->rs_cal_offs[i] : 0.0f)
+          << (i < days[d]->direct_cal_offs.size() ? days[d]->direct_cal_offs[i]
+                                                  : 0.0f)
           << "  " << se << "  " << 0.0 << "  "
-          << SanitizeLabel(days[d]->rs_labels[i]) << std::endl;
-      std::cout << std::left << std::setw(50) << days[d]->rs_labels[i] << ": "
-                << std::fixed << std::setprecision(4) << days[d]->rs_mus[i]
-                << " +/- " << days[d]->rs_errs[i] << " (fit) +/- " << ce
-                << " (cal) +/- " << se << " (sys) keV" << std::endl;
+          << SanitizeLabel(days[d]->direct_labels[i]) << std::endl;
+      std::cout << std::left << std::setw(50) << days[d]->direct_labels[i]
+                << ": " << std::fixed << std::setprecision(4)
+                << days[d]->direct_mus[i] << " +/- " << days[d]->direct_errs[i]
+                << " (fit) +/- " << ce << " (cal) +/- " << se << " (sys) keV"
+                << std::endl;
     }
   }
   out.close();

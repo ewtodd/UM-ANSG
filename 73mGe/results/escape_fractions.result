@@ -8,12 +8,21 @@ inside_cd_kbeta_err_stat 0.001579
 inside_cd_kbeta_err_alternatives 0.000765
 inside_cd_kbeta_err 0.001755
 inside_relative_err 0.124963
+# The escape lines, 95.902 keV minus the SRD 128 X-ray energies, two per series (Cd K-alpha, Cd K-beta, Te K-alpha, Te K-beta). keV.
+escape_line_cd_kalpha_1 72.728
+escape_line_cd_kalpha_2 72.918
+escape_line_cd_kbeta_1 69.817
+escape_line_cd_kbeta_2 69.258
+escape_line_te_kalpha_1 68.429
+escape_line_te_kalpha_2 68.700
+escape_line_te_kbeta_1 64.922
+escape_line_te_kbeta_2 64.194
 # Cd-shield background runs of 01/13: the Cd K-beta escape beside Pb K-alpha, and the Baker-Cousins chi2 of the in-crystal set minus the shield set's.
-cd10_cd_kbeta 0.065583
-cd10_cd_kbeta_err 0.086774
-cd10_cd_kbeta_te_shield -0.040713
+cd10_cd_kbeta 0.065786
+cd10_cd_kbeta_err 0.086735
+cd10_cd_kbeta_te_shield -0.040586
 cd10_delta_chi2_inside_minus_shield -0.44
-cd25_cd_kbeta 0.245486
-cd25_cd_kbeta_err 0.077540
-cd25_cd_kbeta_te_shield 0.048276
+cd25_cd_kbeta 0.245753
+cd25_cd_kbeta_err 0.077529
+cd25_cd_kbeta_te_shield 0.048340
 cd25_delta_chi2_inside_minus_shield -1.10

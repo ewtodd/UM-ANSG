@@ -537,7 +537,7 @@ void RecommendedValue() {
   Adjustment adjustment;
   adjustment.jk = 0.5 * (low + high) / 1000.0;
   adjustment.jk_err = 0.5 * (high - low) / 1000.0;
-  std::cout << "Jones and Kraner adjustment: " << std::setprecision(3)
+  std::cout << "Jones and Kraner adjustment: " << std::setprecision(4)
             << adjustment.jk * 1000.0 << " +/- " << adjustment.jk_err * 1000.0
             << " eV" << std::endl;
   // The PSI values, and the 2024 summed peak on the same energies, are not
@@ -602,6 +602,11 @@ void RecommendedValue() {
   Double_t mean = 0, mean_err = 0;
   PrintAverage(inputs, adjustment,
                "Recommended (Jones and Kraner recalibrated)", mean, mean_err);
+  std::cout << "Recommended - ENSDF (" << std::setprecision(3)
+            << ReferenceLines::GE73M_ENSDF
+            << " +/- 0.007 keV): " << std::showpos << std::setprecision(1)
+            << 1000.0 * (mean - ReferenceLines::GE73M_ENSDF) << std::noshowpos
+            << " eV" << std::endl;
 
   // The ionization from the recoil: the summed gamma-plus-recoil peak of
   // Phys. Rev. D 110, 083043 (68.8158 keV, on the same Bearden Pb K-alpha as

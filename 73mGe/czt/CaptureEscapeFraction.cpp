@@ -1119,6 +1119,19 @@ void CaptureEscapeFraction() {
   out << "inside_cd_kbeta_err_alternatives " << inside.model << std::endl;
   out << "inside_cd_kbeta_err " << inside.total << std::endl;
   out << "inside_relative_err " << inside.total / kbeta << std::endl;
+  out << "# The escape lines, 95.902 keV minus the SRD 128 X-ray energies, two "
+         "per series (Cd K-alpha, Cd K-beta, Te K-alpha, Te K-beta). keV."
+      << std::endl;
+  const char *series_keys[4] = {"cd_kalpha", "cd_kbeta", "te_kalpha",
+                                "te_kbeta"};
+  Int_t line_in_series[4] = {0, 0, 0, 0};
+  out << std::setprecision(3);
+  for (Int_t i = 0; i < N_ESCAPE_LINES; i++) {
+    Int_t s = ESCAPE_SERIES[i];
+    out << "escape_line_" << series_keys[s] << "_" << ++line_in_series[s] << " "
+        << ReferenceLines::CD113_CAPTURE - ESCAPE_XRAY_KEV[i] << std::endl;
+  }
+  out << std::setprecision(6);
   out << "# Cd-shield background runs of 01/13: the Cd K-beta escape beside "
          "Pb K-alpha, and the Baker-Cousins chi2 of the in-crystal set minus "
          "the shield set's."

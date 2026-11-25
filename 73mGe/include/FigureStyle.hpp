@@ -8,6 +8,7 @@
 #include <TCanvas.h>
 #include <TGraph.h>
 #include <TH1D.h>
+#include <TLatex.h>
 #include <TLegend.h>
 #include <TLine.h>
 #include <TMath.h>
@@ -147,13 +148,104 @@ inline TString LogLabelText(Double_t value) {
   return Form("%d#times10^{%d}", multiple, decade);
 }
 
+// The round values inside [lo, hi] with the largest step of 1, 2 or 5 x 10^k
+// that gives at least two; empty if none does.
+inline std::vector<Double_t> RoundLabelValues(Double_t lo, Double_t hi) {
+  std::vector<Double_t> values;
+  const Int_t steps_per_decade = 3;
+  const Double_t step_multiples[steps_per_decade] = {5.0, 2.0, 1.0};
+  Int_t top_decade = Int_t(TMath::Floor(TMath::Log10(hi - lo)));
+  for (Int_t decade = top_decade; decade >= top_decade - 3; decade--) {
+    for (Int_t s = 0; s < steps_per_decade; s++) {
+      Double_t step = step_multiples[s] * TMath::Power(10.0, decade);
+      values.clear();
+      for (Double_t v = TMath::Ceil(lo / step - 1e-9) * step; v <= hi;
+           v += step)
+        values.push_back(v);
+      if (values.size() >= 2)
+        return values;
+    }
+  }
+  values.clear();
+  return values;
+}
+
+// The text of a round label as its multiple of 10^decade, with as many
+// decimals as the step between labels (a power of ten times 1, 2 or 5) asks
+// for; the 10^decade is written once at the top of the axis.
+inline TString RoundLabelText(Double_t value, Double_t step, Int_t decade) {
+  Int_t step_decade = Int_t(TMath::Floor(TMath::Log10(step) + 1e-9));
+  Int_t decimals = TMath::Max(0, decade - step_decade);
+  return Form("%.*f", decimals, value / TMath::Power(10.0, decade));
+}
+
+// A log y axis inside one decade that holds no k x 10^n: ROOT draws neither
+// ticks nor labels there, so the labels at the round values and their ticks
+// (minor ones halfway between) are drawn here, on both sides of the frame.
+inline std::vector<TString> DrawRoundLogLabels(TH1 *frame, TVirtualPad *pad,
+                                               Double_t lo, Double_t hi) {
+  std::vector<TString> texts;
+  std::vector<Double_t> values = RoundLabelValues(lo, hi);
+  if (values.size() < 2)
+    return texts;
+  const Double_t step = values[1] - values[0];
+  const Int_t decade = Int_t(TMath::Floor(TMath::Log10(values.back()) + 1e-9));
+  TAxis *axis = frame->GetYaxis();
+  const Double_t left = pad->GetLeftMargin();
+  const Double_t right = 1.0 - pad->GetRightMargin();
+  const Double_t bottom = pad->GetBottomMargin();
+  const Double_t top = 1.0 - pad->GetTopMargin();
+  const Double_t major_tick = axis->GetTickLength() * (right - left);
+  const Double_t minor_tick = 0.5 * major_tick;
+  const Double_t label_x = left - axis->GetLabelOffset();
+  pad->cd();
+  // Every half step from half a step below the first label to half a step
+  // above the last: labels at the odd positions, minor ticks between.
+  const Int_t n_positions = 2 * (Int_t)values.size() + 1;
+  for (Int_t i = 0; i < n_positions; i++) {
+    Double_t v = values[0] + (i - 1) * 0.5 * step;
+    if (v < lo || v > hi)
+      continue;
+    Double_t y =
+        bottom + (top - bottom) * TMath::Log10(v / lo) / TMath::Log10(hi / lo);
+    Bool_t is_label = (i % 2 == 1);
+    Double_t length = is_label ? major_tick : minor_tick;
+    TLine *left_tick = new TLine();
+    left_tick->SetBit(kCanDelete);
+    left_tick->DrawLineNDC(left, y, left + length, y);
+    TLine *right_tick = new TLine();
+    right_tick->SetBit(kCanDelete);
+    right_tick->DrawLineNDC(right - length, y, right, y);
+    if (!is_label)
+      continue;
+    TString text = RoundLabelText(v, step, decade);
+    TLatex *label = new TLatex();
+    label->SetBit(kCanDelete);
+    label->SetTextFont(axis->GetLabelFont());
+    label->SetTextSize(axis->GetLabelSize());
+    label->SetTextAlign(32);
+    label->DrawLatexNDC(label_x, y, text);
+    texts.push_back(text);
+  }
+  // The common power of ten above the axis, where ROOT puts a linear axis's.
+  TLatex *exponent = new TLatex();
+  exponent->SetBit(kCanDelete);
+  exponent->SetTextFont(axis->GetLabelFont());
+  exponent->SetTextSize(axis->GetLabelSize());
+  exponent->SetTextAlign(11);
+  exponent->DrawLatexNDC(left, top + 0.01, Form("#times10^{%d}", decade));
+  return texts;
+}
+
 // Sets a log y axis's range and labels from the data. The range runs from
 // natural_min with data_max at data_share of the frame; the labels are at 1
 // and 5 x 10^n. When that range holds fewer than two, the minimum drops to
 // the next such value if that lowers it by at most 20%, leaving the label
 // room inside the frame; if there are still fewer than two, the labels
-// follow 1-2-5; failing that, the one label there is stays. Returns the
-// labels drawn, for FitTitleToLabels().
+// follow 1-2-5; failing that, the one label there is stays. A range that
+// holds no such value at all (one inside a single decade) gets labels at
+// round values instead (DrawRoundLogLabels).
+// Returns the labels drawn, for FitTitleToLabels().
 inline std::vector<TString> ConfigureLogYAxis(TH1 *frame, TVirtualPad *pad,
                                               Double_t natural_min,
                                               Double_t data_max,
@@ -194,6 +286,9 @@ inline std::vector<TString> ConfigureLogYAxis(TH1 *frame, TVirtualPad *pad,
         shown = series;
     }
   }
+  // No label at all: the range lies inside one decade, and lowering never
+  // reached a label (lowering always leaves one).
+  Bool_t round_labels = shown.empty();
   frame->SetMinimum(lo);
   frame->SetMaximum(hi);
   TAxis *axis = frame->GetYaxis();
@@ -214,6 +309,8 @@ inline std::vector<TString> ConfigureLogYAxis(TH1 *frame, TVirtualPad *pad,
     else
       axis->ChangeLabelByValue(candidates[c], -1, 0);
   }
+  if (round_labels)
+    texts = DrawRoundLogLabels(frame, pad, lo, hi);
   return texts;
 }
 

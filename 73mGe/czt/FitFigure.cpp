@@ -1,11 +1,11 @@
-// The production fits, the in-situ fits of the 01/13 signal runs and the 01/15
-// rate-subtraction fit, redrawn for the paper and the dissertation from the
-// objects CalibrateAndFit.cpp writes beside its own fit plots
+// The production fits, the in-situ fits of the 01/13 signal runs and the direct
+// fit of the 01/15 no-shield run, redrawn for the paper and the dissertation
+// from the objects CalibrateAndFit.cpp writes beside its own fit plots
 // (PlottingUtils::SetFitFigureObjectsSaved). Each line is drawn
 // as its whole shape, Gaussian core and low-side tail, on the continuum.
 //
-// Writes plots/czt/figures: each figure on a linear y axis, and the 01/13
-// ones also, as log_*, on a log one.
+// Writes plots/czt/figures: each figure on a linear y axis and, as log_*, on
+// a log one.
 //
 // Usage: root -b -q 'FitFigure.cpp+'
 #include "FigureStyle.hpp"
@@ -31,7 +31,8 @@
 namespace {
 
 const char *const PRODUCTION_TAG = "tau20_sigpb_esc_pxday";
-const Double_t SHOW_LO_KEV = 64.0, SHOW_HI_KEV = 81.0;
+// The figures show each fit's window and this much on either side.
+const Double_t SHOW_MARGIN_KEV = 1.0;
 
 // How RooFitUtils colours a fit's curves (RooFitUtils.cpp, PlotFit*Peak and
 // AppendPeakGraphs), each curve being one component plus the background: the
@@ -46,6 +47,9 @@ struct FigureSpec {
   TString fit_name;    // CalibrateAndFit's plot name, without "log_"
   TString output_name; // this figure
   TString data_label;
+  // The linear copy's axis starts just under the data rather than at 0.85
+  // of the continuum, for a spectrum whose lines rise little above it.
+  Bool_t tight_linear_axis;
 };
 
 struct FitObjects {
@@ -169,7 +173,9 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
 
   TH1 *data = fit.data;
   Double_t bin_ev = 1000.0 * data->GetBinWidth(1);
-  data->GetXaxis()->SetRangeUser(SHOW_LO_KEV, SHOW_HI_KEV);
+  const Double_t show_lo = fit.fit_lo - SHOW_MARGIN_KEV;
+  const Double_t show_hi = fit.fit_hi + SHOW_MARGIN_KEV;
+  data->GetXaxis()->SetRangeUser(show_lo, show_hi);
   Double_t data_max = data->GetMaximum();
   Double_t bkg_min =
       TMath::MinElement(fit.background->GetN(), fit.background->GetY());
@@ -191,8 +197,12 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   labels.push_back(figure.data_label);
   labels.push_back("Fit, #chi^{2}/ndf = " + chi2_value);
   labels.push_back("^{73m}Ge, 68.75 keV");
-  labels.push_back("Pb K#alpha_{2}, K#alpha_{1}");
-  labels.push_back("^{113}Cd(n,#gamma) 95.9 keV escapes");
+  const TString lead_label = "Pb K#alpha_{2}, K#alpha_{1}";
+  const TString escape_label = "^{113}Cd(n,#gamma) 95.9 keV escapes";
+  if (!lead.empty())
+    labels.push_back(lead_label);
+  if (fit.fixed_lines)
+    labels.push_back(escape_label);
 
   // The legend sits beside the plot, centred on plot and panel together, so
   // the spectrum can fill the frame's height.
@@ -209,9 +219,15 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
       data, kBlack, Form(";Energy [keV];Counts / %.0f eV", bin_ev));
   data->SetMarkerStyle(20);
   data->SetMarkerSize(0.9);
-  // Counts in thousands, as on the figures with larger spectra.
-  data->GetYaxis()->SetMaxDigits(3);
-  const Double_t y_min = 0.85 * bkg_min;
+  // Counts in thousands, as on the figures with larger spectra. ROOT writes
+  // a narrow range of six-digit counts as 0.145 x 10^6 unless it may keep a
+  // fourth digit.
+  data->GetYaxis()->SetMaxDigits(figure.tight_linear_axis ? 4 : 3);
+  // The log copy starts at the same minimum; ConfigureLogYAxis lowers it to a
+  // labelled power of ten where that is near enough.
+  const Double_t y_min = figure.tight_linear_axis
+                             ? bkg_min - 0.15 * (data_max - bkg_min)
+                             : 0.85 * bkg_min;
   data->SetMinimum(y_min);
   data->SetMaximum(y_min + (data_max - y_min) / data_share);
   data->GetXaxis()->SetLabelSize(0);
@@ -239,13 +255,13 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   leg->AddEntry(fit.total, labels[1], "l");
   leg->AddEntry(ge, labels[2], "l");
   if (!lead.empty())
-    leg->AddEntry(lead[0], labels[3], "l");
+    leg->AddEntry(lead[0], lead_label, "l");
   if (fit.fixed_lines)
-    leg->AddEntry(fit.fixed_lines, labels[4], "l");
+    leg->AddEntry(fit.fixed_lines, escape_label, "l");
 
   lower->cd();
-  TH1D *pull_frame = FigureStyle::DrawPullPanel(pulls, SHOW_LO_KEV, SHOW_HI_KEV,
-                                                "Energy [keV]");
+  TH1D *pull_frame =
+      FigureStyle::DrawPullPanel(pulls, show_lo, show_hi, "Energy [keV]");
   PlottingUtils::ScaleFigure(plot);
   // The pull panel's title beside its own short labels, not aligned with the
   // spectrum's.
@@ -253,7 +269,6 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
                                 FigureStyle::PullPanelLabels());
   PlottingUtils::SaveFigure(canvas, figure.output_name, "",
                             PlotSaveOptions::kLINEAR);
-
   // The log copy: labels at 1 and 5 x 10^n chosen from the data, its title
   // beside them.
   std::vector<TString> log_labels =
@@ -261,114 +276,6 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   FigureStyle::FitTitleToLabels(upper, data, log_labels);
   PlottingUtils::SaveFigure(canvas, figure.output_name, "",
                             PlotSaveOptions::kLOG);
-}
-
-// Free parameters of the 01/15 rate-subtraction fit (GainTransferFit.hpp,
-// linear continuum): the Ge line's yield, centroid and width and the
-// continuum's level and slope; its tail and the escapes are fixed.
-const Int_t RATESUB_FREE_PARAMETERS = 5;
-
-// The 01/15 Method 2 fit: the live-time residual of the signal and active
-// background runs in the first of the binning phases whose fits are
-// averaged, with the Ge line and the 95.902 keV line's escapes on the linear
-// continuum. The residual goes below zero, so the figure is linear only.
-void DrawRateSubFit(const TString &fits_dir, const TString &fit_name,
-                    const TString &output_name, const TString &data_label) {
-  TString path = fits_dir + "/" + fit_name + ".root";
-  Bool_t style_was_forced = gROOT->GetForceStyle();
-  gROOT->ForceStyle(kFALSE);
-  TFile file(path, "READ");
-  TH1 *data = dynamic_cast<TH1 *>(file.Get("data"));
-  TGraph *total = dynamic_cast<TGraph *>(file.Get("total"));
-  TGraph *continuum = dynamic_cast<TGraph *>(file.Get("component_0"));
-  TGraph *escapes = dynamic_cast<TGraph *>(file.Get("component_1"));
-  TParameter<Double_t> *lo_par =
-      dynamic_cast<TParameter<Double_t> *>(file.Get("fit_range_low"));
-  TParameter<Double_t> *hi_par =
-      dynamic_cast<TParameter<Double_t> *>(file.Get("fit_range_high"));
-  gROOT->ForceStyle(style_was_forced);
-  if (!data || !total || !continuum || !escapes || !lo_par || !hi_par) {
-    std::cerr << "ERROR: " << path
-              << " lacks the rate-subtraction fit's objects" << std::endl;
-    return;
-  }
-  data->SetDirectory(nullptr);
-  const Double_t fit_lo = lo_par->GetVal(), fit_hi = hi_par->GetVal();
-
-  // The Ge line on the continuum: the total less the escapes above it.
-  TGraph *ge = new TGraph(total->GetN());
-  for (Int_t k = 0; k < total->GetN(); k++)
-    ge->SetPoint(k, total->GetX()[k],
-                 total->GetY()[k] -
-                     (escapes->GetY()[k] - continuum->GetY()[k]));
-
-  Double_t chi2 = 0, y_lo = 1e30, y_hi = -1e30;
-  Int_t n_bins = 0;
-  TGraph *pulls = new TGraph();
-  for (Int_t b = 1; b <= data->GetNbinsX(); b++) {
-    Double_t x = data->GetBinCenter(b);
-    Double_t y = data->GetBinContent(b), error = data->GetBinError(b);
-    if (x < fit_lo || x > fit_hi || error <= 0)
-      continue;
-    Double_t pull = (y - total->Eval(x)) / error;
-    chi2 += pull * pull;
-    n_bins++;
-    pulls->SetPoint(pulls->GetN(), x, pull);
-    y_lo = TMath::Min(y_lo, y - error);
-    y_hi = TMath::Max(y_hi, y + error);
-  }
-  const Int_t ndf = n_bins - RATESUB_FREE_PARAMETERS;
-  std::cout << output_name << ": chi2 " << chi2 << " / " << ndf << std::endl;
-
-  std::vector<TString> labels;
-  labels.push_back(data_label);
-  labels.push_back(Form("Fit, #chi^{2}/ndf = %.3f", chi2 / ndf));
-  labels.push_back("^{73m}Ge, 68.75 keV");
-  labels.push_back("^{113}Cd(n,#gamma) 95.9 keV escapes");
-
-  const Int_t plot_h = 800, panel_h = 300;
-  const Double_t data_share = 0.93;
-  TPad *plot = nullptr, *legend_pad = nullptr;
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
-      plot, legend_pad, (Int_t)PlottingUtils::LegendWidthPx(labels),
-      plot_h + panel_h);
-  TPad *upper = nullptr, *lower = nullptr;
-  PlottingUtils::SplitPadForPanel(plot, panel_h, upper, lower);
-  upper->cd();
-  PlottingUtils::ConfigureHistogram(
-      data, kBlack,
-      Form(";Energy [keV];Counts/s / %.0f eV", 1000.0 * data->GetBinWidth(1)));
-  data->SetMarkerStyle(20);
-  data->SetMarkerSize(0.9);
-  data->GetXaxis()->SetRangeUser(fit_lo, fit_hi);
-  const Double_t frame_lo = y_lo - 0.05 * (y_hi - y_lo);
-  data->SetMinimum(frame_lo);
-  data->SetMaximum(frame_lo + (y_hi - frame_lo) / data_share);
-  data->GetXaxis()->SetLabelSize(0);
-  data->GetXaxis()->SetTitleSize(0);
-  data->Draw("E");
-  StyleCurve(escapes, kMagenta + 1, 1);
-  escapes->Draw("L SAME");
-  StyleCurve(ge, kAzure + 2, 1);
-  ge->Draw("L SAME");
-  StyleCurve(total, kRed + 1, 1);
-  total->Draw("L SAME");
-  data->Draw("E SAME");
-
-  TLegend *leg =
-      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
-  leg->AddEntry(data, labels[0], "lep");
-  leg->AddEntry(total, labels[1], "l");
-  leg->AddEntry(ge, labels[2], "l");
-  leg->AddEntry(escapes, labels[3], "l");
-
-  lower->cd();
-  TH1D *pull_frame =
-      FigureStyle::DrawPullPanel(pulls, fit_lo, fit_hi, "Energy [keV]");
-  PlottingUtils::ScaleFigure(plot);
-  FigureStyle::FitTitleToLabels(lower, pull_frame,
-                                FigureStyle::PullPanelLabels());
-  PlottingUtils::SaveFigure(canvas, output_name, "", PlotSaveOptions::kLINEAR);
 }
 
 } // namespace
@@ -384,20 +291,24 @@ void FitFigure() {
   FigureSpec cu10 = {
       "PostCal_CuShield10_sig_CuShieldSignal_10Percent_20260113_postcal_"
       "CuShield10",
-      "czt_fit_cu10", "Signal run, Cu shield, 10% power"};
+      "czt_fit_cu10", "Signal run, Cu shield, 10% power", kFALSE};
   FigureSpec cd10 = {
       "PostCal_CdShield10_sig_CdShieldSignal_10Percent_20260113_postcal_"
       "CdShield10",
-      "czt_fit_cd10", "Signal run, Cd shield, 10% power"};
+      "czt_fit_cd10", "Signal run, Cd shield, 10% power", kFALSE};
   FigureSpec cd25 = {
       "PostCal_CdShield25_sig_CdShieldSignal_25Percent_20260113_postcal_"
       "CdShield25",
-      "czt_fit_cd25", "Signal run, Cd shield, 25% power"};
+      "czt_fit_cd25", "Signal run, Cd shield, 25% power", kFALSE};
+  // Method 2's direct fit of the no-shield run, whose Ge line rises about 10%
+  // above the continuum.
+  FigureSpec noshield = {
+      "Direct_20260115_direct_NoShieldSignal_5Percent_20260115", "czt_fit_0115",
+      "Signal run, no shield, 5% power", kTRUE};
   figures.push_back(cu10);
   figures.push_back(cd10);
   figures.push_back(cd25);
+  figures.push_back(noshield);
   for (size_t i = 0; i < figures.size(); i++)
     DrawFit(fits_dir, figures[i]);
-  DrawRateSubFit(fits_dir, "ratesub_fit_20260115", "czt_fit_0115",
-                 "Background-subtracted signal run, no shield, 5% power");
 }

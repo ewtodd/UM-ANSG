@@ -31,12 +31,12 @@ const char *const STAGE_HEADERS[N_STAGES] = {"No pixel gains", "558~keV gains",
 const Int_t N_RUNS = 4;
 const char *const RUN_LABELS[N_RUNS] = {
     "Cu_Shield_Signal_10%_(01/13)", "Cd_Shield_Signal_10%_(01/13)",
-    "Cd_Shield_Signal_25%_(01/13)", "No_Shield_Signal_5%_(01/15)_[rate-sub]"};
+    "Cd_Shield_Signal_25%_(01/13)", "No_Shield_Signal_5%_(01/15)_[direct]"};
 const char *const RUN_NAMES[N_RUNS] = {
     "Cu shield, 10\\%, Jan.~13", "Cd shield, 10\\%, Jan.~13",
-    "Cd shield, 25\\%, Jan.~13", "Rate subtraction, Jan.~15"};
+    "Cd shield, 25\\%, Jan.~13", "No shield, 5\\%, Jan.~15"};
 const Int_t N_INSITU = 3;
-const Int_t RATESUB_ROW = 3;
+const Int_t NOSHIELD_ROW = 3;
 
 const TString TABLE_PATH = TString(gSystem->HomeDirectory()) +
                            "/Dissertation/chapters/chapter_ge_recoils/figures/"
@@ -119,7 +119,7 @@ void GainMatchingTable() {
          "not this file."
       << std::endl;
   out << "% For the caption: Ge energies in keV; the spread is the rms of the "
-         "three Jan. 13 in-situ values about their mean; the rate-subtraction "
+         "three Jan. 13 in-situ values about their mean; the Jan. 15 direct "
          "fit uncertainty is its fit_err. The fits' chi2/ndf move without a "
          "consistent trend between the stages, so they are printed by the "
          "macro for the text, not tabulated."
@@ -145,9 +145,9 @@ void GainMatchingTable() {
   for (Int_t s = 0; s < N_STAGES; s++)
     out << Form(" & %.0f~eV", InSituSpreadEv(stages[s]));
   out << " \\\\" << std::endl;
-  out << "Rate-subtraction fit uncertainty";
+  out << "Jan.~15 fit uncertainty";
   for (Int_t s = 0; s < N_STAGES; s++)
-    out << Form(" & %.0f~eV", 1000.0 * stages[s][RATESUB_ROW].fit_err_kev);
+    out << Form(" & %.0f~eV", 1000.0 * stages[s][NOSHIELD_ROW].fit_err_kev);
   out << " \\\\" << std::endl;
   out << "\\bottomrule" << std::endl;
   out << "\\end{tabular}" << std::endl;

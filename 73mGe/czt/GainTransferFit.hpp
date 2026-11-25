@@ -60,10 +60,11 @@ const Float_t RATESUB_LO = 62.0;
 const Float_t RATESUB_HI = 71.5;
 
 // The summed spectra carry a comb with this period in raw energy, the same on
-// 01/13, 01/15 and 01/16. Rate-sub bins one period wide (times the day's
-// slope) hold one tooth each wherever they start; 255 eV bins beat against it
-// and move Ge by 13-16 eV rms with where the bins start. The fit is averaged
-// over N_RATESUB_PHASES starting points, and their spread is a systematic.
+// 01/13 and 01/15 (czt/CombPeriod.cpp measures it, results/comb_period.result).
+// Bins one period wide (times the day's slope) hold one tooth each wherever
+// they start; 255 eV bins beat against it. The fit plots and their chi2, and
+// the 95.902 keV line's fits (averaged over N_RATESUB_PHASES starting points),
+// use them.
 const Double_t COMB_PERIOD_RAW_KEV = 0.264;
 const Int_t N_RATESUB_PHASES = 5;
 
@@ -275,6 +276,16 @@ inline Double_t TailHeightRatio(const PeakFitResult &pk) {
   Double_t full_range_ratio = pk.low_exp_tail_amplitude / pk.gaus_amplitude;
   return full_range_ratio * TMath::Sqrt(2.0 * TMath::Pi()) /
          (2.0 * rho * TMath::Exp(1.0 / (2.0 * rho * rho)));
+}
+
+// The inverse of TailHeightRatio: the full-range tail yield ratio (RooFitUtils'
+// LowExpTailAmplitude) of a low exponential tail with this height ratio to
+// its Gaussian and this tau/sigma.
+inline Double_t FullRangeTailRatio(Double_t tail_height_ratio,
+                                   Double_t tau_over_sigma) {
+  Double_t rho = tau_over_sigma;
+  return tail_height_ratio * 2.0 * rho * TMath::Exp(1.0 / (2.0 * rho * rho)) /
+         TMath::Sqrt(2.0 * TMath::Pi());
 }
 
 // ------------------------------------------------------- 95.902 keV escapes
