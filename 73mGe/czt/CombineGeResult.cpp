@@ -8,8 +8,9 @@
 // (in-situ, 01/13) and Method 2 (rate subtraction, 01/15, with its own
 // systematics in sys_err: bin phase, residual-background shape, calibration
 // transfer). The calibration is split into its correlated (Am reference) and
-// independent (gain transfer) parts, and the transfer model (gain against
-// offset, from a second result set) is a third correlated part. The 95.902 keV
+// independent (signal-run Pb pin) parts, and the transfer model (gain against
+// offset, from a second result set; each run at the midpoint of the two, half
+// the difference charged) is a third correlated part. The 95.902 keV
 // escapes are a fourth: every run's escape fractions moved up and down by
 // their measured uncertainty (two more result sets), half the difference
 // charged, correlated between all runs since every run takes the same
@@ -468,9 +469,10 @@ Double_t UncorrelatedMean(const std::vector<Row> &rows,
 }
 
 // tag: the RESULT_TAG the rows were written with (results/ge_<tag>.result).
-// alt_tag: the same analysis under the other transfer model (gain against
-// offset, which no line inside the calibrated range can decide); each run's
-// difference enters as a fully correlated systematic. "" leaves it out.
+// alt_tag: the same analysis under the other transfer model (offset against
+// gain, which no line inside the calibrated range can decide); each run is
+// quoted at the midpoint of the two, half the difference entering as a fully
+// correlated systematic. "" leaves it out.
 // escape_up_tag, escape_down_tag: the same analysis with every run's escape
 // fractions moved up and down by their measured uncertainty
 // (ESCAPE_FRACTIONS=up, down); half of each run's difference enters as a
@@ -538,6 +540,19 @@ void CombineGeResult(
                 << std::setprecision(1) << rows[i].escape_correction * 1000.0;
     std::cout << std::endl;
   }
+  // The transfer can be a gain, an offset, or any mix of the two; pinned on
+  // its own Pb lines, a run's Ge lies between the two pure models for every
+  // mix. Each run is quoted at their midpoint with half their difference as
+  // the systematic (after the escape correction above, which is taken on the
+  // production run itself).
+  if (alt_tag && *alt_tag) {
+    for (size_t i = 0; i < rows.size(); i++) {
+      rows[i].mu += 0.5 * rows[i].model_shift;
+      rows[i].model_shift *= 0.5;
+    }
+    std::cout << "Each run at the midpoint of " << tag << " and " << alt_tag
+              << ", half their difference charged" << std::endl;
+  }
 
   // bkg_err is |cal(precal Ge) - postcal Ge|, how far the calibrated in-situ
   // fit moves Ge from the raw fit's value mapped through the calibration: a
@@ -600,7 +615,7 @@ void CombineGeResult(
         << std::endl;
     for (Int_t i = 0; i < both.n; i++)
       std::cout << "    " << std::left << std::setw(46) << both.labels[i]
-                << std::right << std::setprecision(3) << std::setw(7)
+                << std::right << std::setprecision(4) << std::setw(7)
                 << both.weights[i] << std::setprecision(1) << std::setw(8)
                 << (both.values[i] - both.mean) * 1000.0 << " eV"
                 << std::setprecision(2) << std::setw(7)

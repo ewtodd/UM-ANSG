@@ -1,12 +1,12 @@
 # Written by czt/CombineGeResult.cpp from results/ge_tau20_sigpb_esc_pxday.result and its partners. keV.
-energy 68.750618
-energy_err 0.018327
-blue_err 0.016241
-outlier_removal 0.008492
-statistical 0.014455
-calibration_offset 0.004360
-calibration_gain 0.003697
-rate_subtraction 0.002378
-transfer_model 0.003700
-escape_fractions 0.001672
-blue_chi2_ndf 0.667727
+energy 68.751717
+energy_err 0.017651
+blue_err 0.015609
+outlier_removal 0.008242
+statistical 0.014377
+calibration_offset 0.004177
+calibration_gain 0.003179
+rate_subtraction 0.002196
+transfer_model 0.001319
+escape_fractions 0.001682
+blue_chi2_ndf 0.543313

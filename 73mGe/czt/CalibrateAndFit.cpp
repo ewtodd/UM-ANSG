@@ -470,14 +470,6 @@ CalFit GainScaleCal(const CalFit &ref, Double_t g, const TString &label) {
   return out;
 }
 
-Double_t GainTransferEnergyError(const CalFit &ref_cal, Double_t mu_raw,
-                                 Double_t g, Double_t sigma_g) {
-  if (!(sigma_g > 0) || !(g > 0) || !ref_cal.func)
-    return 0.0;
-  Double_t fprime = ref_cal.func->Derivative(mu_raw / g);
-  return std::fabs(-mu_raw / (g * g) * fprime) * sigma_g;
-}
-
 struct OffsetResult {
   Double_t delta = 0; // raw run - raw reference, keV
   Double_t sigma = 0;
@@ -843,21 +835,24 @@ TString SanitizeLabel(TString label) {
 struct SignalPbAnchor {
   CalFit calfit;
   Bool_t valid = kFALSE;
-  Double_t offset = 0;     // keV taken off the pair calibration
+  Bool_t as_gain = kFALSE;
+  Double_t offset = 0;     // keV the signal run's Pb lines read off the pair
   Double_t offset_err = 0; // keV, at the signal run's Pb lines
-  Double_t x_pb = 0;       // raw, where the offset is pinned
+  Double_t x_pb = 0;       // raw, where the signal run is pinned
 };
 
-// The pair calibration shifted by a constant so that the signal run's own Pb
-// Ka lines land on their energies, weighted by their centroid errors. The
-// slope stays the pair's, and its error only acts over the few keV from the Pb
-// lines down to Ge; applied as a gain instead, the shift (at most ~31 eV)
-// would move Ge by at most 2.4 eV. The covariance is set so that
-// var E(x) = offset_err^2 + var_p1 (x - x_pb)^2.
+// The signal run pinned on its own Pb Ka lines, weighted by their centroid
+// errors, in the transfer model of the day: an offset (TRANSFER=offset) keeps
+// the pair's slope and shifts the line by a constant; a gain (production)
+// keeps the pair's intercept and scales the raw axis, so the line runs from
+// the intercept at raw zero through the pinned point, and the transfer from
+// the reference is the signal run's own gain. The covariance is set so that
+// var E(x) = offset_err^2 + var_p1 (x - x_pb)^2 for the offset and
+// var E(x) = var_p0 (1 - x / x_pb)^2 + offset_err^2 (x / x_pb)^2 for the gain.
 SignalPbAnchor AnchorOnSignalPb(const CalFit &pair_cal,
                                 const FitResult &sig_channel,
                                 const std::vector<Double_t> &pb_mus,
-                                const TString &cal_label) {
+                                const TString &cal_label, Bool_t as_gain) {
   SignalPbAnchor out;
   if (!pair_cal.func || sig_channel.peaks.size() <= pb_mus.size())
     return out;
@@ -887,26 +882,42 @@ SignalPbAnchor AnchorOnSignalPb(const CalFit &pair_cal,
 
   Double_t lo = 0, hi = 0;
   pair_cal.func->GetRange(lo, hi);
-  TF1 *shifted =
+  TF1 *pinned =
       new TF1(TString(pair_cal.func->GetName()) + "_sigPb", "pol1", lo, hi);
-  shifted->SetParameter(0, pair_cal.p0 - out.offset);
-  shifted->SetParameter(1, pair_cal.p1);
-  shifted->SetNpx(1000);
-  out.calfit.func = shifted;
+  out.calfit.func = pinned;
   out.calfit.npar = 2;
-  out.calfit.p0 = pair_cal.p0 - out.offset;
-  out.calfit.p1 = pair_cal.p1;
-  out.calfit.var_p1 = pair_cal.var_p1;
-  out.calfit.var_p0 =
-      out.offset_err * out.offset_err + pair_cal.var_p1 * x_pb * x_pb;
-  out.calfit.cov_p0p1 = -pair_cal.var_p1 * x_pb;
-  shifted->SetParError(0, std::sqrt(out.calfit.var_p0));
-  shifted->SetParError(1, std::sqrt(out.calfit.var_p1));
+  out.as_gain = as_gain;
+  if (as_gain) {
+    const Double_t e_pinned = pair_cal.func->Eval(x_pb) - out.offset;
+    out.calfit.p0 = pair_cal.p0;
+    out.calfit.p1 = (e_pinned - pair_cal.p0) / x_pb;
+    out.calfit.var_p0 = pair_cal.var_p0;
+    out.calfit.var_p1 =
+        (out.offset_err * out.offset_err + pair_cal.var_p0) / (x_pb * x_pb);
+    out.calfit.cov_p0p1 = -pair_cal.var_p0 / x_pb;
+  } else {
+    out.calfit.p0 = pair_cal.p0 - out.offset;
+    out.calfit.p1 = pair_cal.p1;
+    out.calfit.var_p1 = pair_cal.var_p1;
+    out.calfit.var_p0 =
+        out.offset_err * out.offset_err + pair_cal.var_p1 * x_pb * x_pb;
+    out.calfit.cov_p0p1 = -pair_cal.var_p1 * x_pb;
+  }
+  pinned->SetParameter(0, out.calfit.p0);
+  pinned->SetParameter(1, out.calfit.p1);
+  pinned->SetParError(0, std::sqrt(out.calfit.var_p0));
+  pinned->SetParError(1, std::sqrt(out.calfit.var_p1));
+  pinned->SetNpx(1000);
   out.valid = kTRUE;
-  std::cout << "SIGPB " << cal_label << ": signal run shifted by " << std::fixed
+  std::cout << "SIGPB " << cal_label << ": signal run "
+            << (as_gain ? "scaled" : "shifted") << " by " << std::fixed
             << std::setprecision(1) << -out.offset * 1000.0 << " +/- "
-            << out.offset_err * 1000.0 << " eV relative to the pair calibration"
-            << std::endl;
+            << out.offset_err * 1000.0
+            << " eV at its Pb lines relative to the pair calibration";
+  if (as_gain)
+    std::cout << " (gain " << std::setprecision(6)
+              << out.calfit.p1 / pair_cal.p1 << ")";
+  std::cout << std::endl;
   return out;
 }
 
@@ -1063,8 +1074,8 @@ PairCalResult ProcessPbAnchoredPair(
   }
   out.cal_func = cal;
 
-  SignalPbAnchor sig_anchor =
-      AnchorOnSignalPb(calfit, pre.sig_channel, pb_mus, cal_label);
+  SignalPbAnchor sig_anchor = AnchorOnSignalPb(
+      calfit, pre.sig_channel, pb_mus, cal_label, !OffsetTransferRequested());
   if (!sig_anchor.valid) {
     std::cerr << "ERROR: no signal-run Pb anchor for " << cal_label
               << std::endl;
@@ -1073,21 +1084,19 @@ PairCalResult ProcessPbAnchoredPair(
   const CalFit &sig_calfit = sig_anchor.calfit;
   TF1 *sig_cal = sig_calfit.func;
 
-  // The signal run sets its own offset, so it inherits no reference offset
-  // (cal_off 0); the anchor column carries the signal-run Pb offset error. The
-  // rest of cal_err is the pair slope over the Pb-to-Ge distance: the
-  // reference's, and with a gain transfer the error of g, which scales the
-  // slope. An offset transfer leaves the slope alone.
+  // The signal run is pinned on its own Pb lines, so it inherits no reference
+  // offset (cal_off 0), and the background run's transfer drops out: its
+  // offset under the offset model, its g under the gain model. The anchor
+  // column carries the error of the pin at Ge, independent between runs; the
+  // rest of cal_err is shared through the reference: its slope over the
+  // Pb-to-Ge distance (offset model) or its intercept weighted by
+  // 1 - x_Ge / x_Pb (gain model).
   Double_t mu_ge = pre.sig_channel.peaks.back().mu;
   out.ge_gain_err = 0;
-  if (transfer_mode && !OffsetTransferRequested())
-    out.ge_gain_err = std::fabs(
-        GainTransferEnergyError(*ref_cal, mu_ge, gain.g, gain.sigma_g) -
-        GainTransferEnergyError(*ref_cal, sig_anchor.x_pb, gain.g,
-                                gain.sigma_g));
-  out.ge_cal_err =
-      std::hypot(CalEnergyError(sig_calfit, mu_ge), out.ge_gain_err);
-  out.ge_anchor_err = sig_anchor.offset_err;
+  out.ge_anchor_err = sig_anchor.as_gain
+                          ? sig_anchor.offset_err * mu_ge / sig_anchor.x_pb
+                          : sig_anchor.offset_err;
+  out.ge_cal_err = CalEnergyError(sig_calfit, mu_ge);
   out.ge_cal_off = 0;
   std::cout << "SIGPB-CAL " << cal_label << ": at Ge, offset term "
             << std::fixed << std::setprecision(1) << out.ge_anchor_err * 1000.0
