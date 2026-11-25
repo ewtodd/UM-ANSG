@@ -650,7 +650,9 @@ void CombineGeResult(
   // eV. Offset^2 + Mult.^2 = cal^2, see the file-top note for the definition;
   // Sys. is the rate-sub rows' own systematic, Model the transfer-model shift
   // and Esc. the escape correction. Per run, Total = fit (+) cal (+) sys (+)
-  // model (+) esc; the combined row is the quoted BLUE.
+  // model (+) esc; the combined row is the quoted BLUE. Syst. is a run's
+  // systematics together, sys (+) model (+) esc (+) escape source, the paper's
+  // per-run column.
   std::cout << std::endl;
   std::cout << "----- Comparison table (Eg keV, uncertainties eV) -----"
             << std::endl;
@@ -661,8 +663,8 @@ void CombineGeResult(
             << std::setw(10) << "Eg[keV]" << std::setw(8) << "Fit"
             << std::setw(8) << "Offset" << std::setw(8) << "Mult."
             << std::setw(8) << "Sys." << std::setw(8) << "Model" << std::setw(8)
-            << "Esc." << std::setw(8) << "EscSrc" << std::setw(8) << "Total"
-            << std::endl;
+            << "Esc." << std::setw(8) << "EscSrc" << std::setw(8) << "Syst."
+            << std::setw(8) << "Total" << std::endl;
   for (size_t i = 0; i < rows.size(); i++) {
     if (rows[i].method != "insitu" && rows[i].method != "ratesub")
       continue;
@@ -678,17 +680,24 @@ void CombineGeResult(
                           : std::min(rows[i].cal_off * 1000.0, cal_ev);
     Double_t mult_ev =
         std::sqrt(std::max(0.0, cal_ev * cal_ev - off_ev * off_ev));
+    Double_t syst_ev = std::sqrt(sys_ev * sys_ev + model_ev * model_ev +
+                                 esc_ev * esc_ev + src_ev * src_ev);
     Double_t tot_ev =
-        std::sqrt(fit_ev * fit_ev + cal_ev * cal_ev + sys_ev * sys_ev +
-                  model_ev * model_ev + esc_ev * esc_ev + src_ev * src_ev);
+        std::sqrt(fit_ev * fit_ev + cal_ev * cal_ev + syst_ev * syst_ev);
     std::cout << std::left << std::setw(46) << rows[i].label << std::right
               << std::fixed << std::setprecision(5) << std::setw(10)
               << rows[i].mu << std::setprecision(2) << std::setw(8) << fit_ev
               << std::setw(8) << off_ev << std::setw(8) << mult_ev
               << std::setw(8) << sys_ev << std::setw(8) << model_ev
               << std::setw(8) << esc_ev << std::setw(8) << src_ev
-              << std::setprecision(1) << std::setw(8) << tot_ev << std::endl;
+              << std::setw(8) << syst_ev << std::setprecision(1) << std::setw(8)
+              << tot_ev << std::endl;
   }
+  Double_t both_syst_ev =
+      1000.0 * std::sqrt(both.sys_part * both.sys_part +
+                         both.model_part * both.model_part +
+                         both.escape_part * both.escape_part +
+                         both.escape_source_part * both.escape_source_part);
   std::cout << std::left << std::setw(46) << "COMBINED (both methods, BLUE)"
             << std::right << std::fixed << std::setprecision(5) << std::setw(10)
             << both.mean << std::setprecision(2) << std::setw(8)
@@ -697,8 +706,9 @@ void CombineGeResult(
             << both.sys_part * 1000.0 << std::setw(8)
             << both.model_part * 1000.0 << std::setw(8)
             << both.escape_part * 1000.0 << std::setw(8)
-            << both.escape_source_part * 1000.0 << std::setprecision(1)
-            << std::setw(8) << both.err * 1000.0 << std::endl;
+            << both.escape_source_part * 1000.0 << std::setw(8) << both_syst_ev
+            << std::setprecision(1) << std::setw(8) << both.err * 1000.0
+            << std::endl;
   std::cout << "  quoted Total = sqrt(" << std::setprecision(1)
             << both.err * 1000.0 << "^2 + outlier removal " << nuisance * 1000.0
             << "^2) = " << quoted_err * 1000.0 << " eV" << std::endl;

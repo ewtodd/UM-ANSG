@@ -8,6 +8,6 @@ mean_total_recoil 255.118
 feeding_fraction_of_68 0.389
 kinematic_max_recoil 338.656
 lindhard_ionization_at_max 50.152
-lindhard_recoil_needed 406.115
-quenching_factor_percent 24.150
-quenching_factor_err_percent 2.324
+lindhard_recoil_needed 403.536
+quenching_factor_percent 23.976
+quenching_factor_err_percent 2.322
