@@ -6,7 +6,7 @@ The energy of the bare 73mGe γ ray: in the pixelated CZT at the OSU reactor (`c
 <!---->
 | Detector | Ge [keV] | ± [keV] | From |
 |---|---|---|---|
-| CZT, final | **68.7548** | 0.0159 | `czt/CombineGeResult.cpp` → `results/czt_ge.result` (68.7567 ± 0.0191 was sent to the collaborator 2026-10-27) |
+| CZT, final | **68.7548** | 0.0159 | `czt/CombineGeResult.cpp` → `results/czt_ge.result` |
 | PSI CdTe | 68.7501 | 0.0331 | `cdte/GeBudget.cpp` → `results/cdte_ge.result` |
 | PSI Si | 68.7579 | 0.0174 | `si/SiGeBudget.cpp` → `results/si_ge.result` |
 <!---->
