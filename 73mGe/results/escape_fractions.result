@@ -1,0 +1,19 @@
+# Written by czt/CaptureEscapeFraction.cpp. Fractions of the 95.902 keV line's Gaussian yield.
+# In-crystal set, measured in the 01/15 beam background run (ESCAPES_INSIDE takes it).
+inside_cd_kalpha 0.051577
+inside_cd_kbeta 0.014050
+inside_te_kalpha 0.002754
+inside_te_kbeta 0.000826
+inside_cd_kbeta_err_stat 0.001579
+inside_cd_kbeta_err_alternatives 0.000772
+inside_cd_kbeta_err 0.001758
+inside_relative_err 0.125136
+# Cd-shield background runs of 01/13: the Cd K-beta escape beside Pb K-alpha, and the Baker-Cousins chi2 of the in-crystal set minus the shield set's.
+cd10_cd_kbeta 0.066814
+cd10_cd_kbeta_err 0.086665
+cd10_cd_kbeta_te_shield -0.040418
+cd10_delta_chi2_inside_minus_shield -0.44
+cd25_cd_kbeta 0.246177
+cd25_cd_kbeta_err 0.077475
+cd25_cd_kbeta_te_shield 0.048894
+cd25_delta_chi2_inside_minus_shield -1.11

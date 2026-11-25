@@ -248,7 +248,7 @@ void FitFigure() {
                                 project_root + "/plots/czt/figures",
                                 project_root + "/root_files");
   TString fits_dir =
-      project_root + "/plots/czt/calibration_low_" + PRODUCTION_TAG + "/fits";
+      project_root + "/plots/czt/chain/" + PRODUCTION_TAG + "/fits";
   std::vector<FigureSpec> figures;
   FigureSpec cu10 = {
       "PostCal_CuShield10_sig_CuShieldSignal_10Percent_20260113_postcal_"

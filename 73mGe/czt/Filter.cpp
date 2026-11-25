@@ -610,7 +610,7 @@ void FilterEvents(std::vector<TString> filenames) {
 void Filter() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots/czt",
+                                project_root + "/plots/czt/chain",
                                 project_root + "/root_files");
   ROOT::EnableThreadSafety();
 

@@ -9,6 +9,7 @@
 #include <TH1D.h>
 #include <TLegend.h>
 #include <TLine.h>
+#include <TMath.h>
 #include <TString.h>
 #include <TVirtualPad.h>
 
@@ -17,16 +18,27 @@
 namespace FigureStyle {
 
 // A legend inside a pad's frame in one of its corners, sized for
-// AddLegend()'s 30 px font in 50 px rows in the pad's own NDC. Works on a
-// canvas, a pad of SplitPadForPanel(), or its panel.
+// AddLegend()'s font in 50 px rows in the pad's own NDC. Works on a canvas, a
+// pad of SplitPadForPanel(), or its panel. With symbol_column_px set, the
+// symbols get a column that wide instead of TLegend's quarter of the box,
+// which leaves a short line in a wide strip beside long labels.
 inline TLegend *AddFrameLegend(TVirtualPad *pad,
                                const std::vector<TString> &labels,
-                               Bool_t at_left, Bool_t at_top = kTRUE) {
+                               Bool_t at_left, Bool_t at_top = kTRUE,
+                               Double_t symbol_column_px = 0) {
   pad->cd();
   TCanvas *canvas = pad->GetCanvas();
   Double_t pad_w_px = pad->GetWNDC() * canvas->GetWw();
   Double_t pad_h_px = pad->GetHNDC() * canvas->GetWh();
-  Double_t width = PlottingUtils::LegendWidthPx(labels) / pad_w_px;
+  const Double_t padding_px = 15.0;
+  Double_t width_px = PlottingUtils::LegendWidthPx(labels);
+  if (symbol_column_px > 0) {
+    Double_t text_px = 0;
+    for (size_t i = 0; i < labels.size(); i++)
+      text_px = TMath::Max(text_px, PlottingUtils::TextWidthPx(labels[i]));
+    width_px = symbol_column_px + text_px + 2.0 * padding_px;
+  }
+  Double_t width = width_px / pad_w_px;
   Double_t height = 50.0 * labels.size() / pad_h_px;
   Double_t top = 1.0 - pad->GetTopMargin() - 0.02;
   if (!at_top)
@@ -34,7 +46,11 @@ inline TLegend *AddFrameLegend(TVirtualPad *pad,
   Double_t left = pad->GetLeftMargin() + 0.01;
   if (!at_left)
     left = 1.0 - pad->GetRightMargin() - 0.01 - width;
-  return PlottingUtils::AddLegend(left, left + width, top - height, top);
+  TLegend *legend =
+      PlottingUtils::AddLegend(left, left + width, top - height, top);
+  if (symbol_column_px > 0)
+    legend->SetMargin(symbol_column_px / width_px);
+  return legend;
 }
 
 // Draws, on the current pad, the pull panel of AU's

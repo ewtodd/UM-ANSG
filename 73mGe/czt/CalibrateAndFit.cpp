@@ -709,27 +709,6 @@ std::vector<TH1D *> BuildRateHists(const TString &input_name, TF1 *cal,
   return sums;
 }
 
-// Line-cal day: the Ge tail interpolated linearly in energy between the
-// Am-241 and Ba-133 80.98 anchor fits. They are in raw units, but tau/sigma
-// and the height ratio do not depend on the energy scale.
-RateSubShape RateSubShapeFromLines(const PeakFitResult &am,
-                                   const PeakFitResult &ba) {
-  RateSubShape s;
-  Double_t w = (E_NEAR_GE - E_AM241) / (E_BA133_81 - E_AM241);
-  Double_t k_am = TailHeightRatio(am);
-  Double_t k_ba = TailHeightRatio(ba);
-  Double_t rho_am =
-      am.low_exp_tail_ratio > 0 ? am.low_exp_tail_ratio : ba.low_exp_tail_ratio;
-  Double_t rho_ba = ba.low_exp_tail_ratio > 0 ? ba.low_exp_tail_ratio : rho_am;
-  s.ge_tail_height_ratio = k_am + w * (k_ba - k_am);
-  s.ge_tau_over_sigma = rho_am + w * (rho_ba - rho_am);
-  if (!(s.ge_tau_over_sigma > 0)) {
-    s.ge_tail_height_ratio = 0;
-    s.ge_tau_over_sigma = 1;
-  }
-  return s;
-}
-
 void PrintRateSubShape(const TString &tag, const RateSubShape &s) {
   std::cout << "RATESUB-SHAPE " << tag << ": window " << std::fixed
             << std::setprecision(1) << RATESUB_LO << "-" << RATESUB_HI
@@ -1296,8 +1275,7 @@ struct ShieldPair {
   TString sig_run;
   TString tag;
   TString ge_label;
-  // Where the 95.902 keV line comes from: captures inside the crystal, or in
-  // the Cd shield.
+  // The 95.902 keV line's escape fractions (ESCAPES_USED for every pair).
   const EscapeFractions *escapes = nullptr;
 };
 
@@ -1314,23 +1292,21 @@ DayResult ProcessDay_20260113(PairCalResult &ref_pair_out) {
   cu.sig_run = Constants::CUSHIELDSIGNAL_10PERCENT_20260113;
   cu.tag = "CuShield10";
   cu.ge_label = "Cu Shield Signal 10% (01/13)";
-  cu.escapes = &ESCAPES_INSIDE;
+  cu.escapes = &ESCAPES_USED;
   pairs.push_back(cu);
   ShieldPair cd10;
   cd10.bkg_run = Constants::CDSHIELDBACKGROUND_10PERCENT_20260113;
   cd10.sig_run = Constants::CDSHIELDSIGNAL_10PERCENT_20260113;
   cd10.tag = "CdShield10";
   cd10.ge_label = "Cd Shield Signal 10% (01/13)";
-  cd10.escapes =
-      CdInsideEscapesRequested() ? &ESCAPES_INSIDE : &ESCAPES_OUTSIDE;
+  cd10.escapes = &ESCAPES_USED;
   pairs.push_back(cd10);
   ShieldPair cd25;
   cd25.bkg_run = Constants::CDSHIELDBACKGROUND_25PERCENT_20260113;
   cd25.sig_run = Constants::CDSHIELDSIGNAL_25PERCENT_20260113;
   cd25.tag = "CdShield25";
   cd25.ge_label = "Cd Shield Signal 25% (01/13)";
-  cd25.escapes =
-      CdInsideEscapesRequested() ? &ESCAPES_INSIDE : &ESCAPES_OUTSIDE;
+  cd25.escapes = &ESCAPES_USED;
   pairs.push_back(cd25);
 
   TString am_run = Constants::POSTREACTOR_AM241_20260113;
@@ -1388,7 +1364,7 @@ DayResult ProcessDay_20260115() {
   cfg.postcal_bkg = Constants::NOSHIELDBACKGROUND_5PERCENT_20260115;
   cfg.postcal_sig = Constants::NOSHIELDSIGNAL_5PERCENT_20260115;
   cfg.ge_label = "No Shield Signal 5% (01/15)";
-  cfg.escapes = &ESCAPES_INSIDE;
+  cfg.escapes = &ESCAPES_USED;
   return ProcessLineCalDay(cfg);
 }
 
@@ -1409,11 +1385,11 @@ void CalibrateAndFit() {
   std::cout << "CONFIG " << RESULT_TAG << ": transfer "
             << (OffsetTransferRequested() ? "offset" : "gain")
             << ", 95.902 keV escapes "
-            << (EscapeLinesRequested() ? "on" : "off") << ", ROOT "
-            << gROOT->GetVersion() << std::endl;
+            << (EscapeLinesRequested() ? "on" : "off") << " at Cd K-beta "
+            << ESCAPES_USED.series[1] << ", ROOT " << gROOT->GetVersion()
+            << std::endl;
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
-                                project_root + "/plots/czt/calibration_low_" +
-                                    RESULT_TAG,
+                                project_root + "/plots/czt/chain/" + RESULT_TAG,
                                 project_root + "/root_files");
   PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
   // For FitFigure.cpp, which redraws the production fits for the paper.

@@ -85,13 +85,16 @@ inline Bool_t EscapeLinesRequested() {
   return !(env && TString(env) == "off");
 }
 
-// CD_ESCAPES=inside: the Cd-shield pairs take the escape fractions of captures
-// inside the crystal instead of the shield's, for CombineGeResult's escape
-// source systematic. Their captures sit in the cathode layer like the other
-// runs', yet their background runs show no Cd K-beta escape.
-inline Bool_t CdInsideEscapesRequested() {
-  const char *env = getenv("CD_ESCAPES");
-  return env && TString(env) == "inside";
+// ESCAPE_FRACTIONS=up or down: every run's escape fractions moved up or down
+// by their measured uncertainty (ESCAPES_INSIDE_REL_ERR), for
+// CombineGeResult's escape systematic. +1, -1, or 0 for the measured values.
+inline Int_t EscapeFractionShift() {
+  const char *env = getenv("ESCAPE_FRACTIONS");
+  if (env && TString(env) == "up")
+    return 1;
+  if (env && TString(env) == "down")
+    return -1;
+  return 0;
 }
 
 // For the dissertation's account of what the pixel gain matching does to the
@@ -205,11 +208,12 @@ const Double_t TAIL_RATIO_MAX = 20.0;
 // of the name are where the saved fit states live: tau20 the tail bound,
 // sigpb the signal-run Pb anchor, pxday the day pixel map (pxoff without it,
 // nogain without the 558 keV gains either; their states are copies of
-// production's).
+// production's, as are escup's and escdn's, the escape fractions moved).
 const TString RESULT_TAG =
     TString("tau20_sigpb") + (EscapeLinesRequested() ? "_esc" : "") +
     (OffsetTransferRequested() ? "_oxfer" : "") +
-    (CdInsideEscapesRequested() ? "_cdin" : "") +
+    (EscapeFractionShift() > 0 ? "_escup"
+                               : (EscapeFractionShift() < 0 ? "_escdn" : "")) +
     (!PIXEL_GAINS_ON ? "_nogain" : (PIXEL_MAP_ON ? "_pxday" : "_pxoff"));
 const TString OUT_SUBDIR = "calibrated_" + RESULT_TAG;
 
@@ -296,18 +300,40 @@ struct EscapeFractions {
   Double_t series[4];
 };
 
-// Captures inside the crystal (no shield, Cu shield). Cd K-beta, the one
-// escape clear of other lines, is measured in the 01/15 beam background run
-// (0.0122 +/- ~0.0017; 01/16 is not used, see CalibrateAndFit.cpp), and Cd
-// K-alpha follows from the shares (ReferenceLines.hpp: Ka/Kb 4.187). Te
-// K-alpha takes Geant4's 0.053 of Cd K-alpha for captures inside the crystal
-// (the run gives 0.0006 +/- 0.002), Te K-beta Geant4's 0.30 of Te K-alpha.
-const EscapeFractions ESCAPES_INSIDE = {{0.0511, 0.0122, 0.0027, 0.0008}};
+// In every run, shielded or not, the line comes from captures in the CZT's
+// own cathode layer: its depth and pixel-ring profiles show no dependence on
+// the Cd shield beyond what the unshielded runs show (Capture96Positions.cpp).
+// So every run takes the escape fractions of captures inside the crystal,
+// which CaptureEscapeFraction.cpp measures in the 01/15 beam background run
+// (no shield, no Pb): an unbinned fit of both Cd escape pairs as one yield, Cd
+// K-alpha held to Cd K-beta and the Te escapes to Cd K-alpha by the Geant4
+// ratios below. The macro prints its values against these and writes them to
+// results/escape_fractions.result.
+const EscapeFractions ESCAPES_INSIDE = {{0.05158, 0.01405, 0.00275, 0.00083}};
+// Their relative uncertainty: the fit's statistics (0.0016 on Cd K-beta) and
+// the largest shift over its alternatives, the photopeak width and a quadratic
+// continuum (0.0008).
+const Double_t ESCAPES_INSIDE_REL_ERR = 0.125;
+// Geant4's ratios for captures inside the crystal, families of the
+// czt96_surface run (geant4/Escape96Plots.cpp prints them).
+const Double_t GEANT4_INSIDE_CD_KA_OVER_CD_KB = 3.671;
+const Double_t GEANT4_INSIDE_TE_KA_OVER_CD_KA = 0.0534;
+const Double_t GEANT4_INSIDE_TE_KB_OVER_TE_KA = 0.300;
 
-// Photons from captures outside the crystal, in the Cd shield, which stops
-// the thermal neutrons: Geant4, the line's photons onto the crystal's face.
-// The 01/13 Cd background runs show no Cd K-beta escape (0 +/- 0.004 at 10%,
-// +/- 0.006 at 25%) where captures inside would give 0.012.
+// The set every fit uses: ESCAPES_INSIDE, or under ESCAPE_FRACTIONS=up or
+// down that set moved by its uncertainty.
+inline EscapeFractions ShiftedInsideEscapes() {
+  EscapeFractions shifted = ESCAPES_INSIDE;
+  for (Int_t s = 0; s < 4; s++)
+    shifted.series[s] *= 1.0 + EscapeFractionShift() * ESCAPES_INSIDE_REL_ERR;
+  return shifted;
+}
+const EscapeFractions ESCAPES_USED = ShiftedInsideEscapes();
+
+// Photons from captures in a Cd shield, onto the crystal's face (Geant4). No
+// run uses them: the Cd-shield background runs' 95.902 keV line is too weak
+// to tell them from ESCAPES_INSIDE (CaptureEscapeFraction.cpp compares the
+// two). The testbed still injects them.
 const EscapeFractions ESCAPES_OUTSIDE = {{0.0115, 0.0033, 0.0057, 0.0017}};
 
 // keV per raw unit on 01/13 (the pairs' calibrations give 0.9882-0.9902). It
@@ -331,6 +357,10 @@ struct CaptureLine {
   // In the histogram's units times keV per bin width: events for a counts
   // histogram, counts/s for a rate histogram.
   Double_t gaus_yield = 0;
+  // The fit's statistical error on gaus_yield; over phases, their mean.
+  Double_t gaus_yield_err = 0;
+  // The fitted Gaussian width; over phases, their mean.
+  Double_t sigma = 0;
   Double_t mu = 0;
   Bool_t valid = kFALSE;
 };
@@ -397,6 +427,8 @@ inline CaptureLine FitCaptureLine(TH1 *h, Double_t tail_height_ratio,
   if (fr.Get() && fr->IsValid() && model.GetParameter(0) > 0 &&
       !ParameterAtLimit(model, 1) && !ParameterAtLimit(model, 2)) {
     out.gaus_yield = model.GetParameter(0);
+    out.gaus_yield_err = model.GetParError(0);
+    out.sigma = model.GetParameter(2);
     out.mu = model.GetParameter(1);
     out.valid = kTRUE;
   }
@@ -413,6 +445,8 @@ inline CaptureLine AverageCaptureLine(const std::vector<TH1D *> &hists,
                                       const TString &tag) {
   CaptureLine out;
   Double_t sum_yield = 0, sum_yield2 = 0, sum_mu = 0, sum_mu2 = 0;
+  Double_t sum_yield_err = 0;
+  Double_t sum_sigma = 0;
   Int_t n_valid = 0;
   for (size_t k = 0; k < hists.size(); k++) {
     CaptureLine line =
@@ -421,6 +455,8 @@ inline CaptureLine AverageCaptureLine(const std::vector<TH1D *> &hists,
     if (!line.valid)
       continue;
     sum_yield += line.gaus_yield;
+    sum_yield_err += line.gaus_yield_err;
+    sum_sigma += line.sigma;
     sum_yield2 += line.gaus_yield * line.gaus_yield;
     sum_mu += line.mu;
     sum_mu2 += line.mu * line.mu;
@@ -428,6 +464,8 @@ inline CaptureLine AverageCaptureLine(const std::vector<TH1D *> &hists,
   }
   if (n_valid > 0) {
     out.gaus_yield = sum_yield / n_valid;
+    out.gaus_yield_err = sum_yield_err / n_valid;
+    out.sigma = sum_sigma / n_valid;
     out.mu = sum_mu / n_valid;
     out.valid = kTRUE;
   }
@@ -800,6 +838,27 @@ struct RateSubShape {
   Double_t capture_rate = 0; // Gaussian yield, counts/s
   Double_t capture_mu = 0;
 };
+
+// Line-cal day: the Ge tail interpolated linearly in energy between the
+// Am-241 and Ba-133 80.98 anchor fits. They are in raw units, but tau/sigma
+// and the height ratio do not depend on the energy scale.
+inline RateSubShape RateSubShapeFromLines(const PeakFitResult &am,
+                                          const PeakFitResult &ba) {
+  RateSubShape s;
+  Double_t w = (E_NEAR_GE - E_AM241) / (E_BA133_81 - E_AM241);
+  Double_t k_am = TailHeightRatio(am);
+  Double_t k_ba = TailHeightRatio(ba);
+  Double_t rho_am =
+      am.low_exp_tail_ratio > 0 ? am.low_exp_tail_ratio : ba.low_exp_tail_ratio;
+  Double_t rho_ba = ba.low_exp_tail_ratio > 0 ? ba.low_exp_tail_ratio : rho_am;
+  s.ge_tail_height_ratio = k_am + w * (k_ba - k_am);
+  s.ge_tau_over_sigma = rho_am + w * (rho_ba - rho_am);
+  if (!(s.ge_tau_over_sigma > 0)) {
+    s.ge_tail_height_ratio = 0;
+    s.ge_tau_over_sigma = 1;
+  }
+  return s;
+}
 
 const Int_t RATESUB_N_PARAMS = 14;
 

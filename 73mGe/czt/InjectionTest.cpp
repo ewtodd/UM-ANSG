@@ -1286,9 +1286,8 @@ void InjectionTest() {
     }
 
     const TString production_state =
-        project_root + "/plots/czt/calibration_low_" + RESULT_TAG +
-        "/fits/PostCal_" + pair.tag + "_" + pair.sig_run + "_postcal_" +
-        pair.tag + ".simroofits";
+        project_root + "/plots/czt/chain/" + RESULT_TAG + "/fits/PostCal_" +
+        pair.tag + "_" + pair.sig_run + "_postcal_" + pair.tag + ".simroofits";
     const TString reference_dir =
         base + "/reference/" + pair.tag +
         TString::Format("_e%d_t%d", energy_index, trial_offset);

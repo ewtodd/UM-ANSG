@@ -391,9 +391,9 @@ void PrintSummary(const std::vector<PixelRow> &rows) {
 
 void PixelCalibration() {
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots/czt/pixel_calibration",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(
+      PlotSaveFormat::kPNG, project_root + "/plots/czt/chain/pixel_calibration",
+      project_root + "/root_files");
   PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
 
   std::cout << "Loading BEF events from " << RUN_NAME << "..." << std::endl;

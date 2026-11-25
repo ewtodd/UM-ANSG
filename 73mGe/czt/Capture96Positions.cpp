@@ -43,6 +43,7 @@
 #include <TH1D.h>
 #include <TH2D.h>
 #include <TLegend.h>
+#include <TMath.h>
 #include <TPad.h>
 #include <TTree.h>
 
@@ -261,6 +262,30 @@ TH1D *RingRatio(const Profile &p, const LineWindow &win, const TString &name) {
   }
   h->Scale(sw / swx);
   return h;
+}
+
+// Two normalised profiles against each other, bin by bin over the bins either
+// fills: chi2, its degrees of freedom (one taken by the shared
+// normalisation) and probability. It compares shapes, so it asks whether the
+// line is absorbed in the same places in two configurations.
+void PrintShapeComparison(const TString &what, const TString &label_a, TH1D *a,
+                          const TString &label_b, TH1D *b) {
+  Double_t chi2 = 0;
+  Int_t n_bins = 0;
+  for (Int_t i = 1; i <= a->GetNbinsX(); i++) {
+    Double_t variance =
+        TMath::Power(a->GetBinError(i), 2) + TMath::Power(b->GetBinError(i), 2);
+    if (variance <= 0)
+      continue;
+    chi2 +=
+        TMath::Power(a->GetBinContent(i) - b->GetBinContent(i), 2) / variance;
+    n_bins++;
+  }
+  Int_t ndf = n_bins - 1;
+  std::cout << "SHAPE " << what << ": " << label_a << " vs " << label_b
+            << ": chi2/ndf " << std::fixed << std::setprecision(1) << chi2
+            << "/" << ndf << ", p = " << std::setprecision(3)
+            << TMath::Prob(chi2, ndf) << std::endl;
 }
 
 Double_t NearCathode(TH1D *h, Double_t depth_mm) {
@@ -579,4 +604,27 @@ void Capture96Positions() {
   DrawDepths(depth558, labels, colors558, styles558, "capture558_depth",
              kFALSE);
   DrawRings(rings558, labels, "capture558_rings");
+
+  // Each Cd-shield configuration against the Cu shield (same day and castle)
+  // and against no shield (01/15): does the foil change where the line is
+  // absorbed?
+  const Int_t i_cu = 0, i_none = 3;
+  const Int_t i_cd[2] = {1, 2};
+  for (Int_t k = 0; k < 2; k++) {
+    Int_t c = i_cd[k];
+    const Int_t references[2] = {i_cu, i_none};
+    for (Int_t r = 0; r < 2; r++) {
+      Int_t ref = references[r];
+      PrintShapeComparison("95.9 keV depth", labels[c], depth96[c], labels[ref],
+                           depth96[ref]);
+      PrintShapeComparison("95.9 keV rings", labels[c], rings[c], labels[ref],
+                           rings[ref]);
+      PrintShapeComparison("558 keV depth", labels[c], depth558[c], labels[ref],
+                           depth558[ref]);
+    }
+  }
+  PrintShapeComparison("95.9 keV depth", labels[i_cu], depth96[i_cu],
+                       labels[i_none], depth96[i_none]);
+  PrintShapeComparison("95.9 keV rings", labels[i_cu], rings[i_cu],
+                       labels[i_none], rings[i_none]);
 }

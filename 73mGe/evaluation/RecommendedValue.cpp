@@ -34,6 +34,8 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <map>
+#include <sstream>
 #include <vector>
 
 namespace {
@@ -458,6 +460,27 @@ void PlotComparison(const std::vector<Row> &rows, Double_t mean_kev,
                             PlotSaveOptions::kLINEAR);
 }
 
+// "key value" lines of a .result file; '#' lines are comments.
+Bool_t ReadResult(const TString &path,
+                  std::map<std::string, Double_t> &values) {
+  std::ifstream in(path.Data());
+  if (!in) {
+    std::cerr << "ERROR: cannot read " << path << std::endl;
+    return kFALSE;
+  }
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#')
+      continue;
+    std::istringstream fields(line);
+    std::string key;
+    Double_t value = 0;
+    if (fields >> key >> value)
+      values[key] = value;
+  }
+  return kTRUE;
+}
+
 } // namespace
 
 void RecommendedValue() {
@@ -557,7 +580,14 @@ void RecommendedValue() {
   Input cdte = {"2025 CdTe", "2025 CdTe", 68.7484, 0.0189, kBeardenPb};
   Input si1 = {"2025 Si 1", "2025 Si 1", 68.7529, 0.0114, kBeardenPb};
   Input si2 = {"2025 Si 2", "2025 Si 2", 68.7555, 0.0128, kBeardenPb};
-  Input czt = {"2026 CZT", "2026 CZT", 68.7567, 0.0191, kTodaysReferences};
+  std::map<std::string, Double_t> czt_result;
+  if (!ReadResult(project_root + "/results/czt_ge.result", czt_result) ||
+      czt_result.count("energy") == 0 || czt_result.count("energy_err") == 0) {
+    std::cerr << "ERROR: run czt/CombineGeResult.cpp first" << std::endl;
+    return;
+  }
+  Input czt = {"2026 CZT", "2026 CZT", czt_result["energy"],
+               czt_result["energy_err"], kTodaysReferences};
   inputs.push_back(jk71);
   inputs.push_back(jk75);
   inputs.push_back(cdte);

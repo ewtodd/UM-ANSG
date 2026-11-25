@@ -1,12 +1,12 @@
 # RecommendedValue.cpp: the 68.75 keV gamma ray from measurements without a Ge detector, and the ionization of the 2024 summed peak; keV unless noted
-mean 68.754632
-mean_err 0.003735
-mean_unadjusted 68.753161
+mean 68.754387
+mean_err 0.003729
+mean_unadjusted 68.752920
 jk_shift 0.002015
 jk_shift_err 0.000001
 bearden_pb_shift_equal_weights 0.000622
 bearden_pb_shift_max 0.000847
 sum_peak 68.815800
 sum_peak_err 0.004600
-ionization_ev 61.168
-ionization_err_ev 5.925
+ionization_ev 61.413
+ionization_err_ev 5.922

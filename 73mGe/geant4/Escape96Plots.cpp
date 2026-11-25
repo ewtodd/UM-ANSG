@@ -215,9 +215,9 @@ void PlotSpectrum(TH1D *h, const TString &title, const TString &label,
 void Escape96Plots() {
   using namespace Escape96;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots/geant4",
-                                project_root + "/root_files");
+  InitUtils::SetROOTPreferences(
+      PlotSaveFormat::kPNG, project_root + "/plots/czt/studies/geant4_escapes",
+      project_root + "/root_files");
   std::vector<TH1D *> family_hists;
   std::vector<Int_t> shown;
   for (Int_t r = 0; r < N_RUNS; r++) {
@@ -255,8 +255,12 @@ void Escape96Plots() {
       std::cout << " " << FAMILY_NAME[f] << " " << std::setprecision(3)
                 << 100.0 * family[f] / full.counts;
     }
-    std::cout << "  | Cd Kb/Ka " << family[1] / family[0] << ", Te Ka/Cd Kb "
-              << family[2] / family[1] << std::endl;
+    // The ratios GainTransferFit.hpp takes from czt96_surface
+    // (GEANT4_INSIDE_*).
+    std::cout << "  | Cd Ka/Kb " << std::setprecision(4)
+              << family[0] / family[1] << ", Te Ka/Cd Ka "
+              << family[2] / family[0] << ", Te Kb/Te Ka "
+              << family[3] / family[2] << std::endl;
     family_hists.push_back(fam);
     shown.push_back(r);
 

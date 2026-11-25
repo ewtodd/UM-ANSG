@@ -19,7 +19,7 @@
 // differs only by its errors.
 //
 // Usage: root -b -q 'PixelGainStability.cpp+'. Plots go to
-// plots/czt/pixel_gain.
+// plots/czt/studies/pixel_gain.
 #include "Constants.hpp"
 #include "InitUtils.hpp"
 #include "PixelAlignment.hpp"
@@ -499,7 +499,7 @@ void PixelGainStability() {
   using namespace CztPixelGain;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root + "/plots/czt/pixel_gain",
+                                project_root + "/plots/czt/studies/pixel_gain",
                                 project_root + "/root_files");
   PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
   std::vector<Day> days = Days();
