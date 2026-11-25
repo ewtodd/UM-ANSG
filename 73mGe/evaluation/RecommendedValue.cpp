@@ -362,7 +362,7 @@ void PrintAverage(const std::vector<Input> &inputs,
   for (size_t i = 0; i < mus.size(); i++)
     std::cout << "  " << std::left << std::setw(34) << inputs[i].name
               << std::right << std::setprecision(4) << mus[i] << " +/- "
-              << errs[i] << "  weight " << std::setprecision(3)
+              << errs[i] << "  weight " << std::setprecision(4)
               << (1.0 / (errs[i] * errs[i])) / sw << std::endl;
   mean_kev = mean;
   mean_err_kev = std::sqrt(1.0 / sw);

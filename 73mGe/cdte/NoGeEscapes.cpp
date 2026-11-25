@@ -44,7 +44,7 @@ Double_t EscapeFamily(Double_t x, const Double_t *p, Int_t first, Int_t last) {
   Double_t e_capture = ScaleEnergy(g_capture_meas, p);
   Double_t v = 0;
   for (Int_t k = first; k <= last; k++)
-    v += p[FAMILY_PAR[k]] * ReferenceLines::ESCAPE_SERIES_SHARE[k] *
+    v += p[FAMILY_PAR[k]] * GEANT4_SERIES_SHARE[k] *
          Shape(x, e_capture - ReferenceLines::ESCAPE_XRAY_KEV[k], p);
   return v;
 }

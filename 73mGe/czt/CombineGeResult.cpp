@@ -719,7 +719,7 @@ void CombineGeResult(
   std::ofstream out(result_path.Data());
   out << "# Written by czt/CombineGeResult.cpp from results/ge_" << tag
       << ".result and its partners. keV." << std::endl;
-  out << std::fixed << std::setprecision(6);
+  out << std::fixed << std::setprecision(7);
   out << "energy " << both.mean << std::endl;
   out << "energy_err " << quoted_err << std::endl;
   out << "blue_err " << both.err << std::endl;

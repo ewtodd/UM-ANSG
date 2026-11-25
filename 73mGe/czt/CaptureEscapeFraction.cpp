@@ -128,7 +128,8 @@ Double_t Escapes(Double_t x, const Double_t *p, Int_t series) {
   for (Int_t i = 0; i < N_ESCAPE_LINES; i++) {
     if (series >= 0 && ESCAPE_SERIES[i] != series)
       continue;
-    Double_t yield = SeriesYield(p, ESCAPE_SERIES[i]) * ESCAPE_SERIES_SHARE[i];
+    Double_t yield =
+        SeriesYield(p, ESCAPE_SERIES[i]) * GEANT4_INSIDE_SERIES_SHARE[i];
     sum += LineWithTail(x, p[kCaptureMu] - ESCAPE_XRAY_KEV[i], p[kSigma], yield,
                         p[kTailHeightRatio], p[kTauOverSigma], p[kBinWidth]);
   }
@@ -605,7 +606,7 @@ struct EscapeTemplate {
       Double_t weight = series_weight[ESCAPE_SERIES[i]];
       if (weight == 0)
         continue;
-      sum += weight * ESCAPE_SERIES_SHARE[i] *
+      sum += weight * GEANT4_INSIDE_SERIES_SHARE[i] *
              LineWithTail(x, capture_mu - ESCAPE_XRAY_KEV[i], sigma, 1.0,
                           shape.ge_tail_height_ratio, shape.ge_tau_over_sigma,
                           1.0);

@@ -962,7 +962,7 @@ std::vector<Double_t> GenerateSyntheticWindow(const PairReference &ref,
     for (Int_t i = 0; i < N_ESCAPE_LINES; i++) {
       Double_t whole_line = capture.gaus_yield *
                             escapes->series[ESCAPE_SERIES[i]] *
-                            ESCAPE_SERIES_SHARE[i];
+                            GEANT4_INSIDE_SERIES_SHARE[i];
       if (whole_line > 0)
         AddTailedLine(owned, pdfs, coefs, x, TString::Format("esc%d", i + 1),
                       capture.mu - ESCAPE_XRAY_KEV[i], sigma, whole_line,

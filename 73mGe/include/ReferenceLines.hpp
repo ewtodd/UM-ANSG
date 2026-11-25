@@ -67,13 +67,8 @@ const Double_t ESCAPE_XRAY_KEV[N_ESCAPE_LINES] = {23.17398, 22.98405, 26.08491,
                                                   30.97997, 31.70765};
 // Series of each line: 0 Cd K-alpha, 1 Cd K-beta, 2 Te K-alpha, 3 Te K-beta.
 const Int_t ESCAPE_SERIES[N_ESCAPE_LINES] = {0, 0, 1, 1, 2, 2, 3, 3};
-// Each line's share of its series: its Table 7a intensity over Ka1's (Cd
-// 24.5, 11.74, 1.988 of 46.1; Te 25.0, 12.545, 2.532 of 46.2) times its
-// probability of escaping through the face of a slab over Ka1's (Cd 0.9859,
-// 1.2165, 1.2569; Te 0.9823, 1.2397, 1.2899).
-const Double_t ESCAPE_SERIES_SHARE[N_ESCAPE_LINES] = {
-    1.0 / 1.5240, 0.5240 / 1.5240, 0.3098 / 0.3640, 0.0542 / 0.3640,
-    1.0 / 1.5316, 0.5316 / 1.5316, 0.3366 / 0.4073, 0.0707 / 0.4073};
+// Each line's share of its series is Geant4's, per detector
+// (czt/GainTransferFit.hpp, cdte/CdTeAnalysis.hpp).
 
 } // namespace ReferenceLines
 

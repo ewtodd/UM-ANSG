@@ -304,6 +304,12 @@ inline void ResetKbGroups() {
 Double_t g_escape_weight[ReferenceLines::N_ESCAPE_LINES];
 Double_t g_capture_meas = ReferenceLines::CD113_CAPTURE;
 
+// Each escape line's share of its series, Geant4's for captures in CdTe
+// (cdte96_surface, geant4/Escape96Plots.cpp's "shares in family"): Cd Ka1,
+// Ka2, Kb1', Kb2', Te Ka1, Ka2, Kb1', Kb2'.
+const Double_t GEANT4_SERIES_SHARE[ReferenceLines::N_ESCAPE_LINES] = {
+    0.6568, 0.3432, 0.8380, 0.1620, 0.6576, 0.3424, 0.8244, 0.1756};
+
 // The escape tie: Cd K-alpha from the Cd Kb/Ka ratio, Te K-alpha from its
 // ratio to Cd K-beta, Te K-beta at 0.30 of Te K-alpha (Geant4, captures in
 // CdTe; the runs do not resolve it).
@@ -311,8 +317,8 @@ inline void SetEscapeTie(Double_t cd_kb_over_ka, Double_t te_ka_over_cd_kb) {
   Double_t series_total[4] = {1.0 / cd_kb_over_ka, 1.0, te_ka_over_cd_kb,
                               0.30 * te_ka_over_cd_kb};
   for (Int_t i = 0; i < ReferenceLines::N_ESCAPE_LINES; i++)
-    g_escape_weight[i] = series_total[ReferenceLines::ESCAPE_SERIES[i]] *
-                         ReferenceLines::ESCAPE_SERIES_SHARE[i];
+    g_escape_weight[i] =
+        series_total[ReferenceLines::ESCAPE_SERIES[i]] * GEANT4_SERIES_SHARE[i];
 }
 
 inline Double_t ScalePosition(Double_t e, const Double_t *p) {

@@ -288,10 +288,9 @@ inline Double_t TailHeightRatio(const PeakFitResult &pk) {
 // minus the X-ray energy, which is where the beam background runs put them
 // (the line itself reads up to 270 eV low), with the run's 95.902 keV
 // Gaussian yield times the fractions below and the lineshape of the lines
-// they sit among. The X-ray energies, series and shares are
-// ReferenceLines.hpp's, which the CdTe analysis uses too.
+// they sit among. The X-ray energies and series are ReferenceLines.hpp's,
+// each line's share of its series Geant4's (below).
 using ReferenceLines::ESCAPE_SERIES;
-using ReferenceLines::ESCAPE_SERIES_SHARE;
 using ReferenceLines::ESCAPE_XRAY_KEV;
 using ReferenceLines::N_ESCAPE_LINES;
 
@@ -309,7 +308,7 @@ struct EscapeFractions {
 // K-alpha held to Cd K-beta and the Te escapes to Cd K-alpha by the Geant4
 // ratios below. The macro prints its values against these and writes them to
 // results/escape_fractions.result.
-const EscapeFractions ESCAPES_INSIDE = {{0.05158, 0.01405, 0.00275, 0.00083}};
+const EscapeFractions ESCAPES_INSIDE = {{0.05154, 0.01404, 0.00275, 0.00083}};
 // Their relative uncertainty: the fit's statistics (0.0016 on Cd K-beta) and
 // the largest shift over its alternatives, the photopeak width and a quadratic
 // continuum (0.0008).
@@ -319,6 +318,10 @@ const Double_t ESCAPES_INSIDE_REL_ERR = 0.125;
 const Double_t GEANT4_INSIDE_CD_KA_OVER_CD_KB = 3.671;
 const Double_t GEANT4_INSIDE_TE_KA_OVER_CD_KA = 0.0534;
 const Double_t GEANT4_INSIDE_TE_KB_OVER_TE_KA = 0.300;
+// Each line's share of its series, czt96_surface's ("shares in family"): Cd
+// Ka1, Ka2, Kb1', Kb2', Te Ka1, Ka2, Kb1', Kb2'.
+const Double_t GEANT4_INSIDE_SERIES_SHARE[N_ESCAPE_LINES] = {
+    0.6569, 0.3431, 0.8387, 0.1613, 0.6584, 0.3416, 0.8206, 0.1794};
 
 // The set every fit uses: ESCAPES_INSIDE, or under ESCAPE_FRACTIONS=up or
 // down that set moved by its uncertainty.
@@ -496,7 +499,7 @@ inline void EscapeLinesOf(const CaptureLine &line,
   for (Int_t i = 0; i < N_ESCAPE_LINES; i++) {
     mus.push_back(line.mu - ESCAPE_XRAY_KEV[i] * units_per_kev);
     gaus_yields.push_back(line.gaus_yield * fractions.series[ESCAPE_SERIES[i]] *
-                          ESCAPE_SERIES_SHARE[i]);
+                          GEANT4_INSIDE_SERIES_SHARE[i]);
   }
 }
 
@@ -571,8 +574,8 @@ inline Double_t EscapeDensity(Double_t x, Double_t capture_mu, Double_t sigma,
     Double_t unit_line = (FittingFunctions::Gaussian(xx, gaus) +
                           FittingFunctions::LowTail(xx, tail)) /
                          (sigma * TMath::Sqrt(2.0 * TMath::Pi()));
-    density +=
-        fractions.series[ESCAPE_SERIES[i]] * ESCAPE_SERIES_SHARE[i] * unit_line;
+    density += fractions.series[ESCAPE_SERIES[i]] *
+               GEANT4_INSIDE_SERIES_SHARE[i] * unit_line;
   }
   return density;
 }

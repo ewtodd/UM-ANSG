@@ -233,10 +233,12 @@ void Escape96Plots() {
               << "): full-energy " << std::fixed << std::setprecision(0)
               << full.counts << " counts" << std::endl;
     Double_t family[N_FAMILIES] = {0, 0, 0, 0};
+    Double_t sub_counts[N_SUB];
     for (Int_t s = 0; s < N_SUB; s++) {
       Double_t lo = E_LINE - SUB[s].x_hi - HALF_WINDOW;
       Double_t hi = E_LINE - SUB[s].x_lo + HALF_WINDOW;
       Counted c = CountWindow(h, lo, hi);
+      sub_counts[s] = c.counts;
       family[SUB[s].family] += c.counts;
       Double_t expected = E_LINE - 0.5 * (SUB[s].x_lo + SUB[s].x_hi);
       std::cout << "ESCAPE96 " << RUNS[r].tag << "   " << std::left
@@ -261,6 +263,13 @@ void Escape96Plots() {
               << family[0] / family[1] << ", Te Ka/Cd Ka "
               << family[2] / family[0] << ", Te Kb/Te Ka "
               << family[3] / family[2] << std::endl;
+    // Each line's share of its family, the escape shares
+    // include/ReferenceLines.hpp takes from czt96_surface and cdte96_surface.
+    std::cout << "ESCAPE96 " << RUNS[r].tag << "   shares in family:";
+    for (Int_t s = 0; s < N_SUB; s++)
+      std::cout << " " << SUB[s].name << " " << std::setprecision(4)
+                << sub_counts[s] / family[SUB[s].family];
+    std::cout << std::endl;
     family_hists.push_back(fam);
     shown.push_back(r);
 

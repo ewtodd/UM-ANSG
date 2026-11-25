@@ -8,7 +8,7 @@ Why each correction is applied, how large it is, and how the CZT result moved fr
 <!---->
 | Detector | Ge [keV] | ± [keV] | From |
 |---|---|---|---|
-| CZT, final | **68.7517** | 0.0177 | `czt/CombineGeResult.cpp` → `results/czt_ge.result` (68.7567 ± 0.0191 was sent to the collaborator 2026-10-27) |
+| CZT, final | **68.7519** | 0.0176 | `czt/CombineGeResult.cpp` → `results/czt_ge.result` (68.7567 ± 0.0191 was sent to the collaborator 2026-10-27) |
 | PSI CdTe | 68.7501 | 0.0331 | `cdte/GeBudget.cpp` → `results/cdte_ge.result` |
 | PSI Si | 68.7579 | 0.0174 | `si/SiGeBudget.cpp` → `results/si_ge.result` |
 <!---->
@@ -34,24 +34,24 @@ One source per quantity, for every analysis:
 <!---->
 ## CZT (`czt/`): done
 <!---->
-Final (2026-11-24): the escape fractions measured and applied to every run, and the transfer models made consistent and quoted at their midpoint (`CORRECTIONS.md`, steps 15 and 16). The value sent to the collaborator on 2026-10-27, 68.7567 ± 0.0191 keV, came before that.
+Final (2026-11-25): the escape fractions measured and applied to every run, the transfer models made consistent and quoted at their midpoint, and the escapes' shares within each series taken from Geant4 (`CORRECTIONS.md`, steps 15-17). The value sent to the collaborator on 2026-10-27, 68.7567 ± 0.0191 keV, came before that.
 <!---->
 | Run | Method | Ge [keV] | fit | cal | sys | transfer model | escape fractions | escape correction | χ²/ndf | BLUE weight | Ge − mean |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Cu shield 10%, 01/13 | in-situ | 68.7643 | 20.5 | 6.5 | — | −0.3 | −1.8 | −13.5 | 1.29 | 0.512 | +12.6 eV, +0.59σ |
-| Cd shield 10%, 01/13 | in-situ | 68.7230 | 31.2 | 6.4 | — | +2.7 | −1.8 | −14.1 | 1.42 | 0.225 | −28.7 eV, −0.90σ |
-| Cd shield 25%, 01/13 | in-situ | 68.7345 | 33.2 | 18.6 | — | +5.7 | −2.0 | −16.1 | 1.61 | 0.154 | −17.2 eV, −0.45σ |
-| No shield 5%, 01/15 | rate-sub | 68.7764 | 42.4 | 6.2 | 20.3 | 0 | −0.4 | −3.3 | 1.22 | 0.108 | +24.7 eV, +0.52σ |
+| Cu shield 10%, 01/13 | in-situ | 68.7645 | 20.5 | 6.3 | — | −0.3 | −1.8 | −13.4 | 1.28 | 0.513 | +12.6 eV, +0.59σ |
+| Cd shield 10%, 01/13 | in-situ | 68.7231 | 31.2 | 6.4 | — | +2.8 | −1.8 | −14.0 | 1.40 | 0.225 | −28.8 eV, −0.90σ |
+| Cd shield 25%, 01/13 | in-situ | 68.7346 | 33.2 | 18.6 | — | +5.7 | −2.0 | −16.0 | 1.60 | 0.154 | −17.2 eV, −0.45σ |
+| No shield 5%, 01/15 | rate-sub | 68.7764 | 42.4 | 6.2 | 20.3 | 0 | −0.4 | −3.2 | 1.22 | 0.108 | +24.6 eV, +0.52σ |
 <!---->
 Errors and shifts in eV; Ge is the midpoint of the gain and offset transfer models and the transfer model column half their difference; the escape fractions column is the systematic (half the shift between the fractions moved up and down by their uncertainty), the escape correction (with − without the escapes) is shown, not charged; Ge − mean in each run's own total error.
 <!---->
-- **Quoted** 68.7517 ± 0.0177 keV, −0.3 eV from ENSDF: the BLUE of the four runs, 68.7517 ± 0.0156 keV (χ²/ndf 0.54; statistics 14.4, calibration offset 4.2 and multiplicative 3.2, systematics: rate-sub 2.2, transfer model 1.3, escape fractions 1.7 eV), with 8.2 eV of outlier removal (the BLUE without Cd 10%, the lowest run) in quadrature (`results/czt_ge.result`). Method 1 (68.7487 ± 0.0165) and Method 2 (68.7764 ± 0.0474 keV) agree to 28 ± 50 eV, the shared escape fractions included.
+- **Quoted** 68.7519 ± 0.0176 keV, −0.1 eV from ENSDF: the BLUE of the four runs, 68.7519 ± 0.0156 keV (χ²/ndf 0.54; statistics 14.4, calibration offset 4.1 and multiplicative 3.2, systematics: rate-sub 2.2, transfer model 1.3, escape fractions 1.6 eV), with 8.2 eV of outlier removal (the BLUE without Cd 10%, the lowest run) in quadrature (`results/czt_ge.result`). Method 1 (68.7489 ± 0.0165) and Method 2 (68.7764 ± 0.0474 keV) agree to 28 ± 50 eV, the shared escape fractions included.
 
 - **Selection and pixel gains.** Single-interaction events within 2 mm of the cathode (z ≥ 8 mm) on a pixel centre, without pile-up (under 3 µs of live time and in the same millisecond as the previous event), each energy times its pixel's gain: 558.456 keV over its 558 keV centroid in the 01/16 graphite-castle run.
 - **Day pixel map.** Near 70–96 keV the 558 keV gains leave the crystals 80–300 eV apart and the pixels 110 eV rms (`CORRECTIONS.md`). Every event is aligned on its day's map (`czt/PixelAlignment.hpp`): each pixel's line position against its run's summed spectrum, averaged over the day's beam runs, on Pb Kα on 01/13 and on the 95.902 keV line on 01/15, where Pb Kα barely stands above the continuum. A pixel measured to 100 eV or better at 68.75 keV gets the factor μ_run/μ_pixel; a day's source runs take its map.
 - **Method 1, 01/13, in-situ.** Each background run (Pb Kα2/Kα1) is fitted together with its signal run (the same lines plus Ge) over 65–80 keV in an unbinned likelihood, first in raw energy, with one Pb shape and one low tail (a Gaussian with an exponential tail, τ/σ ≤ 20) on a flat continuum. Cu 10% is calibrated with a pol1 through Am-241 and its background run's Pb Kα, the reference. Each signal run, Cu included, takes it through its own Pb Kα, as a gain (the raw axis scaled about the reference's intercept) or as an offset (`TRANSFER=offset`), and each Cd background run through its own; any mix of the two lies between them, so each run is quoted at their midpoint.
 - **Method 2, 01/15, rate subtraction.** A pol1 through Am-241 and Ba-133 80.998 keV from the source runs; Ge from the signal − background residual of rates (each crystal's counts over its own live time, the live intervals of all its events) over 62–71.5 keV, in comb-period bins at five starting points, the fit error scaled by √(χ²/ndf). systematic: the spread over starting points (8.2 eV) and the shift to a quadratic residual background (18.6 eV).
-- **Both methods** carry the 95.902 keV line's Cd and Te K X-ray escapes as fixed lines, at the fractions `czt/CaptureEscapeFraction.cpp` measures in the 01/15 beam background run (no shield, no Pb): an unbinned fit of both Cd escape pairs as one yield, the series tied by Geant4's ratios, gives Cd Kβ 0.0140 ± 0.0018 (12.5%; the set 0.0516, 0.0140, 0.0028, 0.0008 of the 95.902 keV line's Gaussian yield). Every run takes them: the line's position in the crystal shows no dependence on the Cd shield beyond the variation between unshielded runs, and the Cd-shield runs' own line is too weak to tell (`CORRECTIONS.md`).
+- **Both methods** carry the 95.902 keV line's Cd and Te K X-ray escapes as fixed lines, at the fractions `czt/CaptureEscapeFraction.cpp` measures in the 01/15 beam background run (no shield, no Pb): an unbinned fit of both Cd escape pairs as one yield, the series tied by Geant4's ratios and each series' lines by its shares, gives Cd Kβ 0.0140 ± 0.0018 (12.5%; the set 0.0515, 0.0140, 0.0028, 0.0008 of the 95.902 keV line's Gaussian yield). Every run takes them: the line's position in the crystal shows no dependence on the Cd shield beyond the variation between unshielded runs, and the Cd-shield runs' own line is too weak to tell (`CORRECTIONS.md`).
 - **Combination** (`CombineGeResult`): a BLUE with correlated blocks for the Am reference (the 01/13 rows), the gain transfer, the transfer model (half of offset − gain, each run at the midpoint) and the escape fractions (half of up − down, every run); fits, anchors and rate-sub systematics on the diagonal; the outlier removal on top.
 - **01/14 and 01/16 are not used** (`CORRECTIONS.md`): 01/14's calibration cannot be carried over from 01/13, and the 01/16 graphite castle differs from the other runs in too many ways.
 <!---->
