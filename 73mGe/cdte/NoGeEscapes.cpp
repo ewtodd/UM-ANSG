@@ -3,8 +3,12 @@
 // (GeBudget.cpp) by measurement instead of Geant4. The in-run model
 // (CdTeAnalysis.hpp) without the Ge line, the four escape families free: Cd
 // Ka, Cd Kb, Te Ka, Te Kb, each with its sub-lines at fixed relative
-// intensities, at the measured capture line minus the X-ray energies. Same
-// rise-time slices as the budget.
+// intensities, at the measured capture line minus the X-ray energies, every
+// line in the shared lineshape and the heights corrected for the rise gain.
+// Same rise-time slices as the budget, and the continuum's slope held at
+// the side bands' and the tails free (CdTeAnalysis.hpp).
+// NoGeEscapes(kTRUE) frees the step, a
+// check whose plots go to noge_escapes/free_step.
 // Run groups: 10/10 Beam_NOGe; 10/11-12 CdTe_NoGe_Si_YesGe (a Ge target in
 // front of the Si, so the CdTe may still see some 68.75 keV); 10/13 NoPb with
 // nothing in front of either detector.
@@ -12,7 +16,7 @@
 // the Pb Ka2/Ka1 ratio free they are not measured; the Kb/Ka ratio comes from
 // fits with Pb Ka2/Ka1 fixed at 0.595 (DDEP) and from the NoPb run.
 //
-// Usage: root -b -q 'NoGeEscapes.cpp+'
+// Usage: root -b -q 'NoGeEscapes.cpp+' (or 'NoGeEscapes.cpp+(kTRUE)')
 #include "CdTeAnalysis.hpp"
 
 #include <TCanvas.h>
@@ -79,6 +83,7 @@ struct EscapeResult {
   Double_t tekb_over_teka = 0, tekb_over_teka_err = 0;
   Double_t pb_ratio = 0, ge_a = 0, ge_a_err = 0;
   Double_t a = 0, b = 1;
+  Double_t shape[N_Q];
   Int_t status = -1;
   Bool_t ok = kFALSE;
 };
@@ -102,21 +107,20 @@ TF1 *FitNoGe(TH1D *h, const TString &tag, Double_t n96, EscapeResult &res) {
   Double_t ka1_height = h->GetMaximum();
   h->GetXaxis()->SetRange(0, 0);
   Double_t level = h->GetBinContent(h->FindBin(65.0));
-  Double_t a0 = ka1_mode - ReferenceLines::PB_KA1 + 0.3;
+  Double_t a0 = ka1_mode - (ReferenceLines::PB_KA1 - 70.0);
   Double_t b0 = 1.0;
-  Double_t ka1 = TMath::Max((ka1_height - level) * 0.6 * 2.5 / BIN, 10.0);
+  const Double_t sigma0 = 0.6;
+  Double_t ka1 = TMath::Max((ka1_height - level) *
+                                TMath::Sqrt(2.0 * TMath::Pi()) * sigma0 / BIN,
+                            10.0);
   if (g_anchor_capture) {
     b0 = g_b_fixed;
-    a0 = g_capture_meas - ReferenceLines::CD113_CAPTURE * b0;
+    a0 = g_capture_meas - (ReferenceLines::CD113_CAPTURE - 70.0) * b0;
     ka1 = 0.01 * n96;
   }
 
-  f->SetParameter(Q_SIG0, 0.6);
-  f->SetParLimits(Q_SIG0, 0.1, 1.5);
-  f->SetParameter(Q_TAU, 1.0);
-  f->SetParLimits(Q_TAU, 0.02, 5.0);
-  f->SetParameter(Q_C0, level);
-  f->SetParameter(Q_C1, 0);
+  StartInRunShape(f, sigma0);
+  StartContinuum(f, h);
   f->FixParameter(Q_GE_E, ReferenceLines::GE73M_ENSDF);
   f->FixParameter(Q_GE_A, 0.0);
   f->SetParameter(Q_KA1_A, ka1);
@@ -125,7 +129,6 @@ TF1 *FitNoGe(TH1D *h, const TString &tag, Double_t n96, EscapeResult &res) {
   f->SetParLimits(Q_KB1_A, 0, 1e9);
   f->FixParameter(Q_A, a0);
   f->FixParameter(Q_B, b0);
-  f->FixParameter(Q_SCALE2, 0.0);
   f->FixParameter(Q_KA2_R, PB_KA2_OVER_KA1_DDEP);
   f->FixParameter(Q_KB2_R, 0.3);
   f->FixParameter(Q_ESC_A, 0.0);
@@ -133,8 +136,6 @@ TF1 *FitNoGe(TH1D *h, const TString &tag, Double_t n96, EscapeResult &res) {
   f->FixParameter(R_TE_KA, 0.0);
   f->FixParameter(R_TE_KB, 0.0);
   f->FixParameter(R_GE_FIXED_E_A, 0.0);
-  f->FixParameter(Q_TAU_GE, 1.0);
-  f->FixParameter(Q_SIG1, 0.0);
   h->Fit(f, "QLRN0");
 
   if (!g_anchor_capture) {
@@ -151,22 +152,20 @@ TF1 *FitNoGe(TH1D *h, const TString &tag, Double_t n96, EscapeResult &res) {
   }
   f->ReleaseParameter(Q_KB2_R);
   f->SetParLimits(Q_KB2_R, 0.1, 0.6);
-  // Yields may go negative so a family absent from the data is not railed at
-  // zero with a meaningless error.
+  // Yields at zero or above: a family absent from the data rails at zero.
   const Int_t family[4] = {R_CD_KA, Q_ESC_A, R_TE_KA, R_TE_KB};
   const Double_t start[4] = {0.05, 0.015, 0.003, 0.001};
   for (Int_t i = 0; i < 4; i++) {
     f->ReleaseParameter(family[i]);
     f->SetParameter(family[i], start[i] * n96);
-    f->SetParLimits(family[i], -0.1 * n96, 0.5 * n96);
+    f->SetParLimits(family[i], 0, 0.5 * n96);
   }
   if (g_free_ge) {
     f->ReleaseParameter(R_GE_FIXED_E_A);
     f->SetParameter(R_GE_FIXED_E_A, 0.001 * n96);
-    f->SetParLimits(R_GE_FIXED_E_A, -0.1 * n96, 0.5 * n96);
+    f->SetParLimits(R_GE_FIXED_E_A, 0, 0.5 * n96);
   }
-  f->ReleaseParameter(Q_SIG1);
-  f->SetParLimits(Q_SIG1, -0.05, 0.05);
+  ReleaseInRunShape(f);
   h->Fit(f, "QLRN0");
   TFitResultPtr fr = h->Fit(f, "SQLRN0M");
 
@@ -180,6 +179,8 @@ TF1 *FitNoGe(TH1D *h, const TString &tag, Double_t n96, EscapeResult &res) {
     res.e[i] = f->GetParError(family[i]);
   }
   res.pb_ratio = f->GetParameter(Q_KA2_R);
+  for (Int_t k = 0; k < N_Q; k++)
+    res.shape[k] = f->GetParameter(k);
   res.ge_a = f->GetParameter(R_GE_FIXED_E_A);
   res.ge_a_err = f->GetParError(R_GE_FIXED_E_A);
   if (fr.Get()) {
@@ -239,12 +240,28 @@ void Print(const TString &label, const EscapeResult &r) {
               << 100 * r.ge_a / r.n96 << " +/- " << 100 * r.ge_a_err / r.n96
               << " % of 95.9";
   std::cout << std::endl;
+  const Double_t *p = r.shape;
+  std::cout << "NOGE " << label << ":   shape: sigma " << std::setprecision(3)
+            << p[Q_SIG0] << " + " << p[Q_SIG1] << " (E - 70)  step "
+            << p[Q_STEP] << "  low exp " << p[Q_LOW_EXP] << " x "
+            << p[Q_LOW_EXP_DECAY] << " sigma  high exp " << p[Q_HIGH_EXP]
+            << " x " << p[Q_HIGH_EXP_DECAY] << " sigma  continuum "
+            << std::setprecision(1) << Bkg(g_lo, p) << " -> " << Bkg(g_hi, p)
+            << " (slope " << std::setprecision(2) << p[Q_BKG_SLOPE]
+            << "/keV; side bands " << g_sideband_slope << " +/- "
+            << g_sideband_slope_err << ")" << std::endl;
 }
 
 EscapeResult RunOne(TH1D *h, const TString &tag, const TString &label,
                     Bool_t draw) {
-  CaptureLine capture = FitCaptureLine(h, "noge_" + tag);
+  PeakFit capture = FitCaptureLine(h, "noge_" + tag);
   g_capture_meas = capture.mu;
+  std::cout << "NOGE " << label << ":   capture line: sigma " << std::fixed
+            << std::setprecision(3) << capture.sigma << "  low exp "
+            << capture.tail[0] << " x " << capture.tail[1]
+            << " sigma  high exp " << capture.tail[2] << " x "
+            << capture.tail[3] << " sigma  chi2/ndf " << std::setprecision(2)
+            << capture.chi2 << std::endl;
   EscapeResult r;
   r.n96 = capture.area;
   TF1 *f = FitNoGe(h, tag, capture.area, r);
@@ -291,13 +308,18 @@ void DrawNoPbAgainstPb(const std::vector<TString> &nopb,
 
 } // namespace CdTeNoGe
 
-void NoGeEscapes() {
+void NoGeEscapes(Bool_t free_step = kFALSE) {
   using namespace CdTeNoGe;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
+  g_free_step = free_step;
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
-                                project_root +
-                                    "/plots/studies/psi_cdte/noge_escapes",
+                                project_root + "/plots/cdte/noge_escapes" +
+                                    (free_step ? "/free_step" : ""),
                                 project_root + "/root_files");
+  std::cout << "NOGE step "
+            << (free_step ? "free (check)" : "held at the source runs' value")
+            << std::endl;
+  PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
   TGaxis::SetMaxDigits(3);
   g_lo = 62.0;
   g_hi = 89.0;
@@ -315,16 +337,17 @@ void NoGeEscapes() {
   for (Int_t s = 0; s < N_RISE_SLICES; s++) {
     TH1D *h = FillRise(runs_pb, Form("noge_slice_%d", s), RISE_SLICE_LO[s],
                        RISE_SLICE_HI[s]);
+    SetSourceLowTail(s, s);
     for (Int_t variant = 0; variant < 2; variant++) {
       g_fix_pb_ratio = (variant == 1);
       TString tag = TString::Format("pb_slice%.0f_%.0f", RISE_SLICE_LO[s],
                                     RISE_SLICE_HI[s]) +
                     (g_fix_pb_ratio ? "_pbfixed" : "");
-      TString label = TString::Format("No Ge, rise %.0f-%.0f ns",
+      TString label = TString::Format("No Ge, rise %.1f-%.1f ns",
                                       RISE_SLICE_LO[s], RISE_SLICE_HI[s]) +
                       (g_fix_pb_ratio ? ", Pb Ka2/Ka1 0.595" : "");
       EscapeResult r = RunOne(h, tag, "SLICE " + label, kTRUE);
-      if (variant == 0 && RISE_SLICE_HI[s] <= 300.0) {
+      if (variant == 0) {
         b_sum += r.b;
         b_n++;
       }
@@ -333,7 +356,7 @@ void NoGeEscapes() {
     delete h;
   }
   g_b_fixed = b_sum / b_n;
-  std::cout << "NOGE scale gain from the Pb runs' slices <= 300 ns: "
+  std::cout << "NOGE scale gain from the Pb runs' slices: "
             << std::setprecision(5) << g_b_fixed << std::endl;
 
   // Coarse selections per run group; the NoPb run anchored at its capture
@@ -346,12 +369,13 @@ void NoGeEscapes() {
   std::vector<TString> group_runs[n_groups] = {runs_1010, runs_1011, runs_pb,
                                                runs_nopb};
   const Int_t n_sel = 3;
-  const Double_t sel_hi[n_sel] = {280, 300, 450};
+  const Double_t sel_hi[n_sel] = {RESULT_MAX_RISE_NS, 300, 320};
   for (Int_t g = 0; g < n_groups; g++) {
     g_anchor_capture = (g == 3);
     for (Int_t s = 0; s < n_sel; s++) {
       TH1D *h =
           FillRise(group_runs[g], Form("noge_h_%d_%d", g, s), 0.0, sel_hi[s]);
+      SetSourceLowTailBelow(sel_hi[s]);
       TString base =
           TString::Format("%s, rise < %.0f ns", group_names[g], sel_hi[s]);
       TString tag = TString::Format("%s_rise%.0f", group_tags[g], sel_hi[s]);
@@ -366,7 +390,7 @@ void NoGeEscapes() {
         TString vname = (variant == 0)   ? ", Pb Ka2/Ka1 free"
                         : (variant == 1) ? ", Pb Ka2/Ka1 0.595"
                                          : ", plus a 68.752 line";
-        Bool_t draw = (s == 1) || (g_anchor_capture && variant == 0);
+        Bool_t draw = (s == 0) || (g_anchor_capture && variant == 0);
         RunOne(h, tag + vtag, base + vname, draw);
       }
       g_fix_pb_ratio = kFALSE;

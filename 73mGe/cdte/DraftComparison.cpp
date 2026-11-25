@@ -27,7 +27,7 @@ Double_t DppEnergy(Double_t dpp, TRandom3 &rng) {
 }
 
 void AllRuns() {
-  std::vector<TString> runs = GeRuns();
+  std::vector<TString> runs = AllGeRuns();
   runs.push_back("PSI_Running_BeamTurnOn_20251009_1914_5");
   runs.push_back("PSI_Running_BeamTurnOn_20251009_1914_6");
   TChain chain("features");
@@ -56,7 +56,7 @@ void AllRuns() {
 }
 
 void PerRun() {
-  const std::vector<TString> runs = GeRuns();
+  const std::vector<TString> runs = AllGeRuns();
   const char *labels[5] = {"10/09 BeamTurnOn_4", "10/10 GeTarget_1",
                            "10/10 GeTarget_2", "10/11 Ge_1", "10/11 Ge_2"};
   const Int_t colors[5] = {kBlack, kRed + 1, kBlue + 1, kGreen + 2,
@@ -96,7 +96,7 @@ void PerRun() {
 }
 
 void RiseCut() {
-  const std::vector<TString> runs = GeRuns();
+  const std::vector<TString> runs = AllGeRuns();
   TChain chain("features");
   for (size_t i = 0; i < runs.size(); i++)
     chain.Add(FeaturesFile(runs[i]));

@@ -22,7 +22,7 @@
 //   summary   the replica distributions against the observed shift, and the
 //             per-slice values of every configuration.
 // The cache, the budgets and the replicas go to RESULT_DIR; the figures to
-// plots/studies/psi_cdte/reprocessing_comparison.
+// plots/cdte/reprocessing_comparison.
 //
 // Usage (in order; the budgets and replicas can run in parallel):
 //   root -b -q 'ReprocessingComparison.cpp+("match")'
@@ -298,7 +298,7 @@ void Match() {
   cache->Branch("rise_new", &r.rise_new, "rise_new/F");
   cache->Branch("in_new", &r.in_new, "in_new/O");
   cache->Branch("trigger_old", &r.trigger_old, "trigger_old/S");
-  std::vector<TString> runs = GeRuns();
+  std::vector<TString> runs = AllGeRuns();
   MatchCounts total;
   for (size_t i = 0; i < runs.size(); i++) {
     MatchCounts c = MatchRun((Int_t)i, runs[i], cache, r);
@@ -867,8 +867,8 @@ TH1D *FillSlice(const std::vector<Entry> &entries, Int_t slice,
 void SetNominal(Double_t te_cdkb, Bool_t free_curvature) {
   g_lo = 62.0;
   g_hi = 89.0;
-  g_ge_own_tail = kFALSE;
-  g_free_scale2 = free_curvature;
+  g_ge_own_shape = kFALSE;
+  g_free_kappa = free_curvature;
   SetEscapeTie(KB_KA_NOMINAL, te_cdkb);
   ResetKbGroups();
 }
@@ -1206,18 +1206,11 @@ void DrawPerSlice(const std::vector<NominalBudget> &budgets,
   ensdf->SetLineStyle(3);
   ensdf->SetLineColor(kGray + 1);
   ensdf->Draw();
-  legend_pad->cd();
   TLegend *leg =
-      new TLegend(0.05, 0.92, 0.98, 0.92 - 0.065 * (configs.size() + 1));
-  leg->SetBorderSize(1);
-  leg->SetFillColor(kWhite);
-  leg->SetFillStyle(1001);
-  leg->SetTextSize(30);
-  leg->SetTextFont(43);
+      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)graphs.size() + 1);
   for (size_t k = 0; k < graphs.size(); k++)
     leg->AddEntry(graphs[k], labels[k], "pe");
   leg->AddEntry(ensdf, "ENSDF 68.752 keV", "l");
-  leg->Draw();
   PlottingUtils::SaveFigure(canvas, "ge_per_slice_configurations", "",
                             PlotSaveOptions::kLINEAR);
 }
@@ -1416,10 +1409,11 @@ void ReprocessingComparison(const char *stage = "summary", Int_t first = 0,
                             Int_t count = 1) {
   using namespace CdTeReprocessing;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(
-      PlotSaveFormat::kPNG,
-      project_root + "/plots/studies/psi_cdte/reprocessing_comparison",
-      project_root + "/root_files", kFALSE);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                project_root +
+                                    "/plots/cdte/reprocessing_comparison",
+                                project_root + "/root_files", kFALSE);
+  PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
   TGaxis::SetMaxDigits(3);
   const TString which = stage;
   if (which == "match")

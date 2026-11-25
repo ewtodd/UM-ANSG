@@ -1,11 +1,13 @@
 # CdTe (PSI) Ge energy, GeBudget.cpp; keV
-ge 68.750077
-total 0.033052
-stat 0.016382
-outlier 0.010699
-lineshape 0.005476
-escapes 0.004509
-pb_kbeta 0.001379
-extrapolation 0.022766
-slice_range 0.000780
-slice_combination 0.004719
+ge 68.748752
+total 0.013012
+stat 0.009484
+calibration 0.000616
+outlier 0.003409
+lineshape 0.002455
+escapes 0.000528
+background 0.007109
+pb_kbeta 0.002184
+curvature 0.001910
+slice_range 0.001457
+slice_combination 0.000000

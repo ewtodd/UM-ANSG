@@ -1,29 +1,37 @@
-// The CdTe's rise-time (charge-loss) figures. Hole trapping lowers the pulse
-// height of slow events; the beam-run lines are about three times broader
-// than the source-run lines for that reason, which is why the Ge budget
-// calibrates each rise-time slice on its own lines.
+// The CdTe's rise-time figures: why the spectra are sliced in rise and why
+// each height is divided by the rise gain (CdTeAnalysis.hpp).
 //   - Rise time (10-90% of the deconvolved step) against energy, source runs
-//     against beam runs, on the Am-only scale.
-//   - The relative pulse height against rise time from the Ba-133 81.00 keV
-//     and Am-241 59.54 keV peaks of the source runs, per 10 ns slice relative
-//     to the fast events, and the Ge beam runs' rise-energy plane before and
-//     after dividing by it (the lines should stand up straight).
+//     against beam runs, as measured. Hole trapping lowers the pulse height
+//     of slow events; the beam-run lines are about three times broader than
+//     the source-run lines for that reason.
+//   - Each source line's core position over its true energy against rise,
+//     as measured and over the rise gain, in bins of equal precision; and
+//     each line's rise distribution. The lines sample different rise ranges,
+//     so inside a slice they would sample different gains.
+//   - The Ge beam runs' rise-energy plane as measured and over the rise gain,
+//     the latter with the result's slice edges; and those edges recomputed
+//     as equal-count quantiles (EqualCountEdges) next to CdTeAnalysis.hpp's.
+//   - The 77.4 keV check: the slices the result uses (up to 320 ns), as
+//     measured against over the rise gain, for the Ge runs and the no-Ge
+//     runs. An earlier correction, applied at every rise time, put a line
+//     near 77.4 keV into the beam spectra.
 //
 // Usage: root -b -q 'RiseTime.cpp+'
 #include "CdTeAnalysis.hpp"
 
 #include <TCanvas.h>
 #include <TGaxis.h>
-#include <TGraphErrors.h>
+#include <TGraphAsymmErrors.h>
 #include <TH2D.h>
 #include <TLegend.h>
+#include <TLine.h>
 
 namespace CdTeRiseTime {
 
 using namespace CdTe;
 
 struct Event {
-  Float_t e, rise; // keV on the Am-only scale; samples
+  Float_t e, rise; // keV on the Am-only scale, as measured; samples
 };
 
 std::vector<Event> LoadEvents(const std::vector<TString> &runs) {
@@ -66,100 +74,143 @@ void PlotRiseVsEnergy(const std::vector<TString> &runs, const TString &name) {
                             PlotSaveOptions::kLINEAR);
 }
 
-// The slices of one sample (10 ns) the ridge is measured in, and the ones
-// that define the fast events.
-const Int_t RIDGE_RISE_LO = 25, RIDGE_RISE_HI = 40;
-const Int_t FAST_LO = 26, FAST_HI = 29;
-
-// A line's peak position in each rise slice, the highest bin between 84% and
-// 103% of its energy refined by a Gaussian over +-0.4 keV, relative to the
-// fast events'.
-TGraphErrors *Ridge(const std::vector<Event> &events, Double_t e_line,
-                    const TString &tag) {
-  std::vector<TH1D *> slices;
-  for (Int_t r = RIDGE_RISE_LO; r < RIDGE_RISE_HI; r++)
-    slices.push_back(new TH1D(Form("ridge_%s_%d", tag.Data(), r), "", 300,
-                              0.84 * e_line, 1.03 * e_line));
-  for (size_t i = 0; i < events.size(); i++) {
-    Int_t r = (Int_t)events[i].rise;
-    if (r >= RIDGE_RISE_LO && r < RIDGE_RISE_HI)
-      slices[r - RIDGE_RISE_LO]->Fill(events[i].e);
-  }
-  TGraphErrors *g = new TGraphErrors();
-  for (Int_t r = RIDGE_RISE_LO; r < RIDGE_RISE_HI; r++) {
-    TH1D *h = slices[r - RIDGE_RISE_LO];
-    if (h->GetMaximum() < 40)
+// The core of the Ba 81.00 keV line's Cd K-alpha escape doublet, by its
+// sub-lines' shares.
+Double_t EscapeCoreEnergy() {
+  Double_t share = 0, weighted = 0;
+  for (Int_t i = 0; i < ReferenceLines::N_ESCAPE_LINES; i++) {
+    if (ReferenceLines::ESCAPE_SERIES[i] != 0)
       continue;
-    Double_t top = h->GetBinCenter(h->GetMaximumBin());
-    TF1 f("ridge_gaus", "gaus", top - 0.4, top + 0.4);
-    f.SetParameters(h->GetMaximum(), top, 0.3);
-    h->Fit(&f, "QRN0L");
-    g->SetPoint(g->GetN(), r + 0.5, f.GetParameter(1));
-    g->SetPointError(g->GetN() - 1, 0, f.GetParError(1));
+    share += GEANT4_SERIES_SHARE[i];
+    weighted += GEANT4_SERIES_SHARE[i] * ReferenceLines::ESCAPE_XRAY_KEV[i];
   }
-  for (size_t i = 0; i < slices.size(); i++)
-    delete slices[i];
-  Double_t sw = 0, swx = 0;
-  for (Int_t i = 0; i < g->GetN(); i++) {
-    if (g->GetX()[i] < FAST_LO || g->GetX()[i] > FAST_HI + 1)
-      continue;
-    Double_t w = 1.0 / TMath::Power(g->GetEY()[i], 2);
-    sw += w;
-    swx += w * g->GetY()[i];
-  }
-  Double_t fast = swx / sw;
-  for (Int_t i = 0; i < g->GetN(); i++) {
-    g->SetPoint(i, SAMPLE_NS * g->GetX()[i], g->GetY()[i] / fast);
-    g->SetPointError(i, 0, g->GetEY()[i] / fast);
-    std::cout << "RIDGE " << tag << " rise " << g->GetX()[i]
-              << " ns: relative height " << std::fixed << std::setprecision(4)
-              << g->GetY()[i] << " +/- " << g->GetEY()[i] << std::endl;
-  }
-  return g;
+  return ReferenceLines::BA133_81 - weighted / share;
 }
 
-// The relative height at a rise time (samples), flat outside the measured
-// slices.
-Double_t RelativeHeight(TGraphErrors *ridge, Double_t rise_samples) {
-  Double_t x = SAMPLE_NS * rise_samples;
-  if (x <= ridge->GetX()[0])
-    return ridge->GetY()[0];
-  if (x >= ridge->GetX()[ridge->GetN() - 1])
-    return ridge->GetY()[ridge->GetN() - 1];
-  return ridge->Eval(x);
-}
+const Int_t N_LINES = 3;
+const char *const LINE_LABEL[N_LINES] = {"Am 59.54 keV (Am runs)",
+                                         "Ba 81.00 keV (Ba runs)",
+                                         "its Cd K#alpha escape (Ba runs)"};
+const Int_t LINE_COLOR[N_LINES] = {kRed + 1, kBlue + 1, kGreen + 2};
 
-void DrawRidges(TGraphErrors *ba, TGraphErrors *am) {
+// Each line's core position over its true energy against rise, the heights
+// as measured or over the rise gain; each point's x error spans its bin.
+void PlotGainByLine(TH2D *am, TH2D *ba, const TString &name,
+                    const TString &header, Double_t y_lo, Double_t y_hi) {
+  const Double_t e[N_LINES] = {ReferenceLines::AM241, ReferenceLines::BA133_81,
+                               EscapeCoreEnergy()};
+  TH2D *source[N_LINES] = {am, ba, ba};
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
-  PlottingUtils::ConfigureGraph(ba, kBlue + 1,
-                                ";Rise time 10-90% [ns];Relative pulse height");
-  PlottingUtils::ConfigureGraph(am, kRed + 1);
-  ba->SetMarkerStyle(20);
-  am->SetMarkerStyle(21);
-  ba->Draw("AP");
-  am->Draw("P SAME");
-  TLegend *leg = PlottingUtils::AddLegend(0.55, 0.9, 0.72, 0.9);
-  leg->AddEntry(ba, "Ba-133 81.00 keV", "p");
-  leg->AddEntry(am, "Am-241 59.54 keV", "p");
+  TLegend *leg = PlottingUtils::AddLegend(0.18, 0.62, 0.18, 0.42);
+  leg->SetHeader(header);
+  for (Int_t l = 0; l < N_LINES; l++) {
+    TGraphAsymmErrors *g = CoreRatioByRise(source[l], e[l], 0.02, 0.04);
+    PlottingUtils::ConfigureGraph(g, LINE_COLOR[l], "");
+    g->SetMarkerStyle(20);
+    g->SetMarkerSize(0.8);
+    if (l == 0) {
+      g->SetTitle(";10-90% rise [ns];Core position / true energy");
+      g->Draw("AP");
+      g->GetXaxis()->SetLimits(255, 345);
+      g->GetYaxis()->SetRangeUser(y_lo, y_hi);
+    } else {
+      g->Draw("P SAME");
+    }
+    leg->AddEntry(g, LINE_LABEL[l], "pe");
+  }
   leg->Draw();
-  PlottingUtils::SaveFigure(canvas, "rise_ridge_source_lines", "",
+  PlottingUtils::SaveFigure(canvas, name, "", PlotSaveOptions::kLINEAR);
+}
+
+// Each line's rise distribution, its core events (the heights over the rise
+// gain, so the core sits at the same place at every rise).
+void PlotRiseDensity(TH2D *am, TH2D *ba) {
+  const Double_t e[N_LINES] = {ReferenceLines::AM241, ReferenceLines::BA133_81,
+                               EscapeCoreEnergy()};
+  TH2D *source[N_LINES] = {am, ba, ba};
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
+  TLegend *leg = PlottingUtils::AddLegend(0.5, 0.92, 0.66, 0.9);
+  for (Int_t l = 0; l < N_LINES; l++) {
+    TH1D *d = source[l]->ProjectionX(
+        Form("rise_density_%d", l), source[l]->GetYaxis()->FindBin(e[l] - 0.6),
+        source[l]->GetYaxis()->FindBin(e[l] + 0.4));
+    d->SetDirectory(nullptr);
+    d->Rebin(4);
+    d->Scale(1.0 / d->Integral(d->FindBin(250.5), d->FindBin(329.5)));
+    d->SetStats(0);
+    d->SetLineColor(LINE_COLOR[l]);
+    d->SetLineWidth(2);
+    d->SetTitle(";10-90% rise [ns];Fraction / 1 ns");
+    d->GetXaxis()->SetRangeUser(250, 330);
+    d->Draw(l == 0 ? "hist" : "hist same");
+    leg->AddEntry(d, LINE_LABEL[l], "l");
+  }
+  leg->Draw();
+  PlottingUtils::SaveFigure(canvas, "rise_density_by_line", "",
                             PlotSaveOptions::kLINEAR);
 }
 
-void DrawRiseEnergyPlane(const std::vector<Event> &events, TGraphErrors *ridge,
-                         Bool_t corrected, const TString &name) {
+void DrawRiseEnergyPlane(const std::vector<Event> &events, Bool_t corrected,
+                         const TString &name) {
   TH2D *h = new TH2D("h2_" + name, "", 400, 60, 100, 90, 150, 600);
   for (size_t i = 0; i < events.size(); i++) {
-    Double_t e = corrected ? events[i].e / RelativeHeight(ridge, events[i].rise)
-                           : events[i].e;
-    h->Fill(e, SAMPLE_NS * events[i].rise);
+    Double_t rise_ns = SAMPLE_NS * events[i].rise;
+    Double_t e = corrected ? events[i].e / RiseGain(rise_ns) : events[i].e;
+    h->Fill(e, rise_ns);
   }
   TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
   PlottingUtils::ConfigureAndDraw2DHistogram(
       h, canvas,
       Form(";%s [keV];Rise time 10-90%% [ns];Counts / 100 eV / 5 ns",
-           corrected ? "Corrected energy" : "Energy"));
+           corrected ? "Energy over the rise gain" : "Energy"));
+  if (corrected)
+    for (Int_t s = 1; s <= N_RISE_SLICES; s++) {
+      TLine *edge = new TLine(60, RISE_SLICE_LO[s], 100, RISE_SLICE_LO[s]);
+      edge->SetLineColor(kBlack);
+      edge->SetLineStyle(2);
+      edge->Draw();
+    }
   PlottingUtils::SaveFigure(canvas, name, "", PlotSaveOptions::kLINEAR);
+}
+
+// The slices the result uses, as measured against over the rise gain, with
+// 77.4 keV marked.
+void PlotGhostCheck(const std::vector<TString> &runs, const TString &name,
+                    const TString &label) {
+  g_rise_gain_correction = kFALSE;
+  TH1D *measured = FillRise(runs, name + "_measured", 0, RESULT_MAX_RISE_NS);
+  g_rise_gain_correction = kTRUE;
+  TH1D *corrected = FillRise(runs, name + "_corrected", 0, RESULT_MAX_RISE_NS);
+  measured->Rebin(2);
+  corrected->Rebin(2);
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
+  canvas->SetLogy();
+  corrected->SetTitle(";Energy [keV];Counts / 100 eV");
+  corrected->GetXaxis()->SetRangeUser(62, 89);
+  corrected->SetStats(0);
+  corrected->SetLineColor(kBlue + 1);
+  corrected->SetLineWidth(2);
+  measured->SetLineColor(kGray + 2);
+  measured->SetLineWidth(2);
+  Double_t y_lo = 0.8 * corrected->GetMinimum(1);
+  Double_t y_hi = 6.0 * corrected->GetMaximum();
+  corrected->SetMinimum(y_lo);
+  corrected->SetMaximum(y_hi);
+  corrected->Draw("hist");
+  measured->Draw("hist same");
+  TLine *mark = new TLine(77.4, y_lo, 77.4, y_hi);
+  mark->SetLineColor(kRed + 1);
+  mark->SetLineStyle(2);
+  mark->Draw();
+  TLegend *leg = PlottingUtils::AddLegend(0.5, 0.92, 0.68, 0.9);
+  leg->SetHeader(label + Form(", rise < %.0f ns", RESULT_MAX_RISE_NS));
+  leg->AddEntry(corrected, "Over the rise gain", "l");
+  leg->AddEntry(measured, "As measured", "l");
+  leg->Draw();
+  PlottingUtils::SaveFigure(canvas, "ghost_check_" + name, "",
+                            PlotSaveOptions::kLOG);
+  delete measured;
+  delete corrected;
 }
 
 } // namespace CdTeRiseTime
@@ -167,9 +218,9 @@ void DrawRiseEnergyPlane(const std::vector<Event> &events, TGraphErrors *ridge,
 void RiseTime() {
   using namespace CdTeRiseTime;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
-  InitUtils::SetROOTPreferences(
-      PlotSaveFormat::kPNG, project_root + "/plots/studies/psi_cdte/rise_time",
-      project_root + "/root_files");
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
+                                project_root + "/plots/cdte/rise_gain",
+                                project_root + "/root_files");
   TGaxis::SetMaxDigits(3);
 
   std::vector<TString> am_two_days;
@@ -183,16 +234,40 @@ void RiseTime() {
   PlotRiseVsEnergy(ge_1010, "beam_ge_1010");
   PlotRiseVsEnergy(noge_1010, "beam_noge_1010");
 
-  // The four Ge beam runs from 10/10 and 10/11.
-  const std::vector<TString> ge_runs = GeRuns();
-  std::vector<TString> beam_runs(ge_runs.begin() + 1, ge_runs.end());
-  std::vector<Event> ba = LoadEvents(BaSourceRuns());
-  std::vector<Event> am = LoadEvents(AmSourceRuns());
-  std::vector<Event> beam = LoadEvents(beam_runs);
-  TGraphErrors *ridge_ba = Ridge(ba, 81.0, "Ba81");
-  TGraphErrors *ridge_am = Ridge(am, 59.54, "Am59");
-  DrawRidges(ridge_ba, ridge_am);
-  DrawRiseEnergyPlane(beam, ridge_ba, kFALSE, "rise_vs_energy_beam_ge_zoom");
-  DrawRiseEnergyPlane(beam, ridge_ba, kTRUE,
-                      "rise_vs_corrected_energy_beam_ge");
+  TH2D *am_measured = FillRiseHeight(AmSourceRuns(), "am_measured", kFALSE);
+  TH2D *ba_measured = FillRiseHeight(BaSourceRuns(), "ba_measured", kFALSE);
+  TH2D *am_corrected = FillRiseHeight(AmSourceRuns(), "am_corrected", kTRUE);
+  TH2D *ba_corrected = FillRiseHeight(BaSourceRuns(), "ba_corrected", kTRUE);
+  PlotGainByLine(am_measured, ba_measured, "rise_gain_by_line",
+                 "Heights as measured", 0.972, 1.006);
+  PlotGainByLine(am_corrected, ba_corrected, "rise_gain_by_line_corrected",
+                 "Heights over the Ba 81.00 keV rise gain", 0.994, 1.006);
+  PlotRiseDensity(am_corrected, ba_corrected);
+
+  TH1D *rise_ge = FillRiseDistribution(GeRuns(), "rise_ge", 62.0, 89.0);
+  std::vector<Double_t> edges =
+      EqualCountEdges(rise_ge, N_RISE_SLICES, RESULT_MAX_RISE_NS);
+  std::cout << "RISE SLICES of equal counts below " << std::fixed
+            << std::setprecision(0) << RESULT_MAX_RISE_NS
+            << " ns (Ge runs, 62-89 keV):";
+  for (size_t k = 0; k < edges.size(); k++)
+    std::cout << " " << std::setprecision(2) << edges[k];
+  std::cout << "; CdTeAnalysis.hpp has";
+  for (Int_t s = 0; s < N_RISE_SLICES; s++)
+    std::cout << " " << RISE_SLICE_LO[s];
+  std::cout << " " << RESULT_MAX_RISE_NS << std::endl;
+  for (Int_t s = 0; s < N_RISE_SLICES; s++)
+    std::cout << "RISE SLICE " << std::setprecision(2) << RISE_SLICE_LO[s]
+              << "-" << RISE_SLICE_HI[s] << " ns: " << std::setprecision(0)
+              << rise_ge->Integral(rise_ge->FindBin(RISE_SLICE_LO[s] + 1e-6),
+                                   rise_ge->FindBin(RISE_SLICE_HI[s] - 1e-6))
+              << " events" << std::endl;
+  delete rise_ge;
+
+  std::vector<Event> beam = LoadEvents(GeRuns());
+  DrawRiseEnergyPlane(beam, kFALSE, "rise_vs_energy_beam_ge");
+  DrawRiseEnergyPlane(beam, kTRUE, "rise_vs_corrected_energy_beam_ge");
+
+  PlotGhostCheck(GeRuns(), "ge_runs", "Ge beam runs");
+  PlotGhostCheck(NoGePbRuns(), "noge_runs", "No-Ge beam runs");
 }
