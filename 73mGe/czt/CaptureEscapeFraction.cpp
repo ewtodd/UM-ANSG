@@ -518,6 +518,9 @@ void DrawEscapeWindow(TH1D *h, const EscapeFit &fit, const TString &name) {
     y_max = TMath::Max(y_max, points->GetY()[i] + points->GetEY()[i]);
   }
 
+  std::cout << "FIGURE " << name << ": Pearson chi2 " << std::fixed
+            << std::setprecision(1) << fit.chi2 << " / " << fit.ndf << " = "
+            << std::setprecision(3) << fit.chi2 / fit.ndf << std::endl;
   std::vector<TString> labels;
   labels.push_back("Active background run with continuum removed");
   labels.push_back(Form("Fit, #chi^{2}/ndf = %.3f", fit.chi2 / fit.ndf));
