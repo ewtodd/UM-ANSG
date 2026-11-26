@@ -110,7 +110,7 @@ void DrawAgainstRise(TGraph *graphs[N_CUTS], const TString &y_title,
 
 } // namespace CdTeSliceWidth
 
-void SliceWidthTails(Double_t te_cdkb = 0.307) {
+void SliceWidthTails(Double_t te_cdkb = CdTe::TE_CDKB) {
   using namespace CdTeSliceWidth;
   const TString project_root = Paths::ProjectRootOf(__FILE__);
   InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG,
@@ -122,7 +122,7 @@ void SliceWidthTails(Double_t te_cdkb = 0.307) {
   g_hi = 89.0;
   g_kappa = KAPPA_SOURCE;
   ResetKbGroups();
-  SetEscapeTie(0.275, te_cdkb);
+  SetEscapeTie(KB_KA_NOMINAL, te_cdkb);
 
   std::vector<Event> events = LoadEvents(GeRuns());
   TH1D *rise = new TH1D("rise_all", "", 32000, 0, STUDY_MAX_RISE_NS);

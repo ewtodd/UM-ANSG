@@ -71,9 +71,8 @@ const Int_t N_SCALE_SLICES = 4;
 const Double_t BUDGET_MAX_RISE_NS = 320.0;
 
 // The escape tie (Te Ka / Cd Kb) each processing's NoGeEscapes.cpp gave;
-// Cd Kb/Ka is Geant4's in both.
+// Cd Kb/Ka is Geant4's in both (CdTeAnalysis.hpp's KB_KA_NOMINAL).
 const Double_t TE_CDKB_OLD = 0.333, TE_CDKB_NEW = 0.353;
-const Double_t KB_KA_NOMINAL = 0.275;
 
 // The new processing's crop (pre and post samples around its trigger) and
 // the first sample its trapezoid reads, for the rejection categories.

@@ -15,8 +15,6 @@ namespace CdTeSourceScale {
 
 using namespace CdTe;
 
-// GeBudget.cpp's nominal escape tie.
-const Double_t KB_KA = 0.275, TE_CDKB = 0.352;
 const Double_t BA133_81 = ReferenceLines::BA133_81;
 
 // keV of spectrum position x on the line through (x_am, Am) and (x_ba, Ba),
@@ -42,7 +40,7 @@ void SourceScale() {
   g_hi = 89.0;
   g_kappa = KAPPA_SOURCE;
   ResetKbGroups();
-  SetEscapeTie(KB_KA, TE_CDKB);
+  SetEscapeTie(KB_KA_NOMINAL, TE_CDKB);
   Double_t sw = 0, swx = 0, sw_inrun = 0, swx_inrun = 0;
   for (Int_t s = 0; s < N_RISE_SLICES; s++) {
     TString tag = Form("%d", s);

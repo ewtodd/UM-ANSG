@@ -20,8 +20,6 @@ using namespace CdTe;
 
 const Int_t N_CUTS = 5;
 const Double_t CUTS_NS[N_CUTS] = {281, 285, 290, 300, 320};
-// GeBudget.cpp's nominal escape tie.
-const Double_t KB_KA = 0.275, TE_CDKB = 0.352;
 const Int_t N_TAILS = 2;
 const Int_t TAIL_MODES[N_TAILS] = {TAILS_FREE, TAILS_CAPTURE};
 const char *const TAIL_NAMES[N_TAILS] = {"tails free", "capture line's tails"};
@@ -40,7 +38,7 @@ void RiseCutScan() {
   g_hi = 89.0;
   g_kappa = KAPPA_SOURCE;
   ResetKbGroups();
-  SetEscapeTie(KB_KA, TE_CDKB);
+  SetEscapeTie(KB_KA_NOMINAL, TE_CDKB);
 
   TH1D *rise = FillRiseDistribution(GeRuns(), "rise_ge", 62.0, 89.0);
   TGraphErrors *means[N_TAILS];

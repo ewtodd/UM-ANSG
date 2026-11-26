@@ -26,9 +26,6 @@ namespace CdTeTestbedBias {
 
 using namespace CdTe;
 
-// GeBudget.cpp's nominal escape tie.
-const Double_t KB_KA = 0.275, TE_CDKB = 0.352;
-
 enum {
   F_STAGED,
   F_UNBOUNDED_ESCAPE,
@@ -180,7 +177,7 @@ void TestbedBias(Int_t cell = 0, Int_t trials = 100) {
   g_lo = 62.0;
   g_hi = 89.0;
   ResetKbGroups();
-  SetEscapeTie(KB_KA, TE_CDKB);
+  SetEscapeTie(KB_KA_NOMINAL, TE_CDKB);
   g_tails = TAILS_FREE;
   g_kappa = KAPPA_SOURCE;
   const Int_t d = cell / N_RISE_SLICES, s = cell % N_RISE_SLICES;

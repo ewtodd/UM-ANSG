@@ -410,12 +410,12 @@ inline void HoldStep(TF1 *f, Int_t first) {
 enum { TAILS_FREE, TAILS_SOURCE, TAILS_CAPTURE };
 Int_t g_tails = TAILS_FREE;
 const Double_t LOW_EXP_SOURCE[N_RISE_SLICES] = {0.038, 0.017, 0.021, 0.025};
-const Double_t LOW_EXP_DECAY_SOURCE[N_RISE_SLICES] = {5.037, 4.620, 5.002,
-                                                      5.056};
+const Double_t LOW_EXP_DECAY_SOURCE[N_RISE_SLICES] = {5.036, 4.632, 5.003,
+                                                      5.060};
 // The source runs' high tail per slice, which the source-line fits hold
 // with the step and the low tail.
-const Double_t HIGH_EXP_SOURCE[N_RISE_SLICES] = {0.293, 0.079, 0.043, 0.020};
-const Double_t HIGH_EXP_DECAY_SOURCE[N_RISE_SLICES] = {0.631, 0.547, 0.511,
+const Double_t HIGH_EXP_SOURCE[N_RISE_SLICES] = {0.292, 0.078, 0.043, 0.020};
+const Double_t HIGH_EXP_DECAY_SOURCE[N_RISE_SLICES] = {0.631, 0.546, 0.511,
                                                        0.452};
 Double_t g_source_low_exp = LOW_EXP_SOURCE[0];
 Double_t g_source_low_exp_decay = LOW_EXP_DECAY_SOURCE[0];
@@ -478,7 +478,7 @@ inline void ReleaseBeamHighTail(TF1 *f, Int_t first) {
 // The source runs' relative curvature of the scale (SourceCurvature.cpp, the
 // slices below 281 ns, heights corrected for the rise gain; errors from the
 // likelihood profile, chi2 3.1/3 between the slices), 1/keV.
-const Double_t KAPPA_SOURCE = 0.0088e-4, KAPPA_SOURCE_ERR = 0.92e-4;
+const Double_t KAPPA_SOURCE = 0.0534e-4, KAPPA_SOURCE_ERR = 0.92e-4;
 
 // x = a + b (E - 70 + kappa (E - 70)^2). The offset a is the position of 70
 // keV, among the lines, rather than of 0 keV, 70 keV below them, where it is
@@ -688,6 +688,18 @@ inline void SetEscapeTie(Double_t cd_kb_over_ka, Double_t te_ka_over_cd_kb) {
     g_escape_weight[i] =
         series_total[ReferenceLines::ESCAPE_SERIES[i]] * GEANT4_SERIES_SHARE[i];
 }
+
+// The escape tie's values, for every macro that sets it. Te Ka over Cd Kb is
+// measured by NoGeEscapes.cpp on the no-Ge Pb runs with Pb Ka2/Ka1 at DDEP's
+// 0.595 (free, it goes to 0.30-0.54, trading with the Cd Ka escapes under Pb
+// Ka2): rise < 281 ns, and per slice. Cd Kb/Ka is Geant4's 0.275 for captures
+// in CdTe; the alternative is NoGeEscapes.cpp's own, rise < 281 ns. The
+// continuum's slope is held at the side bands', the step at the source runs'
+// and the tails are free. A slice whose own fit is unphysical keeps the
+// rise < 281 ns value.
+const Double_t TE_CDKB = 0.354, TE_CDKB_ERR = 0.040;
+const Double_t TE_CDKB_SLICE[N_RISE_SLICES] = {0.247, 0.355, 0.395, 0.342};
+const Double_t KB_KA_NOMINAL = 0.275, KB_KA_ALT = 0.298;
 
 inline Double_t ScalePosition(Double_t e, const Double_t *p) {
   return CurvedScale(e, p[Q_A], p[Q_B], p[Q_KAPPA]);

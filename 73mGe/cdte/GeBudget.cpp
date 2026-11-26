@@ -58,16 +58,6 @@ namespace CdTeBudget {
 
 using namespace CdTe;
 
-// The escape tie from NoGeEscapes.cpp, the no-Ge Pb runs with Pb Ka2/Ka1 at
-// DDEP's 0.595 (free, it goes to 0.30-0.54, trading with the Cd Ka escapes
-// under Pb Ka2): rise < 281 ns; per slice; and the Cd Kb/Ka ratio, against
-// Geant4's 0.275 for captures in CdTe; the continuum's slope held at the side
-// bands', the step at the source runs' and the tails free.
-// A slice whose own fit is unphysical keeps the rise < 281 ns value.
-const Double_t TE_CDKB = 0.352, TE_CDKB_ERR = 0.040;
-const Double_t TE_CDKB_SLICE[N_RISE_SLICES] = {0.245, 0.353, 0.395, 0.341};
-const Double_t KB_KA_NOMINAL = 0.275, KB_KA_ALT = 0.298;
-
 const Double_t KB3_VARIATION = 0.10;
 const Double_t KB_OUTER_VARIATION = 0.20;
 

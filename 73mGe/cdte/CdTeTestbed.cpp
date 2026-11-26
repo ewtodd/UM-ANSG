@@ -40,8 +40,6 @@ const char *const TRUTH_NAMES[N_TRUTHS] = {
     "nominal", "step free", "capture tails", "source tail", "kappa free"};
 const char *const TRUTH_TAGS[N_TRUTHS] = {
     "nominal", "step_free", "capture_tails", "source_tail", "kappa_free"};
-// GeBudget.cpp's nominal escape tie.
-const Double_t KB_KA = 0.275, TE_CDKB = 0.352;
 
 void SetNominal() {
   g_tails = TAILS_FREE;
@@ -93,7 +91,7 @@ void CdTeTestbed(Int_t truth = 0, Int_t trials = 40) {
   g_lo = 62.0;
   g_hi = 89.0;
   ResetKbGroups();
-  SetEscapeTie(KB_KA, TE_CDKB);
+  SetEscapeTie(KB_KA_NOMINAL, TE_CDKB);
   TRandom3 random(4242 + truth);
   SetNominal();
   SourceLine lines[N_GE_DAYS][N_RISE_SLICES];

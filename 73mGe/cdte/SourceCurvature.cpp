@@ -30,8 +30,6 @@ namespace CdTeCurvature {
 using namespace CdTe;
 
 const Double_t LOW_LO = 55.5, LOW_HI = 60.5, HIGH_LO = 70.0, HIGH_HI = 88.5;
-// Cd K-beta over K-alpha escapes, Geant4's (GeBudget's KB_KA_NOMINAL).
-const Double_t CD_KB_OVER_KA = 0.275;
 
 enum {
   S_A,
@@ -79,7 +77,7 @@ Double_t BaLines(Double_t x, const Double_t *p) {
       if (series > 1)
         continue;
       Double_t fraction =
-          series == 0 ? p[S_ESC_KA] : CD_KB_OVER_KA * p[S_ESC_KA];
+          series == 0 ? p[S_ESC_KA] : KB_KA_NOMINAL * p[S_ESC_KA];
       lines += fraction * GEANT4_SERIES_SHARE[i] *
                Line(x, parent_e[k] - ReferenceLines::ESCAPE_XRAY_KEV[i], p);
     }
