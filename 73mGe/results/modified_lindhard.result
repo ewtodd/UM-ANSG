@@ -1,0 +1,80 @@
+# ModifiedLindhard.cpp: Lindhard (h0) and excess-ionization (h1) fits of the Ge ionization yield; eta* in electrons
+# all_adaptive removed (excess-ionization model): Sattler 1966, Collar 2021 FeF
+# all_adaptive removed (Lindhard model): Sattler 1966, Collar 2021 FeF, Collar 2021 capture
+all_adaptive_h1_kappa 0.16197
+all_adaptive_h1_kappa_err 0.00103
+all_adaptive_h1_eta 5.460
+all_adaptive_h1_eta_err 1.199
+all_adaptive_h1_chi2 106.09
+all_adaptive_h1_ndf 94
+all_adaptive_h0_chi2 126.81
+all_adaptive_lindhard_kappa 0.16248
+all_adaptive_lindhard_kappa_err 0.00102
+all_adaptive_lindhard_chi2 102.18
+all_adaptive_lindhard_ndf 94
+all_points 118
+all_h0_kappa 0.16147
+all_h0_kappa_err 0.00099
+all_h1_kappa 0.16054
+all_h1_kappa_err 0.00100
+all_h1_eta 7.469
+all_h1_eta_err 1.152
+all_h0_chi2 293.63
+all_h1_chi2 251.58
+all_h1_ndf 116
+# hpge_adaptive removed (excess-ionization model): none
+# hpge_adaptive removed (Lindhard model): Collar 2021 FeF
+hpge_adaptive_h1_kappa 0.16119
+hpge_adaptive_h1_kappa_err 0.00117
+hpge_adaptive_h1_eta 7.796
+hpge_adaptive_h1_eta_err 1.157
+hpge_adaptive_h1_chi2 73.92
+hpge_adaptive_h1_ndf 64
+hpge_adaptive_h0_chi2 119.34
+hpge_adaptive_lindhard_kappa 0.16199
+hpge_adaptive_lindhard_kappa_err 0.00116
+hpge_adaptive_lindhard_chi2 63.96
+hpge_adaptive_lindhard_ndf 61
+hpge_points 66
+hpge_h0_kappa 0.16242
+hpge_h0_kappa_err 0.00116
+hpge_h1_kappa 0.16119
+hpge_h1_kappa_err 0.00117
+hpge_h1_eta 7.796
+hpge_h1_eta_err 1.157
+hpge_h0_chi2 119.34
+hpge_h1_chi2 73.92
+hpge_h1_ndf 64
+# all_uncorrelated_adaptive removed (excess-ionization model): Collar 2021 FeF, Sattler 1966
+# all_uncorrelated_adaptive removed (Lindhard model): Collar 2021 FeF, Sattler 1966
+all_uncorrelated_adaptive_h1_kappa 0.16071
+all_uncorrelated_adaptive_h1_kappa_err 0.00094
+all_uncorrelated_adaptive_h1_eta 3.988
+all_uncorrelated_adaptive_h1_eta_err 0.780
+all_uncorrelated_adaptive_h1_chi2 91.12
+all_uncorrelated_adaptive_h1_ndf 94
+all_uncorrelated_adaptive_h0_chi2 117.25
+all_uncorrelated_adaptive_lindhard_kappa 0.16255
+all_uncorrelated_adaptive_lindhard_kappa_err 0.00088
+all_uncorrelated_adaptive_lindhard_chi2 117.25
+all_uncorrelated_adaptive_lindhard_ndf 95
+all_uncorrelated_points 118
+all_uncorrelated_h0_kappa 0.16211
+all_uncorrelated_h0_kappa_err 0.00086
+all_uncorrelated_h1_kappa 0.15920
+all_uncorrelated_h1_kappa_err 0.00092
+all_uncorrelated_h1_eta 6.255
+all_uncorrelated_h1_eta_err 0.750
+all_uncorrelated_h0_chi2 358.57
+all_uncorrelated_h1_chi2 289.14
+all_uncorrelated_h1_ndf 116
+hpge_uncorrelated_points 66
+hpge_uncorrelated_h0_kappa 0.16246
+hpge_uncorrelated_h0_kappa_err 0.00097
+hpge_uncorrelated_h1_kappa 0.15861
+hpge_uncorrelated_h1_kappa_err 0.00106
+hpge_uncorrelated_h1_eta 7.118
+hpge_uncorrelated_h1_eta_err 0.857
+hpge_uncorrelated_h0_chi2 200.46
+hpge_uncorrelated_h1_chi2 131.49
+hpge_uncorrelated_h1_ndf 64
