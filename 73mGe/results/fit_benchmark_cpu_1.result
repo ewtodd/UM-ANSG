@@ -1,0 +1,22 @@
+# FitBenchmark.cpp: production's CZT fits on the cpu backend with 1 cores allowed; times in s over 3 runs after one untimed
+backend cpu
+cores 1
+cpu_model AMD Ryzen 9 9950X3D2 16-Core Processor
+gpu_model none
+direct_events 9441465
+insitu_sig_events 2915870
+insitu_bkg_events 533371
+direct_converged 1
+direct_wall_mean 345.5326
+direct_wall_min 344.0928
+direct_wall_max 346.7594
+direct_cores_busy 0.9976
+direct_ge_kev 68.77059937
+direct_ge_err_kev 0.01659653
+insitu_converged 1
+insitu_wall_mean 230.0388
+insitu_wall_min 229.5565
+insitu_wall_max 230.8441
+insitu_cores_busy 0.9978
+insitu_ge_kev 68.76490021
+insitu_ge_err_kev 0.02048169

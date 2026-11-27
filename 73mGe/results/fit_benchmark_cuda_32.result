@@ -1,0 +1,22 @@
+# FitBenchmark.cpp: production's CZT fits on the cuda backend with 32 cores allowed; times in s over 3 runs after one untimed
+backend cuda
+cores 32
+cpu_model AMD Ryzen 9 9950X3D2 16-Core Processor
+gpu_model NVIDIA GeForce RTX 4090
+direct_events 9441465
+insitu_sig_events 2915870
+insitu_bkg_events 533371
+direct_converged 1
+direct_wall_mean 12.9570
+direct_wall_min 12.9103
+direct_wall_max 12.9847
+direct_cores_busy 0.9977
+direct_ge_kev 68.77059937
+direct_ge_err_kev 0.01659653
+insitu_converged 1
+insitu_wall_mean 8.6834
+insitu_wall_min 8.6362
+insitu_wall_max 8.7286
+insitu_cores_busy 0.9977
+insitu_ge_kev 68.76490784
+insitu_ge_err_kev 0.02048810
