@@ -821,7 +821,7 @@ void DrawYieldFigure(const YieldData &data, const FitConfig &config,
   frame->SetDirectory(nullptr);
   frame->SetStats(kFALSE);
   PlottingUtils::ConfigureHistogram(
-      frame, kBlack, ";Nuclear recoil energy [keV];Ionization yield [%]");
+      frame, kBlack, ";Nuclear recoil energy [keV];Quenching factor [%]");
   frame->SetMinimum(y_lo);
   frame->SetMaximum(y_hi);
   frame->GetXaxis()->SetLabelSize(0);
@@ -928,7 +928,7 @@ void DrawYieldDataFigure(const YieldData &data, const FitConfig &config,
   frame->SetDirectory(nullptr);
   frame->SetStats(kFALSE);
   PlottingUtils::ConfigureHistogram(
-      frame, kBlack, ";Nuclear recoil energy [keV];Ionization yield [%]");
+      frame, kBlack, ";Nuclear recoil energy [keV];Quenching factor [%]");
   frame->SetMinimum(y_lo);
   frame->SetMaximum(y_hi);
   frame->GetXaxis()->SetNoExponent();
