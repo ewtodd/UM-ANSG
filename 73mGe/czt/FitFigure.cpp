@@ -5,7 +5,8 @@
 // as its whole shape, Gaussian core and low-side tail, on the continuum.
 //
 // Writes plots/czt/figures: each figure on a linear y axis and, as log_*, on
-// a log one.
+// a log one, at the letter's width and, as wide_*, wider for the
+// dissertation's full-width panels (two to a page).
 //
 // Usage: root -b -q 'FitFigure.cpp+'
 #include "FigureStyle.hpp"
@@ -25,12 +26,20 @@
 #include <TROOT.h>
 #include <TString.h>
 
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace {
 
 const char *const PRODUCTION_TAG = "tau20_sigpb_esc_pxday";
+// Each run's Ge energy is quoted, as CombineGeResult.cpp and Table 5.1 quote
+// it, at the midpoint of the gain-transfer fits (PRODUCTION_TAG, drawn here)
+// and the offset-transfer ones.
+const char *const OFFSET_TRANSFER_TAG = "tau20_sigpb_esc_oxfer_pxday";
 // The figures show each fit's window and this much on either side.
 const Double_t SHOW_MARGIN_KEV = 1.0;
 
@@ -50,7 +59,29 @@ struct FigureSpec {
   // The linear copy's axis starts just under the data rather than at 0.85
   // of the continuum, for a spectrum whose lines rise little above it.
   Bool_t tight_linear_axis;
+  // The fit's row in CalibrateAndFit's results/ge_<tag>.result files, whose
+  // Ge centroids' midpoint (OFFSET_TRANSFER_TAG) the legend quotes.
+  TString result_label;
 };
+
+// The Ge centroid, keV, of the row labelled label in a ge_<tag>.result file
+// (columns: method, ge_mu, ..., label); 0 if there is none.
+Double_t ReadGeCentroid(const TString &path, const TString &label) {
+  std::ifstream in(path.Data());
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty() || line[0] == '#')
+      continue;
+    std::istringstream fields(line);
+    std::vector<std::string> tokens;
+    std::string token;
+    while (fields >> token)
+      tokens.push_back(token);
+    if (tokens.size() >= 3 && TString(tokens.back()) == label)
+      return std::atof(tokens[1].c_str());
+  }
+  return 0;
+}
 
 struct FitObjects {
   TH1 *data = nullptr;
@@ -140,15 +171,38 @@ Double_t PeakPositionKeV(const TGraph *core) {
   return x_max;
 }
 
+// The fit's curves at twice the style's width, to stand out from the data.
 void StyleCurve(TGraph *g, Color_t color, Style_t style) {
   PlottingUtils::ConfigureGraph(g, color);
   g->SetLineStyle(style);
+  g->SetLineWidth(2 * PlottingUtils::GetLineWidth());
 }
 
-void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
+// Canvas widths, pixels: the letter's single column, and the dissertation's
+// full text width with two panels to a page.
+const Int_t LETTER_CANVAS_W = 1400;
+const Int_t DISSERTATION_CANVAS_W = 2000;
+
+// The legend sits inside the frame's top left, over headroom left above the
+// data, so the figure reads at a single column's width. A canvas wider than
+// the letter's keeps the letter's pixel margins and text, so the extra width
+// all goes to the frame; its files are named with prefix.
+void DrawFit(const TString &fits_dir, const TString &gain_result_path,
+             const TString &offset_result_path, const FigureSpec &figure,
+             Int_t canvas_w, const TString &prefix) {
   FitObjects fit;
   if (!LoadFit(fits_dir + "/" + figure.fit_name + ".root", fit))
     return;
+  const Double_t gain_kev =
+      ReadGeCentroid(gain_result_path, figure.result_label);
+  const Double_t offset_kev =
+      ReadGeCentroid(offset_result_path, figure.result_label);
+  if (gain_kev <= 0 || offset_kev <= 0) {
+    std::cerr << "ERROR: no row " << figure.result_label << " in "
+              << gain_result_path << " or " << offset_result_path << std::endl;
+    return;
+  }
+  const Double_t ge_kev = 0.5 * (gain_kev + offset_kev);
 
   // The Ge line is the core peaking near 68.75 keV; every other peak is a Pb
   // K-alpha line.
@@ -196,7 +250,7 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   std::vector<TString> labels;
   labels.push_back(figure.data_label);
   labels.push_back("Fit, #chi^{2}/ndf = " + chi2_value);
-  labels.push_back("^{73m}Ge, 68.75 keV");
+  labels.push_back(TString::Format("^{73}Ge, %.4f keV", ge_kev));
   const TString lead_label = "Pb K#alpha_{2}, K#alpha_{1}";
   const TString escape_label = "^{113}Cd(n,#gamma) 95.9 keV escapes";
   if (!lead.empty())
@@ -204,16 +258,22 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   if (fit.fixed_lines)
     labels.push_back(escape_label);
 
-  // The legend sits beside the plot, centred on plot and panel together, so
-  // the spectrum can fill the frame's height.
+  // The legend takes the top two fifths of the frame.
   const Int_t plot_h = 800, panel_h = 300;
-  const Double_t data_share = 0.93;
-  TPad *plot = nullptr, *legend_pad = nullptr;
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
-      plot, legend_pad, (Int_t)PlottingUtils::LegendWidthPx(labels),
-      plot_h + panel_h);
+  const Double_t data_share = 0.6;
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  canvas->SetCanvasSize(canvas_w, plot_h + panel_h);
   TPad *upper = nullptr, *lower = nullptr;
-  PlottingUtils::SplitPadForPanel(plot, panel_h, upper, lower);
+  PlottingUtils::SplitPadForPanel(canvas, panel_h, upper, lower);
+  const Bool_t wider = canvas_w != LETTER_CANVAS_W;
+  if (wider) {
+    const Double_t margin_share = Double_t(LETTER_CANVAS_W) / canvas_w;
+    TPad *pads[2] = {upper, lower};
+    for (Int_t p = 0; p < 2; p++) {
+      pads[p]->SetLeftMargin(pads[p]->GetLeftMargin() * margin_share);
+      pads[p]->SetRightMargin(pads[p]->GetRightMargin() * margin_share);
+    }
+  }
   upper->cd();
   PlottingUtils::ConfigureHistogram(
       data, kBlack, Form(";Energy [keV];Counts / %.0f eV", bin_ev));
@@ -249,8 +309,7 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   fit.total->Draw("L SAME");
   data->Draw("E SAME");
 
-  TLegend *leg =
-      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
+  TLegend *leg = FigureStyle::AddFrameLegend(upper, labels, kTRUE);
   leg->AddEntry(data, labels[0], "lep");
   leg->AddEntry(fit.total, labels[1], "l");
   leg->AddEntry(ge, labels[2], "l");
@@ -262,20 +321,28 @@ void DrawFit(const TString &fits_dir, const FigureSpec &figure) {
   lower->cd();
   TH1D *pull_frame =
       FigureStyle::DrawPullPanel(pulls, show_lo, show_hi, "Energy [keV]");
-  PlottingUtils::ScaleFigure(plot);
+  pulls->SetMarkerSize(1.1);
+  PlottingUtils::ScaleFigure(canvas, canvas_w, plot_h);
   // The pull panel's title beside its own short labels, not aligned with the
   // spectrum's.
   FigureStyle::FitTitleToLabels(lower, pull_frame,
                                 FigureStyle::PullPanelLabels());
-  PlottingUtils::SaveFigure(canvas, figure.output_name, "",
-                            PlotSaveOptions::kLINEAR);
+  // On a wider canvas ROOT's own title offset grows with the pad's width and
+  // would leave the narrower margin; set it beside labels of up to three
+  // digits instead.
+  if (wider) {
+    std::vector<TString> linear_labels;
+    linear_labels.push_back("000");
+    FigureStyle::FitTitleToLabels(upper, data, linear_labels);
+  }
+  const TString output_name = prefix + figure.output_name;
+  PlottingUtils::SaveFigure(canvas, output_name, "", PlotSaveOptions::kLINEAR);
   // The log copy: labels at 1 and 5 x 10^n chosen from the data, its title
   // beside them.
   std::vector<TString> log_labels =
       FigureStyle::ConfigureLogYAxis(data, upper, y_min, data_max, data_share);
   FigureStyle::FitTitleToLabels(upper, data, log_labels);
-  PlottingUtils::SaveFigure(canvas, figure.output_name, "",
-                            PlotSaveOptions::kLOG);
+  PlottingUtils::SaveFigure(canvas, output_name, "", PlotSaveOptions::kLOG);
 }
 
 } // namespace
@@ -288,27 +355,39 @@ void FitFigure() {
   TString fits_dir =
       project_root + "/plots/czt/chain/" + PRODUCTION_TAG + "/fits";
   std::vector<FigureSpec> figures;
+  const TString gain_result_path =
+      project_root + "/results/ge_" + PRODUCTION_TAG + ".result";
+  const TString offset_result_path =
+      project_root + "/results/ge_" + OFFSET_TRANSFER_TAG + ".result";
   FigureSpec cu10 = {
       "PostCal_CuShield10_sig_CuShieldSignal_10Percent_20260113_postcal_"
       "CuShield10",
-      "czt_fit_cu10", "Signal run, Cu shield, 10% power", kFALSE};
+      "czt_fit_cu10", "Signal run, Cu shield, 10% power", kFALSE,
+      "Cu_Shield_Signal_10%_(01/13)"};
   FigureSpec cd10 = {
       "PostCal_CdShield10_sig_CdShieldSignal_10Percent_20260113_postcal_"
       "CdShield10",
-      "czt_fit_cd10", "Signal run, Cd shield, 10% power", kFALSE};
+      "czt_fit_cd10", "Signal run, Cd shield, 10% power", kFALSE,
+      "Cd_Shield_Signal_10%_(01/13)"};
   FigureSpec cd25 = {
       "PostCal_CdShield25_sig_CdShieldSignal_25Percent_20260113_postcal_"
       "CdShield25",
-      "czt_fit_cd25", "Signal run, Cd shield, 25% power", kFALSE};
+      "czt_fit_cd25", "Signal run, Cd shield, 25% power", kFALSE,
+      "Cd_Shield_Signal_25%_(01/13)"};
   // Method 2's direct fit of the no-shield run, whose Ge line rises about 10%
   // above the continuum.
   FigureSpec noshield = {
       "Direct_20260115_direct_NoShieldSignal_5Percent_20260115", "czt_fit_0115",
-      "Signal run, no shield, 5% power", kTRUE};
+      "Signal run, no shield, 5% power", kTRUE,
+      "No_Shield_Signal_5%_(01/15)_[direct]"};
   figures.push_back(cu10);
   figures.push_back(cd10);
   figures.push_back(cd25);
   figures.push_back(noshield);
-  for (size_t i = 0; i < figures.size(); i++)
-    DrawFit(fits_dir, figures[i]);
+  for (size_t i = 0; i < figures.size(); i++) {
+    DrawFit(fits_dir, gain_result_path, offset_result_path, figures[i],
+            LETTER_CANVAS_W, "");
+    DrawFit(fits_dir, gain_result_path, offset_result_path, figures[i],
+            DISSERTATION_CANVAS_W, "wide_");
+  }
 }
