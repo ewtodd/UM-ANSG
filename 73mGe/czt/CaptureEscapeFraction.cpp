@@ -22,8 +22,13 @@
 // Te escapes, too weak to fit, follow Cd K-alpha by Geant4's ratios. Binned
 // Poisson likelihood.
 //
-// Writes results/escape_fractions.result and the dissertation's figure of the
-// 01/15 escapes (plots/czt/figures/czt_escapes_0115).
+// The model is also fitted to the Geant4 run of captures in the crystal, its
+// deposits smeared with the escape lines' measured width: the check that the
+// lines, shares and ratios production holds describe the simulated escapes.
+//
+// Writes results/escape_fractions.result and the dissertation's figures of
+// the 01/15 escapes and of the model on the simulation
+// (plots/czt/figures/czt_escapes_0115, log_czt_escapes_geant4).
 //
 // Usage: root -b -q 'CaptureEscapeFraction.cpp+'
 #include "Constants.hpp"
@@ -35,6 +40,7 @@
 #include "ReferenceLines.hpp"
 
 #include <TCanvas.h>
+#include <TChain.h>
 #include <TF1.h>
 #include <TFile.h>
 #include <TFitResult.h>
@@ -42,10 +48,13 @@
 #include <TGraphErrors.h>
 #include <TH1D.h>
 #include <TLegend.h>
+#include <TLine.h>
 #include <TMath.h>
 #include <TMatrixDSym.h>
 #include <TPad.h>
+#include <TRandom3.h>
 #include <TString.h>
+#include <TSystem.h>
 #include <TTree.h>
 #include <TVectorD.h>
 
@@ -487,6 +496,29 @@ TGraph *CurveOf(const std::vector<Double_t> &p, Int_t series, Double_t lo,
   return g;
 }
 
+// A fit curve as the production fit figures draw theirs (FitFigure.cpp).
+void StyleCurve(TGraph *g, Color_t color, Style_t style) {
+  PlottingUtils::ConfigureGraph(g, color);
+  g->SetLineStyle(style);
+  g->SetLineWidth(2 * PlottingUtils::GetLineWidth());
+}
+
+// The fitted continuum alone (series = -2), or with one escape series (0-3)
+// or all four (-1) on it.
+TGraph *CurveOnContinuum(const std::vector<Double_t> &p, Int_t series,
+                         Double_t lo, Double_t hi) {
+  const Int_t n_points = 600;
+  TGraph *g = new TGraph(n_points);
+  for (Int_t i = 0; i < n_points; i++) {
+    Double_t x = lo + (hi - lo) * i / (n_points - 1);
+    Double_t lines = (series == -2) ? 0.0 : Escapes(x, p.data(), series);
+    g->SetPoint(i, x, Continuum(x, p.data()) + lines);
+  }
+  return g;
+}
+
+// The window's counts as measured, the fitted line drawn on its own and each
+// escape series drawn on it.
 void DrawEscapeWindow(TH1D *h, const EscapeFit &fit, const TString &name) {
   const std::vector<Double_t> &p = fit.parameters;
   const Double_t lo = INSIDE_WINDOW_LO_KEV, hi = INSIDE_WINDOW_HI_KEV;
@@ -499,20 +531,20 @@ void DrawEscapeWindow(TH1D *h, const EscapeFit &fit, const TString &name) {
       continue;
     Double_t counts = h->GetBinContent(b);
     Double_t error = TMath::Sqrt(TMath::Max(counts, 1.0));
-    Double_t continuum = Continuum(x, p.data());
-    Double_t escapes = Escapes(x, p.data(), -1);
+    Double_t expected = Continuum(x, p.data()) + Escapes(x, p.data(), -1);
     Int_t i = points->GetN();
-    points->SetPoint(i, x, counts - continuum);
-    points->SetPointError(i, 0.0, error);
-    pulls->SetPoint(pulls->GetN(), x, (counts - continuum - escapes) / error);
+    points->SetPoint(i, x, counts);
+    points->SetPointError(i, 0.5 * h->GetBinWidth(1), error);
+    pulls->SetPoint(pulls->GetN(), x, (counts - expected) / error);
   }
 
-  TGraph *total = CurveOf(p, -1, lo, hi);
-  TGraph *cd_kbeta = CurveOf(p, 1, lo, hi);
-  TGraph *cd_kalpha = CurveOf(p, 0, lo, hi);
-  TGraph *te_kalpha = CurveOf(p, 2, lo, hi);
+  TGraph *total = CurveOnContinuum(p, -1, lo, hi);
+  TGraph *continuum = CurveOnContinuum(p, -2, lo, hi);
+  TGraph *cd_kbeta = CurveOnContinuum(p, 1, lo, hi);
+  TGraph *cd_kalpha = CurveOnContinuum(p, 0, lo, hi);
+  TGraph *te_kalpha = CurveOnContinuum(p, 2, lo, hi);
 
-  Double_t y_min = 0, y_max = 0;
+  Double_t y_min = points->GetY()[0], y_max = points->GetY()[0];
   for (Int_t i = 0; i < points->GetN(); i++) {
     y_min = TMath::Min(y_min, points->GetY()[i] - points->GetEY()[i]);
     y_max = TMath::Max(y_max, points->GetY()[i] + points->GetEY()[i]);
@@ -522,8 +554,9 @@ void DrawEscapeWindow(TH1D *h, const EscapeFit &fit, const TString &name) {
             << std::setprecision(1) << fit.chi2 << " / " << fit.ndf << " = "
             << std::setprecision(3) << fit.chi2 / fit.ndf << std::endl;
   std::vector<TString> labels;
-  labels.push_back("Active background run with continuum removed");
+  labels.push_back("Active background run");
   labels.push_back(Form("Fit, #chi^{2}/ndf = %.3f", fit.chi2 / fit.ndf));
+  labels.push_back("Linear continuum");
   labels.push_back("Cd K#beta escapes");
   labels.push_back("Te K#alpha escapes");
   labels.push_back("Cd K#alpha escapes");
@@ -539,18 +572,23 @@ void DrawEscapeWindow(TH1D *h, const EscapeFit &fit, const TString &name) {
   frame->SetStats(kFALSE);
   PlottingUtils::ConfigureHistogram(
       frame, kBlack, Form(";Energy [keV];Counts / %.0f eV", bin_ev));
+  // The legend's six rows above the spectrum.
   frame->SetMinimum(y_min - 0.1 * (y_max - y_min));
-  frame->SetMaximum(y_max + 1.15 * (y_max - y_min));
+  frame->SetMaximum(y_max + 1.4 * (y_max - y_min));
+  // Counts in thousands, as on the production fit figures.
+  frame->GetYaxis()->SetMaxDigits(3);
   frame->GetXaxis()->SetLabelSize(0);
   frame->GetXaxis()->SetTitleSize(0);
   frame->Draw("AXIS");
   PlottingUtils::ConfigureGraph(points, kBlack, "");
   points->SetMarkerStyle(20);
   points->SetMarkerSize(0.9);
-  PlottingUtils::ConfigureGraph(cd_kbeta, kAzure + 2, "");
-  PlottingUtils::ConfigureGraph(te_kalpha, kGreen + 2, "");
-  PlottingUtils::ConfigureGraph(cd_kalpha, kMagenta + 1, "");
-  PlottingUtils::ConfigureGraph(total, kRed + 1, "");
+  StyleCurve(continuum, kGray + 2, 2);
+  StyleCurve(cd_kbeta, kAzure + 2, 1);
+  StyleCurve(te_kalpha, kGreen + 2, 1);
+  StyleCurve(cd_kalpha, kMagenta + 1, 1);
+  StyleCurve(total, kRed + 1, 1);
+  continuum->Draw("L SAME");
   cd_kalpha->Draw("L SAME");
   te_kalpha->Draw("L SAME");
   cd_kbeta->Draw("L SAME");
@@ -560,14 +598,266 @@ void DrawEscapeWindow(TH1D *h, const EscapeFit &fit, const TString &name) {
   TLegend *leg = FigureStyle::AddFrameLegend(upper, labels, kTRUE, kTRUE, 70.0);
   leg->AddEntry(points, labels[0], "lep");
   leg->AddEntry(total, labels[1], "l");
-  leg->AddEntry(cd_kbeta, labels[2], "l");
-  leg->AddEntry(te_kalpha, labels[3], "l");
-  leg->AddEntry(cd_kalpha, labels[4], "l");
+  leg->AddEntry(continuum, labels[2], "l");
+  leg->AddEntry(cd_kbeta, labels[3], "l");
+  leg->AddEntry(te_kalpha, labels[4], "l");
+  leg->AddEntry(cd_kalpha, labels[5], "l");
 
   lower->cd();
-  FigureStyle::DrawPullPanel(pulls, lo, hi, "Energy [keV]");
+  TH1D *pull_frame = FigureStyle::DrawPullPanel(pulls, lo, hi, "Energy [keV]");
+  pulls->SetMarkerSize(1.1);
   PlottingUtils::ScaleFigure(canvas, canvas_w, plot_h);
+  // Each title beside its own labels.
+  FigureStyle::FitTitleToLabels(lower, pull_frame,
+                                FigureStyle::PullPanelLabels());
+  std::vector<TString> y_labels;
+  y_labels.push_back("000");
+  FigureStyle::FitTitleToLabels(upper, frame, y_labels);
   PlottingUtils::SaveFigure(canvas, name, "", PlotSaveOptions::kLINEAR);
+}
+
+// ------------------------------------- the escape model on the simulation
+
+// The Geant4 run of captures in the crystal whose escape ratios the fits
+// hold (geant4/Escape96Plots.cpp counts them), its deposits smeared event by
+// event with the escape lines' measured width and fitted with production's
+// escape model: the lines at the capture line's energy (95.902 keV, as
+// simulated) minus the SRD 128 X-ray energies with Geant4's shares, Cd
+// K-alpha held to Cd K-beta and the Te series to Cd K-alpha by Geant4's
+// ratios, one free yield on a linear continuum. The smearing is Gaussian, so
+// the lines are too (no tail). As a check, the two Cd series are fitted apart.
+const char *const GEANT4_IN_CRYSTAL_DIR = "/root_files/geant4/czt96_surface";
+const Double_t GEANT4_FIT_LO_KEV = 60.0, GEANT4_FIT_HI_KEV = 80.0;
+const Double_t GEANT4_BIN_KEV = 0.25;
+const UInt_t GEANT4_SMEAR_SEED = 20261126;
+// The spectrum's top at this share of the log frame (the legend is beside it).
+const Double_t GEANT4_DATA_SHARE = 0.93;
+const Double_t GE_LINE_KEV = ReferenceLines::GE73M_ENSDF;
+
+struct Geant4Fit {
+  Bool_t valid = kFALSE;
+  Double_t chi2 = 0;
+  Int_t ndf = 0;
+  Double_t cd_ka_over_kb_apart = 0, cd_ka_over_kb_apart_err = 0;
+  std::vector<Double_t> parameters;
+};
+
+// The run's deposits in every crystal, each moved by a Gaussian of width
+// sigma (keV), in [lo, hi].
+TH1D *SmearedGeant4Run(const TString &dir, Double_t sigma, Double_t lo,
+                       Double_t hi, Double_t bin_kev) {
+  const Int_t n_bins = (Int_t)((hi - lo) / bin_kev + 0.5);
+  TH1D *h = new TH1D("geant4_in_crystal_smeared", "", n_bins, lo, hi);
+  h->SetDirectory(nullptr);
+  TRandom3 rng(GEANT4_SMEAR_SEED);
+  for (Int_t crystal = 0; crystal < 4; crystal++) {
+    TChain chain(Form("CZT_%d", crystal));
+    // The sim merges its per-thread files into output0.root; older runs
+    // kept one file per thread.
+    if (gSystem->AccessPathName(dir + "/output0.root"))
+      chain.Add(dir + "/output0_t*.root");
+    else
+      chain.Add(dir + "/output0.root");
+    if (chain.GetEntries() == 0)
+      continue;
+    Double_t edep = 0;
+    chain.SetBranchStatus("*", 0);
+    chain.SetBranchStatus("fEDep", 1);
+    chain.SetBranchAddress("fEDep", &edep);
+    const Long64_t n_entries = chain.GetEntries();
+    for (Long64_t i = 0; i < n_entries; i++) {
+      chain.GetEntry(i);
+      if (edep < lo - 6.0 * sigma || edep > hi + 6.0 * sigma)
+        continue;
+      h->Fill(edep + rng.Gaus(0.0, sigma));
+    }
+  }
+  return h;
+}
+
+// Production's escape model on the smeared run: Cd tied (cd_apart false) or
+// the two Cd series free apart. Binned Poisson likelihood.
+TF1 *FitGeant4Escapes(TH1D *h, Double_t sigma, Bool_t cd_apart) {
+  TF1 *model = new TF1(cd_apart ? "geant4_escapes_apart" : "geant4_escapes",
+                       EscapeWindowModel, GEANT4_FIT_LO_KEV, GEANT4_FIT_HI_KEV,
+                       kNParameters);
+  std::vector<Double_t> p(kNParameters, 0.0);
+  p[kContinuum] = BinAt(h, CONTINUUM_PIVOT_KEV - 3.0);
+  p[kSigma] = sigma;
+  p[kTauOverSigma] = 1.0; // no tail: kTailHeightRatio stays zero
+  p[kBinWidth] = h->GetBinWidth(1);
+  p[kCaptureMu] = ReferenceLines::CD113_CAPTURE;
+  p[kCdKbetaYield] = 0.2 * h->Integral(h->FindBin(68.5), h->FindBin(71.0));
+  p[kCdKalphaYield] = CD_KA_OVER_KB * p[kCdKbetaYield];
+  p[kCdKalphaOverCdKbeta] = cd_apart ? 0.0 : CD_KA_OVER_KB;
+  p[kTeKalphaOverCdKalpha] = GEANT4_INSIDE_TE_KA_OVER_CD_KA;
+  p[kTeKbetaOverTeKalpha] = GEANT4_INSIDE_TE_KB_OVER_TE_KA;
+  p[kPbKalpha2Mu] = ReferenceLines::PB_KA2;
+  p[kPbKalpha1Mu] = ReferenceLines::PB_KA1;
+  model->SetParameters(p.data());
+  for (Int_t k = 0; k < kNParameters; k++)
+    model->FixParameter(k, p[k]);
+  model->ReleaseParameter(kContinuum);
+  model->ReleaseParameter(kSlope);
+  model->ReleaseParameter(kCdKbetaYield);
+  if (cd_apart)
+    model->ReleaseParameter(kCdKalphaYield);
+  h->Fit(model, "QLRN0");
+  return model;
+}
+
+void DrawGeant4Fit(TH1D *h, const Geant4Fit &fit, Double_t sigma,
+                   const TString &name) {
+  const std::vector<Double_t> &p = fit.parameters;
+  const Double_t lo = GEANT4_FIT_LO_KEV, hi = GEANT4_FIT_HI_KEV;
+  TGraphErrors *points = new TGraphErrors();
+  TGraph *pulls = new TGraph();
+  Double_t data_min = 0, data_max = 0;
+  for (Int_t b = 1; b <= h->GetNbinsX(); b++) {
+    const Double_t x = h->GetBinCenter(b);
+    const Double_t counts = h->GetBinContent(b);
+    const Double_t error = TMath::Sqrt(TMath::Max(counts, 1.0));
+    const Double_t expected = Continuum(x, p.data()) + Escapes(x, p.data(), -1);
+    const Int_t i = points->GetN();
+    points->SetPoint(i, x, counts);
+    points->SetPointError(i, 0.5 * h->GetBinWidth(1), error);
+    pulls->SetPoint(pulls->GetN(), x, (counts - expected) / error);
+    data_min = (i == 0) ? counts : TMath::Min(data_min, counts);
+    data_max = TMath::Max(data_max, counts);
+  }
+
+  const Int_t n_curve = 800;
+  TGraph *total = new TGraph(n_curve);
+  TGraph *continuum = new TGraph(n_curve);
+  for (Int_t i = 0; i < n_curve; i++) {
+    const Double_t x = lo + (hi - lo) * i / (n_curve - 1);
+    total->SetPoint(i, x, Continuum(x, p.data()) + Escapes(x, p.data(), -1));
+    continuum->SetPoint(i, x, Continuum(x, p.data()));
+  }
+  const Int_t n_series = 4;
+  const char *series_labels[n_series] = {
+      "Cd K#alpha escapes", "Cd K#beta escapes", "Te K#alpha escapes",
+      "Te K#beta escapes"};
+  const Int_t series_colors[n_series] = {kMagenta + 1, kAzure + 2, kGreen + 2,
+                                         kOrange + 7};
+  TGraph *series[n_series];
+  for (Int_t s = 0; s < n_series; s++)
+    series[s] = CurveOf(p, s, lo, hi);
+
+  std::cout << "FIGURE " << name << ": Pearson chi2 " << std::fixed
+            << std::setprecision(1) << fit.chi2 << " / " << fit.ndf << " = "
+            << std::setprecision(3) << fit.chi2 / fit.ndf << std::endl;
+  std::vector<TString> labels;
+  labels.push_back(
+      Form("Geant4, captures in the crystal, #sigma = %.0f eV", 1000 * sigma));
+  labels.push_back(Form("Fit, #chi^{2}/ndf = %.3f", fit.chi2 / fit.ndf));
+  labels.push_back("Continuum");
+  for (Int_t s = 0; s < n_series; s++)
+    labels.push_back(series_labels[s]);
+  labels.push_back("^{73}Ge 68.752 keV #gamma ray");
+
+  // Eight entries: the legend beside the plot and its pull panel.
+  const Int_t plot_h = 800, panel_h = 300;
+  TPad *plot = nullptr, *legend_pad = nullptr;
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
+      plot, legend_pad, (Int_t)PlottingUtils::LegendWidthPx(labels),
+      plot_h + panel_h);
+  TPad *upper = nullptr, *lower = nullptr;
+  PlottingUtils::SplitPadForPanel(plot, panel_h, upper, lower);
+  upper->cd();
+  TH1D *frame = new TH1D("geant4_escape_frame", "", 100, lo, hi);
+  frame->SetDirectory(nullptr);
+  frame->SetStats(kFALSE);
+  PlottingUtils::ConfigureHistogram(
+      frame, kBlack,
+      Form(";Deposited Energy [keV];Counts / %.0f eV",
+           1000.0 * h->GetBinWidth(1)));
+  frame->GetXaxis()->SetLabelSize(0);
+  frame->GetXaxis()->SetTitleSize(0);
+  frame->Draw("AXIS");
+  // Log only: labels at 1 and 5 x 10^n chosen from the data.
+  const std::vector<TString> y_labels = FigureStyle::ConfigureLogYAxis(
+      frame, upper, 0.5 * data_min, data_max, GEANT4_DATA_SHARE);
+  PlottingUtils::ConfigureGraph(points, kBlack, "");
+  points->SetMarkerStyle(20);
+  points->SetMarkerSize(0.9);
+  StyleCurve(continuum, kGray + 2, 2);
+  for (Int_t s = 0; s < n_series; s++)
+    StyleCurve(series[s], series_colors[s], 1);
+  StyleCurve(total, kRed + 1, 1);
+  TLine *ge = new TLine(GE_LINE_KEV, frame->GetMinimum(), GE_LINE_KEV,
+                        frame->GetMaximum());
+  ge->SetLineColor(kViolet);
+  ge->SetLineStyle(2);
+  ge->SetLineWidth(PlottingUtils::GetLineWidth());
+  ge->Draw();
+  continuum->Draw("L SAME");
+  for (Int_t s = 0; s < n_series; s++)
+    series[s]->Draw("L SAME");
+  total->Draw("L SAME");
+  points->Draw("P SAME");
+
+  TLegend *leg =
+      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
+  leg->AddEntry(points, labels[0], "lep");
+  leg->AddEntry(total, labels[1], "l");
+  leg->AddEntry(continuum, labels[2], "l");
+  for (Int_t s = 0; s < n_series; s++)
+    leg->AddEntry(series[s], labels[3 + s], "l");
+  leg->AddEntry(ge, labels[3 + n_series], "l");
+
+  lower->cd();
+  TH1D *pull_frame =
+      FigureStyle::DrawPullPanel(pulls, lo, hi, "Deposited Energy [keV]");
+  pulls->SetMarkerSize(1.1);
+  PlottingUtils::ScaleFigure(plot);
+  // Each title beside its own labels.
+  FigureStyle::FitTitleToLabels(lower, pull_frame,
+                                FigureStyle::PullPanelLabels());
+  FigureStyle::FitTitleToLabels(upper, frame, y_labels);
+  PlottingUtils::SaveFigure(canvas, name, "", PlotSaveOptions::kLOG);
+}
+
+Geant4Fit FitGeant4InCrystal(const TString &project_root, Double_t sigma) {
+  Geant4Fit out;
+  TH1D *h =
+      SmearedGeant4Run(project_root + GEANT4_IN_CRYSTAL_DIR, sigma,
+                       GEANT4_FIT_LO_KEV, GEANT4_FIT_HI_KEV, GEANT4_BIN_KEV);
+  if (h->GetEntries() == 0) {
+    std::cout << "ERROR: no Geant4 output in " << project_root
+              << GEANT4_IN_CRYSTAL_DIR << std::endl;
+    delete h;
+    return out;
+  }
+  TF1 *tied = FitGeant4Escapes(h, sigma, kFALSE);
+  Double_t baker_cousins = 0;
+  WindowChi2(h, *tied, GEANT4_FIT_LO_KEV, GEANT4_FIT_HI_KEV, 3, out.chi2,
+             out.ndf, baker_cousins);
+  out.parameters.assign(tied->GetParameters(),
+                        tied->GetParameters() + kNParameters);
+  TF1 *apart = FitGeant4Escapes(h, sigma, kTRUE);
+  const Double_t ka = apart->GetParameter(kCdKalphaYield);
+  const Double_t kb = apart->GetParameter(kCdKbetaYield);
+  out.cd_ka_over_kb_apart = ka / kb;
+  out.cd_ka_over_kb_apart_err =
+      out.cd_ka_over_kb_apart *
+      TMath::Sqrt(TMath::Power(apart->GetParError(kCdKalphaYield) / ka, 2) +
+                  TMath::Power(apart->GetParError(kCdKbetaYield) / kb, 2));
+  std::cout << std::fixed << "Geant4 in-crystal escapes, smeared with sigma "
+            << std::setprecision(4) << sigma
+            << " keV: " << (Long64_t)h->GetEntries() << " deposits in "
+            << std::setprecision(1) << GEANT4_FIT_LO_KEV << "-"
+            << GEANT4_FIT_HI_KEV << " keV; production's model chi2 " << out.chi2
+            << " / " << out.ndf << "; Cd fitted apart: K-alpha / "
+            << "K-beta " << std::setprecision(3) << out.cd_ka_over_kb_apart
+            << " +/- " << out.cd_ka_over_kb_apart_err << " (held at "
+            << CD_KA_OVER_KB << ")" << std::endl;
+  out.valid = kTRUE;
+  DrawGeant4Fit(h, out, sigma, "czt_escapes_geant4");
+  delete tied;
+  delete apart;
+  delete h;
+  return out;
 }
 
 // ------------------------------------------------ unbinned in-crystal fit
@@ -828,6 +1118,9 @@ EscapeFit AsBinnedFit(const UnbinnedFit &fit, TH1D *display,
 struct InsideResult {
   Bool_t valid = kFALSE;
   Double_t cd_kbeta = 0, stat = 0, model = 0, total = 0;
+  // The escape lines' width (the 01/15 capture line's) and the alternative,
+  // the Am-241 and Ba-133 photopeak width near the Ge line; keV.
+  Double_t capture_sigma = 0, photopeak_sigma = 0;
 };
 
 InsideResult MeasureInside(const TString &project_root,
@@ -957,6 +1250,8 @@ InsideResult MeasureInside(const TString &project_root,
     return out;
   }
   out.total = TMath::Sqrt(out.stat * out.stat + out.model * out.model);
+  out.capture_sigma = line.sigma;
+  out.photopeak_sigma = photopeak_sigma;
   out.valid = kTRUE;
 
   EscapeFit shown = AsBinnedFit(measurement, hists[0], line, line.sigma, shape);
@@ -1060,6 +1355,8 @@ void CaptureEscapeFraction() {
   InsideResult inside = MeasureInside(project_root, calibrated_dir, fits_dir);
   if (!inside.valid)
     return;
+  const Geant4Fit geant4 =
+      FitGeant4InCrystal(project_root, inside.capture_sigma);
   const Double_t ratio = CD_KA_OVER_KB;
   const Double_t kbeta = inside.cd_kbeta;
   const Double_t measured[4] = {ratio * kbeta, kbeta,
@@ -1119,6 +1416,29 @@ void CaptureEscapeFraction() {
   out << "inside_cd_kbeta_err_alternatives " << inside.model << std::endl;
   out << "inside_cd_kbeta_err " << inside.total << std::endl;
   out << "inside_relative_err " << inside.total / kbeta << std::endl;
+  out << "# The escape lines' Gaussian width, the 01/15 capture line's, and "
+         "the alternative, the Am-241 and Ba-133 photopeak width near the Ge "
+         "line (Escape96Plots.cpp smears the Geant4 spectrum with the first). "
+         "keV."
+      << std::endl;
+  out << "capture_sigma " << inside.capture_sigma << std::endl;
+  out << "photopeak_sigma " << inside.photopeak_sigma << std::endl;
+  if (geant4.valid) {
+    out << "# Production's escape model on the Geant4 in-crystal run smeared "
+           "with capture_sigma, 60-80 keV: Pearson chi2 and ndf, and the Cd "
+           "K-alpha / K-beta ratio with the two series fitted apart (the fits "
+           "hold Geant4's counted ratio)."
+        << std::endl;
+    out << std::setprecision(2) << "geant4_fit_chi2 " << geant4.chi2
+        << std::endl;
+    out << "geant4_fit_ndf " << geant4.ndf << std::endl;
+    out << std::setprecision(4) << "geant4_cd_ka_over_kb_apart "
+        << geant4.cd_ka_over_kb_apart << std::endl;
+    out << "geant4_cd_ka_over_kb_apart_err " << geant4.cd_ka_over_kb_apart_err
+        << std::endl;
+    out << "geant4_cd_ka_over_kb_held " << CD_KA_OVER_KB << std::endl;
+    out << std::setprecision(6);
+  }
   out << "# The escape lines, 95.902 keV minus the SRD 128 X-ray energies, two "
          "per series (Cd K-alpha, Cd K-beta, Te K-alpha, Te K-beta). keV."
       << std::endl;

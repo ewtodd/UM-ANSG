@@ -6,6 +6,12 @@
 // each sub-line's intensity and position; and the four families'
 // intensities across the runs.
 //
+// The dissertation's figures (plots/czt/figures) are the CZT ones: the
+// in-crystal run from 60 to 80 keV, smeared with the escape lines' measured
+// width (results/escape_fractions.result's capture_sigma, so
+// czt/CaptureEscapeFraction.cpp runs first), and the families of captures
+// in the crystal against 95.902 keV photons from outside it.
+//
 // A sub-line's counts are those within 40 eV of it (the sub-lines of the
 // K-beta1' groups, 34-51 eV apart, share one window) less the continuum of
 // side bands 60-120 eV either side, over the full-energy line's counted the
@@ -31,8 +37,11 @@
 #include <TStyle.h>
 #include <TSystem.h>
 
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace Escape96 {
@@ -42,12 +51,21 @@ const Double_t HALF_WINDOW = 0.040, SIDE_NEAR = 0.060, SIDE_FAR = 0.120;
 // The CdTe source runs' Gaussian width near 70 keV (SourceCurvature.cpp).
 const Double_t SMEAR_SIGMA = 0.33;
 const Double_t SHOW_LO = 60.0, SHOW_HI = 97.5;
+// The dissertation's CZT figure: the escapes alone, smeared with the width
+// the CZT fits give the escape lines (CaptureEscapeFraction.cpp's
+// capture_sigma, the 01/15 capture line's).
+const Double_t CZT_SHOW_LO = 60.0, CZT_SHOW_HI = 80.0;
+const Double_t CZT_BIN_KEV = 0.05;
 
 struct Run {
   const char *tag, *label;
 };
 
 const Int_t N_RUNS = 5;
+// The CZT runs the dissertation shows: captures in the crystal, and photons
+// from captures outside it (a Cd shield) onto its face.
+const char *const IN_CRYSTAL_TAG = "czt96_surface";
+const char *const OUTSIDE_TAG = "czt96_beam";
 const Run RUNS[N_RUNS] = {{"cdte96_surface", "CdTe, captures near surface"},
                           {"cdte96_surface_noconv", "CdTe, no conversion"},
                           {"cdte96_beam", "CdTe, external beam"},
@@ -74,7 +92,7 @@ const char *const FAMILY_NAME[N_FAMILIES] = {"Cd K#alpha", "Cd K#beta",
                                              "Te K#alpha", "Te K#beta"};
 const Int_t FAMILY_COLOR[N_FAMILIES] = {kRed + 1, kOrange + 7, kBlue + 1,
                                         kAzure + 7};
-const char *const GE_LABEL = "^{73m}Ge 68.752 keV";
+const char *const GE_LABEL = "^{73}Ge 68.752 keV #gamma ray";
 
 struct Counted {
   Double_t counts = 0, err = 0, mean = 0, mode = 0;
@@ -110,6 +128,20 @@ Counted CountWindow(TH1D *h, Double_t lo, Double_t hi) {
   return c;
 }
 
+// A "key value" line's value from a results file; 0 if it is not there.
+Double_t ReadResultValue(const TString &path, const TString &key) {
+  std::ifstream in(path.Data());
+  std::string line;
+  while (std::getline(in, line)) {
+    std::istringstream fields(line);
+    std::string name;
+    Double_t value = 0;
+    if (fields >> name >> value && TString(name) == key)
+      return value;
+  }
+  return 0;
+}
+
 // Every crystal's deposits of one run, in 1 eV bins.
 TH1D *LoadRun(const TString &dir, const TString &name) {
   TH1D *h = new TH1D(name, "", 50000, 50.0, 100.0);
@@ -135,10 +167,12 @@ TH1D *LoadRun(const TString &dir, const TString &name) {
   return h;
 }
 
-// h folded with a Gaussian of width sigma (keV), into bins of width_kev.
-TH1D *Smear(TH1D *h, Double_t sigma, Double_t width_kev, const TString &name) {
-  Int_t n_out = (Int_t)((SHOW_HI - SHOW_LO) / width_kev + 0.5);
-  TH1D *out = new TH1D(name, "", n_out, SHOW_LO, SHOW_HI);
+// h folded with a Gaussian of width sigma (keV), into bins of width_kev
+// over [lo, hi].
+TH1D *Smear(TH1D *h, Double_t sigma, Double_t width_kev, const TString &name,
+            Double_t lo = SHOW_LO, Double_t hi = SHOW_HI) {
+  Int_t n_out = (Int_t)((hi - lo) / width_kev + 0.5);
+  TH1D *out = new TH1D(name, "", n_out, lo, hi);
   out->SetDirectory(nullptr);
   for (Int_t b = 1; b <= h->GetNbinsX(); b++) {
     Double_t n = h->GetBinContent(b);
@@ -173,8 +207,10 @@ void MarkLines(Double_t y_lo, Double_t y_hi, TLegend *leg) {
   TLine *ge = new TLine(ReferenceLines::GE73M_ENSDF, y_lo,
                         ReferenceLines::GE73M_ENSDF, y_hi);
   ge->SetLineColor(kGreen + 2);
-  ge->SetLineWidth(2);
-  ge->SetLineStyle(3);
+  // Solid, to stand out from the dashed escapes: the Te K-alpha2 escape lies
+  // 52 eV below it.
+  ge->SetLineWidth(2 * PlottingUtils::GetLineWidth());
+  ge->SetLineStyle(1);
   ge->Draw();
   leg->AddEntry(ge, GE_LABEL, "l");
 }
@@ -182,7 +218,8 @@ void MarkLines(Double_t y_lo, Double_t y_hi, TLegend *leg) {
 const Int_t PLOT_HEIGHT_PX = 800;
 
 void PlotSpectrum(TH1D *h, const TString &title, const TString &label,
-                  const TString &note, const TString &name) {
+                  const TString &note, const TString &name,
+                  Double_t show_lo = SHOW_LO, Double_t show_hi = SHOW_HI) {
   std::vector<TString> labels;
   labels.push_back(note);
   for (Int_t f = 0; f < N_FAMILIES; f++)
@@ -196,17 +233,54 @@ void PlotSpectrum(TH1D *h, const TString &title, const TString &label,
   h->SetTitle(title);
   h->SetStats(0);
   h->SetLineColor(kBlack);
-  h->GetXaxis()->SetRangeUser(SHOW_LO, SHOW_HI);
+  h->GetXaxis()->SetRangeUser(show_lo, show_hi);
   Double_t y_lo = 0.5 * TMath::Max(h->GetMinimum(0), 1.0);
   Double_t data_max = h->GetMaximum();
   h->SetMinimum(y_lo);
-  h->SetMaximum(5.0 * data_max);
+  const Double_t y_hi = 5.0 * data_max;
+  h->SetMaximum(y_hi);
   h->Draw("hist");
   TLegend *leg =
       PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size() + 1);
   leg->SetHeader(label);
   leg->AddEntry((TObject *)nullptr, note, "");
-  MarkLines(y_lo, 2.0 * data_max, leg);
+  // The marks span the whole frame.
+  MarkLines(y_lo, y_hi, leg);
+  PlottingUtils::SaveFigure(canvas, name, "", PlotSaveOptions::kLOG);
+}
+
+// The four families' intensities, one bar per run.
+void PlotFamilies(const std::vector<TH1D *> &hists,
+                  const std::vector<TString> &labels,
+                  const std::vector<Int_t> &colors, const TString &title,
+                  const TString &name) {
+  TPad *plot = nullptr, *legend_pad = nullptr;
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
+      plot, legend_pad, (Int_t)PlottingUtils::LegendWidthPx(labels),
+      PLOT_HEIGHT_PX, kTRUE);
+  TLegend *leg =
+      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
+  plot->cd();
+  gStyle->SetPaintTextFormat(".2f");
+  const Double_t width = 0.8 / hists.size();
+  for (size_t k = 0; k < hists.size(); k++) {
+    TH1D *fam = hists[k];
+    for (Int_t f = 0; f < N_FAMILIES; f++)
+      fam->GetXaxis()->SetBinLabel(f + 1, FAMILY_NAME[f]);
+    fam->SetStats(0);
+    fam->SetTitle(title);
+    fam->SetFillColor(colors[k]);
+    fam->SetLineColor(colors[k]);
+    fam->SetBarWidth(width);
+    fam->SetBarOffset(0.1 + width * k);
+    fam->SetMinimum(0.03);
+    fam->SetMaximum(20.0);
+    // The bar values' text size (marker size times the style's), legible
+    // when the figure is printed at a page's width.
+    fam->SetMarkerSize(2.0);
+    fam->Draw(k == 0 ? "bar text0" : "bar text0 same");
+    leg->AddEntry(fam, labels[k], "f");
+  }
   PlottingUtils::SaveFigure(canvas, name, "", PlotSaveOptions::kLOG);
 }
 
@@ -220,6 +294,13 @@ void Escape96Plots() {
       project_root + "/root_files");
   std::vector<TH1D *> family_hists;
   std::vector<Int_t> shown;
+  TH1D *in_crystal_smeared = nullptr;
+  const Double_t czt_sigma = ReadResultValue(
+      project_root + "/results/escape_fractions.result", "capture_sigma");
+  if (czt_sigma <= 0)
+    std::cout << "ESCAPE96 no capture_sigma in results/escape_fractions.result "
+                 "(run czt/CaptureEscapeFraction.cpp); no CZT spectrum figure"
+              << std::endl;
   for (Int_t r = 0; r < N_RUNS; r++) {
     TString dir = project_root + "/root_files/geant4/" + RUNS[r].tag;
     TH1D *h = LoadRun(dir, Form("run_%d", r));
@@ -276,6 +357,10 @@ void Escape96Plots() {
     TH1D *sharp = (TH1D *)h->Rebin(10, Form("sharp_%d", r));
     PlotSpectrum(sharp, ";Deposited energy [keV];Counts / 10 eV", RUNS[r].label,
                  "as simulated", TString("escape96_") + RUNS[r].tag);
+    if (TString(RUNS[r].tag) == IN_CRYSTAL_TAG && czt_sigma > 0)
+      in_crystal_smeared =
+          Smear(h, czt_sigma, CZT_BIN_KEV, "czt_in_crystal_smeared",
+                CZT_SHOW_LO, CZT_SHOW_HI);
     TH1D *smeared = Smear(h, SMEAR_SIGMA, 0.05, Form("smeared_%d", r));
     PlotSpectrum(smeared, ";Deposited energy [keV];Counts / 50 eV",
                  RUNS[r].label,
@@ -284,36 +369,49 @@ void Escape96Plots() {
     delete h;
   }
 
-  std::vector<TString> labels;
-  for (size_t k = 0; k < shown.size(); k++)
-    labels.push_back(RUNS[shown[k]].label);
-  TPad *plot = nullptr, *legend_pad = nullptr;
-  TCanvas *canvas = PlottingUtils::GetConfiguredCanvasWithSideLegend(
-      plot, legend_pad, (Int_t)PlottingUtils::LegendWidthPx(labels),
-      PLOT_HEIGHT_PX, kTRUE);
-  TLegend *leg =
-      PlottingUtils::AddSideLegend(plot, legend_pad, (Int_t)labels.size());
-  gStyle->SetPaintTextFormat(".2f");
   const Int_t run_color[N_RUNS] = {kRed + 1, kMagenta + 1, kOrange + 7,
                                    kBlue + 1, kAzure + 7};
-  const Double_t width = 0.8 / N_RUNS;
-  for (size_t k = 0; k < family_hists.size(); k++) {
-    TH1D *fam = family_hists[k];
-    Int_t r = shown[k];
-    for (Int_t f = 0; f < N_FAMILIES; f++)
-      fam->GetXaxis()->SetBinLabel(f + 1, FAMILY_NAME[f]);
-    fam->SetStats(0);
-    fam->SetTitle(";Escape family;Escape / full-energy counts [%]");
-    fam->SetFillColor(run_color[r]);
-    fam->SetLineColor(run_color[r]);
-    fam->SetBarWidth(width);
-    fam->SetBarOffset(0.1 + width * k);
-    fam->SetMinimum(0.03);
-    fam->SetMaximum(20.0);
-    fam->SetMarkerSize(1.2);
-    fam->Draw(k == 0 ? "bar text0" : "bar text0 same");
-    leg->AddEntry(fam, RUNS[r].label, "f");
+  std::vector<TString> labels;
+  std::vector<Int_t> colors;
+  for (size_t k = 0; k < shown.size(); k++) {
+    labels.push_back(RUNS[shown[k]].label);
+    colors.push_back(run_color[shown[k]]);
   }
-  PlottingUtils::SaveFigure(canvas, "escape96_families", "",
-                            PlotSaveOptions::kLOG);
+  PlotFamilies(family_hists, labels, colors,
+               ";Escape family;Escape / full-energy counts [%]",
+               "escape96_families");
+
+  // The dissertation's figures (plots/czt/figures): the in-crystal run whose
+  // ratios the CZT fits take (GainTransferFit.hpp's GEANT4_INSIDE_*), and
+  // the CZT runs' families, captures in the crystal against 95.902 keV
+  // photons from outside it (ESCAPES_OUTSIDE, the Cd shield's).
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNGAndPDF,
+                                project_root + "/plots/czt/figures",
+                                project_root + "/root_files");
+  if (in_crystal_smeared)
+    PlotSpectrum(
+        in_crystal_smeared,
+        Form(";Deposited Energy [keV];Counts / %.0f eV", 1000.0 * CZT_BIN_KEV),
+        "Geant4, captures in the crystal",
+        Form("smeared, #sigma = %.0f eV", 1000.0 * czt_sigma),
+        "czt_escape96_simulated", CZT_SHOW_LO, CZT_SHOW_HI);
+  std::vector<TH1D *> czt_hists;
+  std::vector<TString> czt_labels;
+  std::vector<Int_t> czt_colors;
+  for (size_t k = 0; k < shown.size(); k++) {
+    const TString tag = RUNS[shown[k]].tag;
+    if (tag == IN_CRYSTAL_TAG) {
+      czt_hists.push_back(family_hists[k]);
+      czt_labels.push_back("Captures in the crystal");
+      czt_colors.push_back(kBlue + 1);
+    } else if (tag == OUTSIDE_TAG) {
+      czt_hists.push_back(family_hists[k]);
+      czt_labels.push_back("95.902 keV photons from outside");
+      czt_colors.push_back(kAzure + 7);
+    }
+  }
+  if (!czt_hists.empty())
+    PlotFamilies(czt_hists, czt_labels, czt_colors,
+                 ";Escaping X Ray;Escape / Full-Energy Counts [%]",
+                 "czt_escape96_families");
 }

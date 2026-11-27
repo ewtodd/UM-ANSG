@@ -8,6 +8,15 @@ inside_cd_kbeta_err_stat 0.001579
 inside_cd_kbeta_err_alternatives 0.000765
 inside_cd_kbeta_err 0.001755
 inside_relative_err 0.124963
+# The escape lines' Gaussian width, the 01/15 capture line's, and the alternative, the Am-241 and Ba-133 photopeak width near the Ge line (Escape96Plots.cpp smears the Geant4 spectrum with the first). keV.
+capture_sigma 0.836992
+photopeak_sigma 0.809860
+# Production's escape model on the Geant4 in-crystal run smeared with capture_sigma, 60-80 keV: Pearson chi2 and ndf, and the Cd K-alpha / K-beta ratio with the two series fitted apart (the fits hold Geant4's counted ratio).
+geant4_fit_chi2 198.54
+geant4_fit_ndf 77
+geant4_cd_ka_over_kb_apart 3.6854
+geant4_cd_ka_over_kb_apart_err 0.0091
+geant4_cd_ka_over_kb_held 3.6710
 # The escape lines, 95.902 keV minus the SRD 128 X-ray energies, two per series (Cd K-alpha, Cd K-beta, Te K-alpha, Te K-beta). keV.
 escape_line_cd_kalpha_1 72.728
 escape_line_cd_kalpha_2 72.918
