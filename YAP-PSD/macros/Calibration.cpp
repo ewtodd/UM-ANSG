@@ -200,6 +200,33 @@ TF1 *CreateAndSaveCalibration(const CalibrationData &cal_data) {
   return quadratic_fit;
 }
 
+// The subplot labels of the light-output spectra, in the order of
+// Constants::ALL_OUTPUT_NAMES; the mixed sources get none.
+const std::vector<TString> LIGHT_OUTPUT_SUBPLOT_LABELS = {
+    "(a) Am-241", "(a) Cs-137", "(b) Na-22", "(b) Co-60", "", "", ""};
+
+// Draws one source's light-output spectrum and saves it as
+// log_<input_name>_light_output.
+void DrawLightOutputSpectrum(TH1F *light_output_hist, Int_t color,
+                             const TString &subplot_label,
+                             const TString &input_name) {
+  TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
+  // The x title ends in a subscript, which needs more room below the axis
+  // than plain text.
+  canvas->SetBottomMargin(canvas->GetBottomMargin() + 0.03);
+  PlottingUtils::ConfigureAndDrawHistogram(
+      light_output_hist, color,
+      Form(";Light Output [keV_{ee}#kern[0.15]{]};Counts / %d keV_{ee}",
+           Constants::LO_BIN_WIDTH));
+
+  TLatex *label = PlottingUtils::AddText(subplot_label, 0.82, 0.82);
+  label->SetTextSize(35);
+
+  PlottingUtils::SaveFigure(canvas, input_name + "_light_output", "",
+                            PlotSaveOptions::kLOG);
+  delete canvas;
+}
+
 void LongIntegralToLightOutput(const std::vector<TString> &input_names,
                                TF1 *calibration_function) {
 
@@ -213,21 +240,14 @@ void LongIntegralToLightOutput(const std::vector<TString> &input_names,
   delete calibration_file;
 
   std::vector<Int_t> colors = PlottingUtils::GetDefaultColors();
-  std::vector<TString> subplot_labels = {
-      "(a) Am-241", "(a) Cs-137", "(b) Na-22", "(b) Co-60", "", "", ""};
 
   for (size_t i = 0; i < input_names.size(); i++) {
     TString input_name = input_names[i];
     Int_t color = colors[i % colors.size()];
 
     TH1F *light_output_hist =
-        new TH1F("",
-                 Form("; Light Output [keVee]; Counts / %.1d keVee",
-                      Constants::LO_BIN_WIDTH),
-                 Constants::LO_HIST_NBINS, Constants::LO_HIST_XMIN,
+        new TH1F("", "", Constants::LO_HIST_NBINS, Constants::LO_HIST_XMIN,
                  Constants::LO_HIST_XMAX);
-
-    TCanvas *canvas = PlottingUtils::GetConfiguredCanvas(kFALSE);
 
     TString output_filepath =
         project_root + "/root_files/" + input_name + ".root";
@@ -236,7 +256,6 @@ void LongIntegralToLightOutput(const std::vector<TString> &input_names,
     if (!output || output->IsZombie()) {
       std::cerr << "Cannot open " << output_filepath << std::endl;
       delete light_output_hist;
-      delete canvas;
       continue;
     }
 
@@ -249,7 +268,6 @@ void LongIntegralToLightOutput(const std::vector<TString> &input_names,
       output->Close();
       delete output;
       delete light_output_hist;
-      delete canvas;
       continue;
     }
 
@@ -274,19 +292,52 @@ void LongIntegralToLightOutput(const std::vector<TString> &input_names,
       light_output_hist->Fill(light_output_keVee);
     }
 
-    PlottingUtils::ConfigureAndDrawHistogram(light_output_hist, color);
-
-    TLatex *label = PlottingUtils::AddText(subplot_labels[i], 0.82, 0.82);
-    label->SetTextSize(35);
-
-    PlottingUtils::SaveFigure(canvas, input_name + "_light_output", "",
-                              PlotSaveOptions::kLOG);
+    DrawLightOutputSpectrum(light_output_hist, color,
+                            LIGHT_OUTPUT_SUBPLOT_LABELS[i], input_name);
 
     features_tree->Write("", TObject::kOverwrite);
     light_output_hist->Write("Light Output", TObject::kOverwrite);
     output->Close();
     delete output;
-    delete canvas;
+    delete light_output_hist;
+  }
+}
+
+// Redraws every source's light-output spectrum from the histogram that
+// LongIntegralToLightOutput() saved with it, without recalibrating or
+// rewriting the trees.
+void PlotLightOutputSpectra() {
+  const TString project_root = Paths::ProjectRootOf(__FILE__);
+  InitUtils::SetROOTPreferences(Constants::SAVE_FORMAT, project_root + "/plots",
+                                project_root + "/root_files");
+
+  std::vector<Int_t> colors = PlottingUtils::GetDefaultColors();
+
+  for (size_t i = 0; i < Constants::ALL_OUTPUT_NAMES.size(); i++) {
+    const TString input_name = Constants::ALL_OUTPUT_NAMES[i];
+    const TString input_filepath =
+        project_root + "/root_files/" + input_name + ".root";
+    TFile *input = new TFile(input_filepath, "READ");
+    if (!input || input->IsZombie()) {
+      std::cerr << "Cannot open " << input_filepath << std::endl;
+      delete input;
+      continue;
+    }
+
+    TH1F *light_output_hist = static_cast<TH1F *>(input->Get("Light Output"));
+    if (!light_output_hist) {
+      std::cerr << "Cannot find 'Light Output' histogram in " << input_filepath
+                << std::endl;
+      input->Close();
+      delete input;
+      continue;
+    }
+    light_output_hist->SetDirectory(nullptr);
+    input->Close();
+    delete input;
+
+    DrawLightOutputSpectrum(light_output_hist, colors[i % colors.size()],
+                            LIGHT_OUTPUT_SUBPLOT_LABELS[i], input_name);
     delete light_output_hist;
   }
 }

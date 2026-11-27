@@ -370,7 +370,7 @@ void PlotShapeIndicator(const std::vector<TString> output_names) {
     TCanvas *clean_canvas = PlottingUtils::GetConfiguredCanvas();
     PlottingUtils::ConfigureAndDraw2DHistogram(
         clean_shape_indicator_vs_LO, clean_canvas,
-        ";Light Output [keVee]; PSP_{SI}");
+        ";Light Output [keV_{ee}#kern[0.15]{]}; PSP_{SI}");
     PlottingUtils::SaveFigure(clean_canvas, "clean_si_vs_lo_" + output_name, "",
                               PlotSaveOptions::kLINEAR);
 

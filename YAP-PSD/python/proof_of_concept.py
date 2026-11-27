@@ -4,8 +4,8 @@ import pickle
 import ROOT
 from analysis_utilities.io import load_tree_data
 import pandas as pd
-from psd_utils import (process_waveforms, column_name, ANALYSIS_CACHE_DIR,
-                       ROOT_FILES_DIR)
+from psd_utils import (process_waveforms, column_name, legend_pad_split,
+                       ANALYSIS_CACHE_DIR, LEGEND_GAP_PX, ROOT_FILES_DIR)
 from regressors import get_default_regressors
 
 import analysis_utilities
@@ -68,14 +68,31 @@ def _plot_classified_spectra(features, source_name, method_name, alpha_mask,
     n_gamma = int(np.sum(gamma_mask))
     n_uncertain = total - n_alpha - n_gamma
 
-    canvas = ROOT.TCanvas(str(ROOT.PlottingUtils.GetRandomName()), "", 1200,
-                          600)
+    effective_alpha = min(alpha_thresh, gamma_thresh)
+    effective_gamma = max(alpha_thresh, gamma_thresh)
+    efficiency = (n_alpha + n_gamma) / total * 100
+    legend_labels = [
+        f"{source_name}",
+        f"#alpha-like (< {effective_alpha:.3f})",
+        f"#gamma-like (> {effective_gamma:.3f})",
+        f"Efficiency: {efficiency:.1f}%",
+    ]
+    if cal_tpr is not None:
+        legend_labels.append(f"Cal. TPR: {cal_tpr:.2f}%")
 
-    pad_plot = ROOT.TPad("pad_plot", "", 0.0, 0.0, 0.7, 1.0)
-    pad_leg = ROOT.TPad("pad_leg", "", 0.7, 0.0, 1.0, 1.0)
+    canvas_width_px = 1200
+    canvas = ROOT.TCanvas(str(ROOT.PlottingUtils.GetRandomName()), "",
+                          canvas_width_px, 600)
+    split = legend_pad_split(legend_labels, canvas_width_px, 0.7)
+
+    pad_plot = ROOT.TPad("pad_plot", "", 0.0, 0.0, split, 1.0)
+    pad_leg = ROOT.TPad("pad_leg", "", split, 0.0, 1.0, 1.0)
     pad_plot.SetLogy()
     pad_plot.SetLeftMargin(0.12)
     pad_plot.SetRightMargin(0.05)
+    # The x title ends in a subscript, which needs more room below the axis
+    # than plain text.
+    pad_plot.SetBottomMargin(pad_plot.GetBottomMargin() + 0.03)
     pad_leg.SetLeftMargin(0.0)
     pad_leg.SetRightMargin(0.05)
     pad_plot.Draw()
@@ -103,8 +120,8 @@ def _plot_classified_spectra(features, source_name, method_name, alpha_mask,
     ROOT.PlottingUtils.ConfigureHistogram(h_gamma, ROOT.kBlue + 2)
 
     h_all.SetLineStyle(2)
-    h_all.GetXaxis().SetTitle("Light Output [keVee]")
-    h_all.GetYaxis().SetTitle("Counts / 10 keVee")
+    h_all.GetXaxis().SetTitle("Light Output [keV_{ee}#kern[0.15]{]}")
+    h_all.GetYaxis().SetTitle("Counts / 10 keV_{ee}")
     h_all.GetYaxis().SetTitleOffset(1)
     h_all.SetTitle("")
 
@@ -117,17 +134,14 @@ def _plot_classified_spectra(features, source_name, method_name, alpha_mask,
     _ = ROOT.PlottingUtils.AddText(method_name, 0.92, 0.84)
 
     pad_leg.cd()
-    leg = ROOT.PlottingUtils.AddLegend(0.05, 0.95, 0.25, 0.77)
-    leg.SetMargin(0.22)
-    leg.AddEntry(h_all, f"{source_name}", "l")
-    effective_alpha = min(alpha_thresh, gamma_thresh)
-    effective_gamma = max(alpha_thresh, gamma_thresh)
-    efficiency = (n_alpha + n_gamma) / total * 100
-    leg.AddEntry(h_alpha, f"#alpha-like (< {effective_alpha:.3f})", "f")
-    leg.AddEntry(h_gamma, f"#gamma-like (> {effective_gamma:.3f})", "f")
-    leg.AddEntry(ROOT.nullptr, f"Efficiency: {efficiency:.1f}%", "")
+    gap = LEGEND_GAP_PX / ((1.0 - split) * canvas_width_px)
+    leg = ROOT.PlottingUtils.AddLegend(gap, 1.0 - gap, 0.25, 0.77)
+    leg.AddEntry(h_all, legend_labels[0], "l")
+    leg.AddEntry(h_alpha, legend_labels[1], "f")
+    leg.AddEntry(h_gamma, legend_labels[2], "f")
+    leg.AddEntry(ROOT.nullptr, legend_labels[3], "")
     if cal_tpr is not None:
-        leg.AddEntry(ROOT.nullptr, f"Cal. TPR: {cal_tpr:.2f}%", "")
+        leg.AddEntry(ROOT.nullptr, legend_labels[4], "")
     leg.Draw()
 
     safe_reg = method_name.replace(" ", "_").lower()

@@ -19,6 +19,25 @@ N_JOBS = 32
 N_BOOTSTRAP = 250
 ANALYSIS_CACHE_DIR = "analysis_cache"
 
+# Clear space between a legend box and the edges of its pad, in pixels, as
+# AU leaves beside its side legends.
+LEGEND_GAP_PX = 15.0
+
+
+def legend_pad_split(labels, canvas_width_px, widest_plot_split):
+    """Where to split a canvas between a plot pad and a legend pad.
+
+    The legend pad to the right of the split fits a legend of these labels at
+    AU's legend font, with LEGEND_GAP_PX on either side of the box. The split
+    is widest_plot_split unless the legend needs more room than that leaves.
+    """
+    label_vector = ROOT.std.vector[ROOT.TString]()
+    for label in labels:
+        label_vector.push_back(ROOT.TString(label))
+    legend_pad_px = (ROOT.PlottingUtils.LegendWidthPx(label_vector) +
+                     2.0 * LEGEND_GAP_PX)
+    return min(widest_plot_split, 1.0 - legend_pad_px / canvas_width_px)
+
 
 def _bootstrap_chunk(y_true, scores, indices):
     """Compute AUC for a chunk of bootstrap resamples."""
@@ -871,13 +890,18 @@ def _plot_auc_vs_light_output(test_alpha_features,
 
     # Plot
     colors = list(ROOT.PlottingUtils.GetDefaultColors())
-    canvas = ROOT.TCanvas("auc_lo", "", 1200, 600)
+    canvas_width_px = 1200
+    canvas = ROOT.TCanvas("auc_lo", "", canvas_width_px, 600)
+    split = legend_pad_split(all_method_names, canvas_width_px, 0.72)
 
-    pad_plot = ROOT.TPad("pad_plot", "", 0.0, 0.0, 0.72, 1.0)
+    pad_plot = ROOT.TPad("pad_plot", "", 0.0, 0.0, split, 1.0)
     pad_plot.SetRightMargin(0.02)
+    # The x title ends in a subscript, which needs more room below the axis
+    # than plain text.
+    pad_plot.SetBottomMargin(pad_plot.GetBottomMargin() + 0.03)
     pad_plot.Draw()
 
-    pad_leg = ROOT.TPad("pad_leg", "", 0.72, 0.0, 1.0, 1.0)
+    pad_leg = ROOT.TPad("pad_leg", "", split, 0.0, 1.0, 1.0)
     pad_leg.SetLeftMargin(0.0)
     pad_leg.SetRightMargin(0.05)
     pad_leg.Draw()
@@ -910,7 +934,7 @@ def _plot_auc_vs_light_output(test_alpha_features,
 
         if len(graphs) == 1:
             graph.SetTitle("")
-            graph.GetXaxis().SetTitle("Light Output [keVee]")
+            graph.GetXaxis().SetTitle("Light Output [keV_{ee}#kern[0.15]{]}")
             graph.GetYaxis().SetTitle("ROC AUC")
             graph.GetYaxis().SetTitleOffset(1)
             graph.GetXaxis().SetRangeUser(300, 2000)
@@ -924,8 +948,8 @@ def _plot_auc_vs_light_output(test_alpha_features,
             subplot_label, 0.92, 0.84)
 
     pad_leg.cd()
-    leg = ROOT.PlottingUtils.AddLegend(0.0, 0.95, 0.2, 0.85)
-    leg.SetMargin(0.15)
+    gap = LEGEND_GAP_PX / ((1.0 - split) * canvas_width_px)
+    leg = ROOT.PlottingUtils.AddLegend(gap, 1.0 - gap, 0.2, 0.85)
     for graph, name in zip(graphs, graph_names):
         leg.AddEntry(graph, name, "lp")
 

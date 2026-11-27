@@ -107,7 +107,8 @@ void PlotChargeComparison(const std::vector<TString> output_names) {
 
     TCanvas *canvas = PlottingUtils::GetConfiguredCanvas();
     PlottingUtils::ConfigureAndDraw2DHistogram(
-        charge_comparison_vs_LO, canvas, ";Light Output [keVee]; PSP_{CC}");
+        charge_comparison_vs_LO, canvas,
+        ";Light Output [keV_{ee}#kern[0.15]{]}; PSP_{CC}");
     PlottingUtils::SaveFigure(canvas, "cc_vs_lo_" + output_name, "",
                               PlotSaveOptions::kLINEAR);
 
