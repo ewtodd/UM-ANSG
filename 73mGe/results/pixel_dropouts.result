@@ -1,0 +1,25 @@
+# PixelDropouts.cpp: per run, the interactions, the median pixel's count, and each silent pixel (below 0.01 of the median) as its centre in mm and its count; runs whose median pixel holds fewer than 100 are not judged
+PassiveBackground_20260112 interactions 391587 median 780 silent 0
+Calibration_20260112 interactions 432381 median 888 silent 0
+ActiveBackground_Test_5Percent_20260113 interactions 6408332 median 12645 silent 0
+ActiveBackground_Test_90Percent_20260113 interactions 38672082 median 76155.5 silent 0
+CuShieldSignal_10Percent_20260113 interactions 103028928 median 209528 silent 0
+CuShieldBackground_10Percent_20260113 interactions 10584168 median 20727.5 silent 0
+CdShieldSignal_10Percent_20260113 interactions 34310386 median 71244.5 silent 7 -20.769,3.633:104 -15.057,-20.769:2 -13.167,-20.769:0 -7.455,7.455:60 7.455,-20.769:64 7.455,-7.455:59 15.057,7.455:47
+CdShieldBackground_10Percent_20260113 interactions 19372001 median 40038 silent 7 -20.769,3.633:21 -15.057,-20.769:2 -13.167,-20.769:0 -7.455,7.455:12 7.455,-20.769:28 7.455,-7.455:18 15.057,7.455:13
+CdShieldSignal_25Percent_20260113 interactions 26347844 median 53915.5 silent 4 -20.769,3.633:67 -15.057,-20.769:18 7.455,-7.455:54 15.057,7.455:36
+CdShieldBackground_25Percent_20260113 interactions 35449552 median 69878 silent 0
+PostReactor_Am241_20260113 interactions 121127 median 249 silent 0
+CuShieldSignal_10Percent_20260114 interactions 151280895 median 307606 silent 1 -15.057,-20.769:176
+CuShieldBackground_10Percent_20260114 interactions 37378526 median 73386.5 silent 1 -15.057,-20.769:41
+CuShieldSignal_90Percent_20260114 interactions 89983546 median 183712 silent 2 -15.057,-20.769:110 15.057,7.455:176
+NoShieldSignal_5Percent_20260115 interactions 515331175 median 1.02482e+06 silent 0
+NoShieldBackground_5Percent_20260115 interactions 105340608 median 207886 silent 0
+PostReactor_Am241_20260115 interactions 109610 median 212 silent 0
+PostReactor_Ba133_20260115 interactions 1750766 median 3320 silent 0
+ShutterClosed_20260115 interactions 1088332 median 2165 silent 0
+NoShield_GeOnCZT_0_5Percent_20260116 interactions 56326139 median 105836 silent 0
+NoShield_ActiveBackground_0_5Percent_20260116 interactions 22557983 median 41359.5 silent 0
+NoShield_GraphiteCastleSignal_10Percent_20260116 interactions 319733339 median 628132 silent 0
+NoShield_GraphiteCastleBackground_10Percent_20260116 interactions 128005527 median 250547 silent 0
+PostReactor_Am241_Ba133_20260116 interactions 310172 median 625 silent 0
