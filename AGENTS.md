@@ -23,16 +23,16 @@ A line break
 <!---->
 - This is an umbrella repo: one flake, one dev shell per project.
 The
-  projects are `73mGe`, `78mBr`, `YAG-PreProcessing`, and `YAP-PSD`.
-- The 73mGe shell starts in `73mGe/czt`, the CZT analysis; the PSI CdTe
-  analysis of the same line is in `73mGe/cdte`, and header-only code both
-  use is in `73mGe/include`.
+  projects are `73Ge`, `78mBr`, `YAG-PreProcessing`, and `YAP-PSD`.
+- The 73Ge shell starts in `73Ge/czt`, the CZT analysis; the PSI CdTe
+  analysis of the same line is in `73Ge/cdte`, and header-only code both
+  use is in `73Ge/include`.
   The 78mBr shell starts in `78mBr/macros`; the
   YAG and YAP shells start in the project root.
   Each shell wires that project's
   `include/` into `CPLUS_INCLUDE_PATH`/`ROOT_INCLUDE_PATH` and `lib/` into
   `LD_LIBRARY_PATH`.
-- Backend per project: `73mGe` uses the CUDA Analysis-Utilities build
+- Backend per project: `73Ge` uses the CUDA Analysis-Utilities build
   (`au.cuda` + `au.rootCuda`, `AU_ROOFIT_BACKEND_CUDA=1`); the other three
   use the default CPU build (`au.default`). The CUDA and CPU builds are
   distinct derivations pinned to one Analysis-Utilities commit.
@@ -40,8 +40,8 @@ The
 <!---->
 ## Secrets (agenix)
 <!---->
-- `73mGe/include/BEF.hpp`, `73mGe/src/BEF.cpp`, and
-  `73mGe/czt/ConvertBEF.cpp` are agenix-encrypted sources that the 73mGe
+- `73Ge/include/BEF.hpp`, `73Ge/src/BEF.cpp`, and
+  `73Ge/czt/ConvertBEF.cpp` are agenix-encrypted sources that the 73Ge
   shell decrypts into the tree on entry. They are gitignored by name.
 - Never print, stage, or commit them. Do not `git add .` in a shell where
   they have been decrypted.
@@ -98,7 +98,7 @@ Do not
 <!---->
 ## Commits
 <!---->
-- A Conventional Commits summary line with scope (`feat(73mGe): …`,
+- A Conventional Commits summary line with scope (`feat(73Ge): …`,
   `fix(78mBr): …`, `docs: …`), a blank line, then a body that explains
   what changed and why.
 - Agent commits: `--author="son-of-anton-bot <307402699+son-of-anton-bot@users.noreply.github.com>"`.

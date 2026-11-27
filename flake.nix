@@ -61,12 +61,12 @@
         au = utils.packages.${system};
         agenixPkg = agenix.packages.${system}.default;
 
-        # ---- 73mGe backend switch (one line) ----
+        # ---- 73Ge backend switch (one line) ----
         # true  = CUDA: au.cuda + au.rootCuda, RooFit CUDA backend,
         #         -DAU_ROOFIT_BACKEND_CUDA=1, the OpenGL/nvidia driver path.
         # false = CPU:  au.default + au.root, RooFit CPU backend.
-        use73mGeCuda = true;
-        # CUDA-only shell setup, included only when use73mGeCuda is true.
+        use73GeCuda = true;
+        # CUDA-only shell setup, included only when use73GeCuda is true.
         cudaHook = ''
           export NIX_CFLAGS_COMPILE="-DAU_ROOFIT_BACKEND_CUDA=1''${NIX_CFLAGS_COMPILE:+ $NIX_CFLAGS_COMPILE}"
           export LD_LIBRARY_PATH="/run/opengl-driver/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -118,17 +118,17 @@
       in
       {
         devShells = {
-          # 73mGe: backend toggled by use73mGeCuda (CUDA or CPU). Always decrypts
+          # 73Ge: backend toggled by use73GeCuda (CUDA or CPU). Always decrypts
           # the agenix BEF reader sources with the user's ssh key on entry.
           # Starts in czt/, the CZT analysis; the PSI CdTe analysis is in cdte/.
-          "73mGe" = analysisShell {
-            project = "73mGe";
-            analysis-utils = if use73mGeCuda then au.cuda else au.default;
-            root = if use73mGeCuda then au.rootCuda else au.root;
+          "73Ge" = analysisShell {
+            project = "73Ge";
+            analysis-utils = if use73GeCuda then au.cuda else au.default;
+            root = if use73GeCuda then au.rootCuda else au.root;
             extraInputs = [ agenixPkg ];
             startDir = "czt";
             extraHook = ''
-              ${if use73mGeCuda then cudaHook else ""}
+              ${if use73GeCuda then cudaHook else ""}
               mkdir -p "$project_root/include" "$project_root/src" "$project_root/czt"
               (
                 cd "$project_root/secrets"
@@ -184,7 +184,7 @@
 
           default = pkgs.mkShell {
             shellHook = ''
-              echo "Pick a project: nix develop .#73mGe | .#78mBr | .#YAG-PreProcessing | .#YAP-PSD"
+              echo "Pick a project: nix develop .#73Ge | .#78mBr | .#YAG-PreProcessing | .#YAP-PSD"
             '';
           };
         };
