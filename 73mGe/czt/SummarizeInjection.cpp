@@ -2,8 +2,8 @@
 // bias versus energy, and draw the bias-vs-energy figures in the standard
 // PlottingUtils style.
 //
-// Usage (no arguments; edit SUM_RUN_TAG near the bottom):
-//   root -q -l SummarizeInjection.cpp+
+// Usage: SUM_RUN_TAG=<the testbed's INJ_RUN_TAG> root -q -l
+// SummarizeInjection.cpp+ (default tag: closure)
 #include "Constants.hpp"
 #include "InitUtils.hpp"
 #include "PlottingUtils.hpp"
@@ -248,17 +248,27 @@ std::string PairLabel(const std::string &key) {
     return "Cd 10% (01/13)";
   if (key == "CdShield25")
     return "Cd 25% (01/13)";
+  if (key == "NoShield5")
+    return "No shield 5% (01/15)";
   return key;
 }
 
-std::vector<std::string> PairOrder() {
+// Method 1's pairs, whose in-situ fits run with and without the escapes.
+std::vector<std::string> InSituPairOrder() {
   return {"CuShield10", "CdShield10", "CdShield25"};
+}
+
+// Every run the testbed fits: Method 1's pairs and Method 2's 01/15 run.
+std::vector<std::string> PairOrder() {
+  std::vector<std::string> pairs = InSituPairOrder();
+  pairs.push_back("NoShield5");
+  return pairs;
 }
 
 // The in-situ fit's bias per pair with the escape lines and without, on the
 // same trials: what leaving out the escapes the data carry costs.
 void DrawEscapeBiasByPair(const std::map<AggKey, Acc> &aggregates) {
-  std::vector<std::string> pairs = PairOrder();
+  std::vector<std::string> pairs = InSituPairOrder();
   TGraphErrors *with_escapes = new TGraphErrors();
   TGraphErrors *without_escapes = new TGraphErrors();
   Double_t lo = 0, hi = 0;
@@ -381,9 +391,13 @@ void PrintRow(std::ostream &out, const std::string &pair,
 } // namespace
 
 // ---------------------------------------------------------------- run controls
-// Edit and re-run. No command-line arguments by design. Must match the
-// INJ_RUN_TAG that produced the CSVs.
-const TString SUM_RUN_TAG = "closure";
+// The INJ_RUN_TAG that produced the CSVs: the environment's SUM_RUN_TAG if
+// set, else this default.
+TString SummaryRunTag() {
+  const char *value = gSystem->Getenv("SUM_RUN_TAG");
+  return (value && value[0]) ? TString(value) : TString("closure");
+}
+const TString SUM_RUN_TAG = SummaryRunTag();
 // ------------------------------------------------------------------------------
 
 void SummarizeInjection() {
@@ -611,7 +625,8 @@ void SummarizeInjection() {
     for (size_t mi = 0; mi < method_order.size(); mi++) {
       std::string shape = shapes[si], method = method_order[mi];
       const Bool_t make_plot =
-          (method == "sim" || method == "sim_noesc" || method == "ratesub");
+          (method == "sim" || method == "sim_noesc" || method == "ratesub" ||
+           method == "direct" || method == "direct_free_tail");
       TString name =
           TString("bias_vs_energy_") + shape.c_str() + "_" + method.c_str();
 

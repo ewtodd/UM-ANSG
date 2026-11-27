@@ -1,8 +1,9 @@
 // The testbed of the CZT Ge fits: a Ge line of known energy in data whose
 // other content is real or generated, fitted by production's own in-situ
-// (Method 1) and rate-subtracted (Method 2) code in GainTransferFit.hpp.
+// (Method 1) and direct (Method 2) code in GainTransferFit.hpp.
 //
-// Each pair first gets a reference fit: production's post-cal in-situ fit,
+// Method 1 (INJ_METHOD insitu, the 01/13 pairs). Each pair first gets a
+// reference fit: production's post-cal in-situ fit,
 // rerun on the real pair from its saved state in the testbed's own
 // directory. Its converged parameters are the testbed's truth (the shared
 // lineshape, the Pb lines, the continuum) and, scaled to what a trial's
@@ -30,11 +31,25 @@
 // With INJ_FIT_WITHOUT_ESCAPES every trial is fitted a second time without
 // the escape lines ("sim_noesc"), on the same events.
 //
-// Usage (no arguments; edit the controls below):
-//   root -b -q 'InjectionTest.cpp+'
+// Method 2 (INJ_METHOD direct, the 01/15 no-shield run). The reference is
+// production's held-tail direct fit, rerun on the real signal run with the
+// held tail production leaves beside its fits. Every trial is fitted with the
+// tail held ("direct", the result) and free ("direct_free_tail", its
+// systematic). Sources:
+//   synthetic   the signal run generated from the reference fit at its
+//               statistics, with its 95.902 keV line and escapes.
+//   background  the real background run, resampled each trial, with an
+//               injected Ge line at the signal run's rate.
+//
+// Usage: the run controls below are their environment variables' values,
+// else the defaults shown, e.g.
+//   INJ_METHOD=direct INJ_SOURCE=synthetic INJ_RUN_TAG=final_direct \
+//     root -b -q 'InjectionTest.cpp+'
 // then SummarizeInjection.cpp with the same run tag. Run pairs as separate
-// processes (INJ_PAIR_INDEX), each with its own reference fit.
+// processes (INJ_PAIR_INDEX), each with its own reference fit, after
+// compiling once, so that they do not build the library at the same time.
 #include "GainTransferFit.hpp"
+#include "InSituFitState.hpp"
 #include "InitUtils.hpp"
 #include "PlottingUtils.hpp"
 #include "RooFitPhotopeakPdfs.hpp"
@@ -57,6 +72,7 @@
 #include <TParameter.h>
 #include <TROOT.h>
 #include <TRandom3.h>
+#include <TSystem.h>
 #include <TSystemDirectory.h>
 #include <TSystemFile.h>
 #include <cmath>
@@ -68,16 +84,33 @@
 #include <string>
 #include <vector>
 
-// Edit these and re-run. No command-line arguments by design.
-const TString INJ_SHAPE = "model"; // "model" | "empirical" | "both"
-const Int_t INJ_PAIR_INDEX = -1;   // -1 = every pair
-const Int_t INJ_ENERGY_INDEX = -1; // -1 = every injection energy
-const Int_t INJ_N_TRIALS = 10;
-const Int_t INJ_TRIAL_OFFSET = 0;
-const TString INJ_RUN_TAG =
-    "closure"; // results go to plots/testbed/injection_<tag>/
-const TString INJ_SOURCE =
-    "halves"; // "halves" | "real" | "synthetic" | "synthetic_halves"
+// The run controls: each its environment variable of the same name, if set.
+TString InjSetting(const char *name, const TString &fallback) {
+  const char *value = gSystem->Getenv(name);
+  return (value && value[0]) ? TString(value) : fallback;
+}
+Int_t InjSetting(const char *name, Int_t fallback) {
+  const char *value = gSystem->Getenv(name);
+  return (value && value[0]) ? TString(value).Atoi() : fallback;
+}
+// Which method's testbed: "insitu" (Method 1, the 01/13 pairs) or "direct"
+// (Method 2, the 01/15 no-shield run; sources synthetic and background).
+const TString INJ_METHOD = InjSetting("INJ_METHOD", TString("insitu"));
+// "model" | "empirical" | "both"
+const TString INJ_SHAPE = InjSetting("INJ_SHAPE", TString("model"));
+// -1 = every pair, every injection energy
+const Int_t INJ_PAIR_INDEX = InjSetting("INJ_PAIR_INDEX", -1);
+const Int_t INJ_ENERGY_INDEX = InjSetting("INJ_ENERGY_INDEX", -1);
+const Int_t INJ_N_TRIALS = InjSetting("INJ_N_TRIALS", 10);
+const Int_t INJ_TRIAL_OFFSET = InjSetting("INJ_TRIAL_OFFSET", 0);
+// Results go to plots/testbed/injection_<tag>/.
+const TString INJ_RUN_TAG = InjSetting("INJ_RUN_TAG", TString("closure"));
+// "halves" | "real" | "synthetic" | "synthetic_halves" | "background"
+// (direct only)
+const TString INJ_SOURCE = InjSetting("INJ_SOURCE", TString("halves"));
+// Real-data trials of Method 1 can also run the rate subtraction, which was
+// Method 2 before the direct fit and no longer feeds the result.
+const Bool_t INJ_FIT_RATE_SUBTRACTION = kFALSE;
 // synthetic_halves: how many synthetic background runs, each the pool of
 // INJ_N_TRIALS halves trials.
 const Int_t INJ_N_BACKGROUNDS = 8;
@@ -104,7 +137,8 @@ struct InjPair {
   TString bkg_run;
   TString sig_run;
   TString am_run;
-  // Where the pair's 95.902 keV line comes from, as in production.
+  // The 95.902 keV line's escape fractions: as in production, the set
+  // measured in the 01/15 background run, for every run.
   const EscapeFractions *escapes;
 };
 
@@ -113,15 +147,15 @@ std::vector<InjPair> MakePairs() {
   pairs.push_back({"CuShield10", "Cu 10% (01/13)",
                    Constants::CUSHIELDBACKGROUND_10PERCENT_20260113,
                    Constants::CUSHIELDSIGNAL_10PERCENT_20260113,
-                   Constants::POSTREACTOR_AM241_20260113, &ESCAPES_INSIDE});
+                   Constants::POSTREACTOR_AM241_20260113, &ESCAPES_USED});
   pairs.push_back({"CdShield10", "Cd 10% (01/13)",
                    Constants::CDSHIELDBACKGROUND_10PERCENT_20260113,
                    Constants::CDSHIELDSIGNAL_10PERCENT_20260113,
-                   Constants::POSTREACTOR_AM241_20260113, &ESCAPES_OUTSIDE});
+                   Constants::POSTREACTOR_AM241_20260113, &ESCAPES_USED});
   pairs.push_back({"CdShield25", "Cd 25% (01/13)",
                    Constants::CDSHIELDBACKGROUND_25PERCENT_20260113,
                    Constants::CDSHIELDSIGNAL_25PERCENT_20260113,
-                   Constants::POSTREACTOR_AM241_20260113, &ESCAPES_OUTSIDE});
+                   Constants::POSTREACTOR_AM241_20260113, &ESCAPES_USED});
   return pairs;
 }
 
@@ -134,11 +168,11 @@ std::vector<Double_t> PbKaEnergies() {
   return mus;
 }
 
-// The pair calibration's keV per raw unit, which turns the comb period into
-// calibrated energy.
-Double_t PairCalibrationSlope(const TString &pair_tag) {
-  TFile *file = IO::OpenForReading(
-      OUT_SUBDIR + "/calibration_function_low_20260113_" + pair_tag + ".root");
+// A calibration's keV per raw unit, which turns the comb period into
+// calibrated energy: a 01/13 pair's (20260113_<pair>) or a day's (20260115).
+Double_t CalibrationSlope(const TString &calibration_tag) {
+  TFile *file = IO::OpenForReading(OUT_SUBDIR + "/calibration_function_low_" +
+                                   calibration_tag + ".root");
   Double_t slope = 0;
   if (file && !file->IsZombie()) {
     TF1 *cal = static_cast<TF1 *>(file->Get("calibration"));
@@ -150,130 +184,8 @@ Double_t PairCalibrationSlope(const TString &pair_tag) {
   return slope;
 }
 
-// --------------------------------------------------------------- fit states
-
-struct ParamValue {
-  Double_t value = 0, error = 0;
-};
-
-// An in-situ fit's window and parameters by name ("bkg:Mu1", "sig:Sigma3",
-// ...), as a .simroofits file holds them.
-struct FitState {
-  Bool_t ok = kFALSE;
-  Double_t range_lo = 0, range_hi = 0;
-  std::map<std::string, ParamValue> params;
-  Bool_t Has(const std::string &name) const { return params.count(name) > 0; }
-  Double_t Get(const std::string &name, Double_t fallback = -1e30) const {
-    std::map<std::string, ParamValue>::const_iterator it = params.find(name);
-    return it == params.end() ? fallback : it->second.value;
-  }
-  Double_t Error(const std::string &name) const {
-    std::map<std::string, ParamValue>::const_iterator it = params.find(name);
-    return it == params.end() ? 0.0 : it->second.error;
-  }
-  void Set(const std::string &name, Double_t value, Double_t error) {
-    params[name].value = value;
-    params[name].error = error;
-  }
-};
-
-TString Indexed(const TString &channel, const char *param, Int_t index) {
-  return channel + ":" + param + TString::Format("%d", index);
-}
-
-Bool_t HasGeLine(const FitState &s) {
-  return s.Has("sig:Mu3") && s.Has("sig:Sigma3") && s.Has("sig:GausAmplitude3");
-}
-
-FitState ReadFitState(const TString &path) {
-  FitState s;
-  std::ifstream in(path.Data());
-  if (!in.is_open())
-    return s;
-  std::string token;
-  if (!(in >> token) || token != "RANGE")
-    return s;
-  if (!(in >> s.range_lo >> s.range_hi))
-    return s;
-  std::string name;
-  Double_t value, error;
-  Int_t fixed;
-  while (in >> name >> value >> error >> fixed)
-    s.Set(name, value, error);
-  s.ok = HasGeLine(s);
-  return s;
-}
-
-// The in-situ model's own free parameters (GainTransferFit.hpp's
-// FitBkgGeSimFromSeed): every Pb width and tail is bkg:Ka1's, so the signal
-// channel adds only its centroids, yields, continuum and the Ge width.
-std::vector<std::string> FreeStateParams() {
-  const char *names[] = {"bkg:Mu1",
-                         "bkg:Sigma1",
-                         "bkg:GausAmplitude1",
-                         "bkg:LowExpTailAmplitude1",
-                         "bkg:LowExpTailRatio1",
-                         "bkg:Mu2",
-                         "bkg:GausAmplitude2",
-                         "bkg:BkgConstant",
-                         "sig:Mu1",
-                         "sig:GausAmplitude1",
-                         "sig:Mu2",
-                         "sig:GausAmplitude2",
-                         "sig:Mu3",
-                         "sig:Sigma3",
-                         "sig:GausAmplitude3",
-                         "sig:BkgConstant"};
-  std::vector<std::string> out(names, names + sizeof(names) / sizeof(names[0]));
-  return out;
-}
-
-// Written in Analysis-Utilities' current convention, whose marker line says
-// the exponential-tail amplitudes are full-range ratios.
-Bool_t WriteFitState(const FitState &s, const TString &path) {
-  std::ofstream out(path.Data());
-  if (!out.is_open()) {
-    std::cerr << "ERROR: cannot write fit state " << path << std::endl;
-    return kFALSE;
-  }
-  out << std::setprecision(17);
-  out << "RANGE " << s.range_lo << " " << s.range_hi << std::endl;
-  out << "ExpTailAmplitudeConvention 1 0 1" << std::endl;
-  std::vector<std::string> names = FreeStateParams();
-  for (size_t i = 0; i < names.size(); i++) {
-    if (!s.Has(names[i]))
-      continue;
-    out << names[i] << " " << s.Get(names[i]) << " " << s.Error(names[i])
-        << " 0" << std::endl;
-  }
-  return kTRUE;
-}
-
-FitState FitStateOf(const BkgGeSimResult &fit, Double_t range_lo,
-                    Double_t range_hi) {
-  FitState s;
-  s.range_lo = range_lo;
-  s.range_hi = range_hi;
-  const FitResult *channels[2] = {&fit.bkg_channel, &fit.sig_channel};
-  for (Int_t c = 0; c < 2; c++) {
-    const std::vector<FitParameterDiagnostic> &diags =
-        channels[c]->parameter_diagnostics;
-    for (size_t i = 0; i < diags.size(); i++)
-      s.Set(diags[i].name, diags[i].value, diags[i].error);
-  }
-  s.ok = fit.valid && HasGeLine(s);
-  return s;
-}
-
-// Multiplies a yield by f, its error by sqrt(f), as for a run f times as long.
-void ScaleYield(FitState &s, const std::string &name, Double_t f) {
-  if (s.Has(name))
-    s.Set(name, f * s.Get(name), TMath::Sqrt(f) * s.Error(name));
-}
-
-Double_t PbSigma(const FitState &s, Int_t index) {
-  return s.Get(Indexed("bkg", "Sigma", index).Data(), s.Get("bkg:Sigma1"));
-}
+// The fit states (FitState, ReadFitState, WriteFitState, ChannelSeed, ...)
+// are InSituFitState.hpp's, which FitBenchmark.cpp shares.
 
 // ------------------------------------------------------------- lineshape
 
@@ -318,33 +230,6 @@ GeShape GeShapeOf(const FitState &s) {
   g.ok = g.sigma > 0 && g.gaus_yield > 0 && g.tail_r >= 0 &&
          g.tau_over_sigma > 0 && g.range_hi > g.range_lo;
   return g;
-}
-
-// A channel's seed for RunBkgGeSim, from the state its fit starts from. The
-// loaded state overrides most of it; what it sets is the tail the 95.902 keV
-// line is measured with for the escapes (the background channel's last peak),
-// and anything the state lacks (an old state has no signal-run Pb centroids,
-// which then start from the background run's).
-FitResult ChannelSeed(const FitState &s, const TString &channel) {
-  const Int_t n_peaks = (channel == "sig") ? 3 : 2;
-  const Double_t tail_r = s.Get("bkg:LowExpTailAmplitude1", 0.0);
-  const Double_t tau = s.Get("bkg:LowExpTailRatio1", 1.0);
-  FitResult seed;
-  seed.peaks.resize(n_peaks);
-  for (Int_t i = 1; i <= n_peaks; i++) {
-    PeakFitResult &peak = seed.peaks[i - 1];
-    const Bool_t is_ge = (i == 3);
-    peak.mu = s.Get(Indexed(channel, "Mu", i).Data(),
-                    s.Get(Indexed("bkg", "Mu", i).Data()));
-    peak.sigma = is_ge ? s.Get("sig:Sigma3") : PbSigma(s, i);
-    peak.gaus_amplitude = s.Get(Indexed(channel, "GausAmplitude", i).Data());
-    peak.low_exp_tail_amplitude = tail_r * peak.gaus_amplitude;
-    peak.low_exp_tail_ratio = tau;
-  }
-  seed.bkg_constant = s.Get((channel + ":BkgConstant").Data(), 0.0);
-  seed.lin_bkg_slope = s.Get((channel + ":BkgSlope").Data(), 0.0);
-  seed.valid = kTRUE;
-  return seed;
 }
 
 Double_t RunLiveTime(const TString &run) {
@@ -640,7 +525,9 @@ void CleanTrialFiles(const TString &dir, const TString &trial_tag) {
   TIter next(files);
   while (TSystemFile *file = static_cast<TSystemFile *>(next())) {
     TString name = file->GetName();
-    Bool_t trial_file = name.EndsWith(".png") || name.EndsWith(".simroofits");
+    // The direct fit also dumps its bins as CSV.
+    Bool_t trial_file = name.EndsWith(".png") || name.EndsWith(".simroofits") ||
+                        name.EndsWith(".csv");
     Bool_t this_trial =
         name.Contains(trial_tag + "_") || name.Contains(trial_tag + ".");
     if (trial_file && this_trial)
@@ -1168,7 +1055,7 @@ TrialOutcome RunOneTrial(const PairSetup &setup, const TString &shape,
 
   // The synthetic channels hold only the in-situ window and the 95.902 keV
   // region, not the 62-65 keV the rate subtraction also fits.
-  if (!SyntheticSource(setup.source)) {
+  if (INJ_FIT_RATE_SUBTRACTION && !SyntheticSource(setup.source)) {
     RateSubResult rs = FitRateSubtractedEvents(
         sig_events, bkg_events, setup.live_sig, setup.live_bkg,
         setup.rate_sub_shape, setup.comb_bin, trial_tag + "_ratesub");
@@ -1211,6 +1098,300 @@ void WriteRow(std::ofstream &csv, const InjPair &pair, const TString &shape,
       << (fit.valid ? 1 : 0) << "," << (fit.rail ? 1 : 0) << std::endl;
 }
 
+// ------------------------------------------ Method 2: the direct fit of 01/15
+
+// The no-shield run Method 2 fits, and the background run taken with it.
+InjPair MakeDirectRun() {
+  InjPair run = {"NoShield5",
+                 "No shield 5% (01/15)",
+                 Constants::NOSHIELDBACKGROUND_5PERCENT_20260115,
+                 Constants::NOSHIELDSIGNAL_5PERCENT_20260115,
+                 Constants::POSTREACTOR_AM241_20260115,
+                 &ESCAPES_USED};
+  return run;
+}
+const TString DIRECT_DATE_LABEL = "20260115";
+// The direct run's place after the 01/13 pairs, for the trial seeds.
+const Int_t DIRECT_SEED_INDEX = 3;
+
+// What the direct trials take from the real signal run: production's held
+// tail, the reference fit's Ge line and continuum, and the run's 95.902 keV
+// line.
+struct DirectReference {
+  Bool_t ok = kFALSE;
+  RateSubShape shape;
+  GeShape ge;
+  Double_t ge_mu = 0;
+  // RooFitUtils' linear continuum: its yield in the window, and a in
+  // 1 + a x.
+  Double_t continuum_yield = 0, continuum_slope = 0;
+  CaptureTruth sig_capture;
+};
+
+FitOutcome DirectOutcomeOf(const FitResult &fit) {
+  FitOutcome out;
+  if (fit.peaks.empty())
+    return out;
+  const PeakFitResult &ge = fit.peaks[0];
+  out.mu = ge.mu;
+  out.err = ge.mu_error;
+  out.status = fit.fit_status;
+  out.cov_qual = fit.cov_qual;
+  out.edm = fit.edm;
+  out.valid = fit.valid && std::isfinite(ge.mu) && ge.mu_error > 0;
+  Double_t margin = 0.01 * (DIRECT_WINDOW_HI - DIRECT_WINDOW_LO);
+  out.rail = (ge.mu <= DIRECT_WINDOW_LO + margin ||
+              ge.mu >= DIRECT_WINDOW_HI - margin);
+  return out;
+}
+
+// Production's held fit and its free-tail fit on one set of events, the
+// escapes measured from the events' own 95.902 keV line as production does.
+void FitDirectTrial(const std::vector<Double_t> &events, Double_t bin_kev,
+                    const RateSubShape &shape, const TString &label,
+                    FitResult &held, FitResult &free_tail) {
+  std::vector<Double_t> escape_mus, escape_yields;
+  if (shape.escapes) {
+    CaptureLine line = MeasureDirectCaptureLine(events, bin_kev, shape, label);
+    if (!line.valid) {
+      std::cerr << "INJ-WARNING: no 95.902 keV line in " << label << std::endl;
+      return;
+    }
+    EscapeLinesOf(line, *shape.escapes, 1.0, escape_mus, escape_yields);
+  }
+  held = FitDirectGeOnce(events, bin_kev, shape, escape_mus, escape_yields,
+                         kTRUE, nullptr, label, "Direct_" + label);
+  if (!held.valid)
+    return;
+  free_tail =
+      FitDirectGeOnce(events, bin_kev, shape, escape_mus, escape_yields, kFALSE,
+                      &held, label, "Direct_" + label + "_free_tail");
+}
+
+DirectReference RunDirectReference(const InjPair &run,
+                                   const std::vector<Double_t> &sig_events,
+                                   Double_t bin_kev, const TString &tail_path,
+                                   const TString &reference_dir) {
+  DirectReference ref;
+  if (!ReadDirectTail(tail_path, ref.shape)) {
+    std::cerr << "INJ-FATAL: no held tail in " << tail_path
+              << "; rerun CalibrateAndFit.cpp" << std::endl;
+    return ref;
+  }
+  ref.shape.escapes = EscapeLinesRequested() ? run.escapes : nullptr;
+  gSystem->mkdir(reference_dir + "/fits", kTRUE);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, reference_dir,
+                                ProjectRoot() + "/root_files");
+  PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
+  FitResult held, free_tail;
+  FitDirectTrial(sig_events, bin_kev, ref.shape, "reference", held, free_tail);
+  if (!held.valid) {
+    std::cerr << "INJ-FATAL: the reference direct fit of " << run.label
+              << " did not converge" << std::endl;
+    return ref;
+  }
+  PrintDirectFit("reference", held);
+  PrintDirectFit("reference_free_tail", free_tail);
+  const PeakFitResult &ge = held.peaks[0];
+  ref.ge_mu = ge.mu;
+  ref.ge.sigma = ge.sigma;
+  ref.ge.gaus_yield = ge.gaus_amplitude;
+  ref.ge.tail_r =
+      ge.gaus_amplitude > 0 ? ge.low_exp_tail_amplitude / ge.gaus_amplitude : 0;
+  ref.ge.tau_over_sigma = ge.low_exp_tail_ratio;
+  ref.ge.range_lo = DIRECT_WINDOW_LO;
+  ref.ge.range_hi = DIRECT_WINDOW_HI;
+  ref.ge.area =
+      ref.ge.gaus_yield * (1.0 + InWindowExpRatio(ref.ge, ge.mu, ge.sigma));
+  ref.ge.ok =
+      ref.ge.sigma > 0 && ref.ge.gaus_yield > 0 && ref.ge.tau_over_sigma > 0;
+  ref.continuum_yield = held.bkg_constant;
+  ref.continuum_slope = held.lin_bkg_slope;
+  ref.sig_capture = MeasureCaptureTruth(sig_events, ref.ge, bin_kev);
+  std::cout << "INJ-REFERENCE " << run.label << ": Ge " << std::fixed
+            << std::setprecision(4) << ge.mu << " +/- " << ge.mu_error
+            << " keV, sigma " << ref.ge.sigma << ", tail R " << ref.ge.tail_r
+            << " tau/sigma " << ref.ge.tau_over_sigma << ", Ge area "
+            << std::setprecision(0) << ref.ge.area << ", continuum "
+            << ref.continuum_yield << " in the window, slope "
+            << std::setprecision(6) << ref.continuum_slope << " /keV"
+            << std::endl;
+  std::cout << "INJ-CAPTURE " << run.label
+            << " signal run: " << (ref.sig_capture.ok ? "" : "NOT FOUND, ")
+            << std::fixed << std::setprecision(4) << ref.sig_capture.mu
+            << " keV, sigma " << ref.sig_capture.sigma << ", Gaussian yield "
+            << std::setprecision(0) << ref.sig_capture.gaus_yield << std::endl;
+  ref.ok = ref.ge.ok && (!ref.shape.escapes || ref.sig_capture.ok);
+  return ref;
+}
+
+// The signal run as the reference fit has it, at its statistics, with Ge at
+// e_inj putting n_inj events in the window: the linear continuum, the Ge line
+// and, with escapes, the 95.902 keV line's escapes with the Ge line's shape
+// (the shape the fit gives them) and the line itself between 85 and 104 keV,
+// which the fit measures them from.
+std::vector<Double_t> GenerateDirectSynthetic(const DirectReference &ref,
+                                              Double_t e_inj, Double_t n_inj) {
+  const GeShape &ge = ref.ge;
+  RooRealVar x("x", "x", DIRECT_WINDOW_LO - SYNTHETIC_MARGIN_KEV,
+               DIRECT_WINDOW_HI + SYNTHETIC_MARGIN_KEV);
+  std::vector<RooAbsArg *> owned;
+  RooArgList pdfs, coefs;
+  // k (1 + a x) per keV, with the reference's yield inside the window.
+  const Double_t lo = DIRECT_WINDOW_LO, hi = DIRECT_WINDOW_HI;
+  const Double_t a = ref.continuum_slope;
+  const Double_t window_integral = (hi - lo) + 0.5 * a * (hi * hi - lo * lo);
+  const Double_t k = ref.continuum_yield / window_integral;
+  AddLinearContinuum(owned, pdfs, coefs, x, "continuum", k, k * a, 0.0);
+  const Bool_t with_escapes = ref.shape.escapes && ref.sig_capture.ok;
+  if (with_escapes) {
+    const CaptureTruth &capture = ref.sig_capture;
+    for (Int_t i = 0; i < N_ESCAPE_LINES; i++) {
+      Double_t whole_line = capture.gaus_yield *
+                            ref.shape.escapes->series[ESCAPE_SERIES[i]] *
+                            GEANT4_INSIDE_SERIES_SHARE[i];
+      if (whole_line > 0)
+        AddTailedLine(owned, pdfs, coefs, x, TString::Format("esc%d", i + 1),
+                      capture.mu - ESCAPE_XRAY_KEV[i], ge.sigma, whole_line,
+                      ge);
+    }
+  }
+  Double_t gaus_in_window =
+      n_inj / (1.0 + InWindowExpRatio(ge, e_inj, ge.sigma));
+  AddTailedLine(owned, pdfs, coefs, x, "ge", e_inj, ge.sigma,
+                gaus_in_window / GaussianWindowShare(lo, hi, e_inj, ge.sigma),
+                ge);
+  std::vector<Double_t> events = GenerateFromComponents(x, pdfs, coefs);
+  DeleteOwned(owned);
+  if (with_escapes) {
+    std::vector<Double_t> region = GenerateCaptureRegion(ge, ref.sig_capture);
+    events.insert(events.end(), region.begin(), region.end());
+  }
+  return events;
+}
+
+// Method 2's testbed. synthetic: the signal run generated from the reference
+// fit at its statistics, Ge at the injected energy, so the fit's own closure.
+// background: the real 01/15 background run (no Ge target), resampled each
+// trial, with a Ge line of the signal run's rate over the background run's
+// live time; the trials share that run's fluctuations, so their mean tells
+// what this one background does, within about one fit error.
+void RunDirectTestbed(const TString &source, Int_t energy_index, Int_t n_trials,
+                      Int_t trial_offset, const TString &run_tag) {
+  const InjPair run = MakeDirectRun();
+  const TString project_root = ProjectRoot();
+  const TString base = project_root + "/plots/testbed/injection_" + run_tag;
+  gSystem->mkdir(base + "/results", kTRUE);
+  InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, base,
+                                project_root + "/root_files");
+  PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
+  const Double_t slope = CalibrationSlope(DIRECT_DATE_LABEL);
+  const Double_t t_bkg = RunLiveTime(run.bkg_run);
+  const Double_t t_sig = RunLiveTime(run.sig_run);
+  if (!(slope > 0) || !(t_bkg > 0 && t_sig > 0)) {
+    std::cerr << "INJ-FATAL: no calibration (" << slope << ") or live time ("
+              << t_bkg << ", " << t_sig << ") for " << run.label << std::endl;
+    return;
+  }
+  const Double_t bin_kev = COMB_PERIOD_RAW_KEV * slope;
+  std::vector<Double_t> sig_all = LoadCalibrated(run.sig_run);
+  std::vector<Double_t> sig_events;
+  for (size_t i = 0; i < sig_all.size(); i++)
+    if (InDirectFitRange(sig_all[i]))
+      sig_events.push_back(sig_all[i]);
+  std::vector<Double_t>().swap(sig_all);
+  if (sig_events.empty()) {
+    std::cerr << "INJ-FATAL: no calibrated events for " << run.label
+              << std::endl;
+    return;
+  }
+  const TString tail_path = DirectTailPath(
+      project_root + "/plots/czt/chain/" + RESULT_TAG, DIRECT_DATE_LABEL);
+  const DirectReference ref = RunDirectReference(
+      run, sig_events, bin_kev, tail_path,
+      base + "/reference/" + run.tag + TString::Format("_t%d", trial_offset));
+  if (!ref.ok)
+    return;
+
+  std::vector<Double_t> bkg_pool;
+  Double_t n_inj_expected = ref.ge.area;
+  if (source == "background") {
+    std::vector<Double_t> bkg_all = LoadCalibrated(run.bkg_run);
+    for (size_t i = 0; i < bkg_all.size(); i++)
+      if (InDirectFitRange(bkg_all[i]))
+        bkg_pool.push_back(bkg_all[i]);
+    if (bkg_pool.empty()) {
+      std::cerr << "INJ-FATAL: no calibrated background events" << std::endl;
+      return;
+    }
+    n_inj_expected = ref.ge.area * t_bkg / t_sig;
+  }
+  std::cout << "INJ-DIRECT " << run.label << " source " << source << " t_bkg "
+            << std::fixed << std::setprecision(1) << t_bkg << " t_sig " << t_sig
+            << " n_inj_expected " << n_inj_expected << " comb bin "
+            << std::setprecision(5) << bin_kev << std::endl;
+
+  for (Int_t ei = 0; ei < 9; ei++) {
+    if (energy_index >= 0 && ei != energy_index)
+      continue;
+    const Double_t e_inj = kInjEnergies[ei];
+    const TString cell_tag = CellTag(run, "model", e_inj) + "_" + source;
+    const TString cell_dir = base + "/cells/" + cell_tag;
+    const TString fits_dir = cell_dir + "/fits";
+    gSystem->mkdir(fits_dir, kTRUE);
+    InitUtils::SetROOTPreferences(PlotSaveFormat::kPNG, cell_dir,
+                                  project_root + "/root_files");
+    PlottingUtils::SetResidualHistPlotsEnabled(kFALSE);
+    const TString csv_path = base + "/results/injection_" + cell_tag +
+                             Form("_t%d_n%d", trial_offset, n_trials) + ".csv";
+    std::ofstream csv(csv_path.Data());
+    if (!csv.is_open()) {
+      std::cerr << "INJ-FATAL: cannot write " << csv_path << std::endl;
+      return;
+    }
+    csv << "pair,shape,energy_keV,trial,n_inj,jitter_eV,method,mu_keV,"
+           "mu_err_keV,residual_eV,status,covQual,edm,valid,rail"
+        << std::endl;
+    std::cout << "INJ-CELL-START " << cell_tag << std::endl;
+    for (Int_t trial = trial_offset; trial < trial_offset + n_trials; trial++) {
+      const UInt_t seed = TrialSeed(DIRECT_SEED_INDEX, ei, 0, trial, run_tag);
+      gRandom->SetSeed(seed);
+      RooRandom::randomGenerator()->SetSeed(seed);
+      TRandom3 rng(seed);
+      const TString trial_tag = cell_tag + "_t" + Form("%d", trial);
+      std::vector<Double_t> events;
+      Int_t n_inj = 0;
+      if (source == "synthetic") {
+        n_inj = (Int_t)std::lround(n_inj_expected);
+        events = GenerateDirectSynthetic(ref, e_inj, n_inj_expected);
+      } else {
+        events = PoissonResample(bkg_pool, 1.0, rng);
+        std::vector<Double_t> injected =
+            SampleModel(n_inj_expected, e_inj, ref.ge, rng, n_inj);
+        events.insert(events.end(), injected.begin(), injected.end());
+      }
+      FitResult held, free_tail;
+      FitDirectTrial(events, bin_kev, ref.shape, trial_tag, held, free_tail);
+      const FitOutcome held_outcome = DirectOutcomeOf(held);
+      const FitOutcome free_outcome = DirectOutcomeOf(free_tail);
+      WriteRow(csv, run, "model", e_inj, trial, n_inj, 0.0, "direct",
+               held_outcome);
+      WriteRow(csv, run, "model", e_inj, trial, n_inj, 0.0, "direct_free_tail",
+               free_outcome);
+      std::cout << "INJ-TRIAL " << trial_tag << " n_inj " << n_inj << " direct "
+                << std::setprecision(5) << held_outcome.mu << " +/- "
+                << held_outcome.err << " (status " << held_outcome.status
+                << ", valid " << (held_outcome.valid ? 1 : 0) << ")  free tail "
+                << free_outcome.mu << " (valid " << (free_outcome.valid ? 1 : 0)
+                << ")" << std::endl;
+      if (!INJ_KEEP_TRIAL_PLOTS)
+        CleanTrialFiles(fits_dir, trial_tag);
+    }
+    csv.close();
+    std::cout << "INJ-CELL-DONE " << cell_tag << std::endl;
+  }
+}
+
 } // namespace
 
 void InjectionTest() {
@@ -1223,6 +1404,23 @@ void InjectionTest() {
   gROOT->SetBatch(kTRUE);
   RooMsgService::instance().setGlobalKillBelow(RooFit::WARNING);
 
+  if (INJ_METHOD == "direct") {
+    if (source != "synthetic" && source != "background") {
+      std::cerr << "ERROR: the direct testbed's source must be synthetic or "
+                   "background, got '"
+                << source << "'" << std::endl;
+      return;
+    }
+    std::cout << "INJ-CONFIG tag " << RESULT_TAG << " method direct source "
+              << source << " energy " << energy_index << " trials " << n_trials
+              << " from " << trial_offset << " run " << run_tag << std::endl;
+    RunDirectTestbed(source, energy_index, n_trials, trial_offset, run_tag);
+    return;
+  }
+  if (INJ_METHOD != "insitu") {
+    std::cerr << "ERROR: method must be insitu or direct" << std::endl;
+    return;
+  }
   if (source != "halves" && source != "real" && source != "synthetic" &&
       source != "synthetic_halves") {
     std::cerr << "ERROR: source must be halves, real, synthetic or "
@@ -1267,7 +1465,7 @@ void InjectionTest() {
     setup.source = source;
     const InjPair &pair = setup.pair;
 
-    Double_t slope = PairCalibrationSlope(pair.tag);
+    Double_t slope = CalibrationSlope("20260113_" + pair.tag);
     Double_t t_bkg = RunLiveTime(pair.bkg_run);
     Double_t t_sig = RunLiveTime(pair.sig_run);
     if (!(slope > 0) || !(t_bkg > 0 && t_sig > 0)) {

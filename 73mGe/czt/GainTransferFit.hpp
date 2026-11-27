@@ -4,13 +4,14 @@
 // The fitting core of the CZT 73mGe analysis.
 //
 // CalibrateAndFit.cpp (the measurement) and InjectionTest.cpp (its testbed
-// closure) both include this, so the testbed exercises the same in-situ and
-// rate-subtracted fits that produce the result.
+// closure) both include this, so the testbed exercises the same in-situ
+// (Method 1) and direct (Method 2) fits that produce the result.
 
 #include "Constants.hpp"
 #include "FittingUtils.hpp"
 #include "IOUtils.hpp"
 #include "PixelAlignment.hpp"
+#include "PlottingUtils.hpp"
 #include "ReferenceLines.hpp"
 #include "RooFitPhotopeakPdfs.hpp"
 #include "RooFitUtils.hpp"
@@ -27,8 +28,10 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <string>
 #include <vector>
 
 // ---------------------------------------------------------------- constants
@@ -1104,6 +1107,159 @@ inline RateSubResult FitRateSubPhases(const std::vector<TH1D *> &sigs,
   else
     delete res;
   return out;
+}
+
+// ----------------------------------------------- Method 2: the no-shield run
+
+// The Ge line fitted in the 01/15 no-shield signal run alone, without its
+// background run. The structure near Ge that once made a background
+// subtraction necessary is the 95.902 keV line's Cd and Te K X-ray escapes,
+// which the fit carries: an unbinned likelihood over DIRECT_WINDOW_LO-HI of the
+// run's calibrated events, the Ge line on a linear continuum (the no-shield
+// continuum is not flat here) with the escapes as fixed lines of the Ge peak's
+// shape. The Ge tail is held at the day's source-run tail, the Am-241 and
+// Ba-133 80.998 keV lines interpolated to Ge. The escapes sit at the 95.902
+// keV line's centroid minus the SRD 128 X-ray energies, with yields of the
+// day's escape fractions times its Gaussian yield, the line measured in the
+// same run on comb-period bins with the Ge tail. The same fit with Ge's tail
+// free, started from the held one, gives the tail systematic: both the source
+// lines' tail and Ge's own can be defended. The fit starts cold; it needs no
+// saved seed.
+const Double_t DIRECT_WINDOW_LO = 62.0;
+const Double_t DIRECT_WINDOW_HI = 78.0;
+// The 95.902 keV line's window, as AverageCaptureLine's callers bin it.
+const Double_t DIRECT_CAPTURE_LO = 88.0;
+const Double_t DIRECT_CAPTURE_WIDTH = 16.0;
+// RooFitUtils draws 0.85 times a window's low edge to 1.15 times its high
+// edge; the events loaded cover that and the capture line's window.
+const Double_t DIRECT_DISPLAY_LOW_FACTOR = 0.85;
+const Double_t DIRECT_DISPLAY_HIGH_FACTOR = 1.15;
+
+// The run's events the direct fit is given: its window as RooFitUtils draws
+// it, and the capture line's window.
+inline Bool_t InDirectFitRange(Double_t energy) {
+  const Double_t lo = DIRECT_DISPLAY_LOW_FACTOR * DIRECT_WINDOW_LO;
+  const Double_t hi = TMath::Max(DIRECT_DISPLAY_HIGH_FACTOR * DIRECT_WINDOW_HI,
+                                 DIRECT_CAPTURE_LO + DIRECT_CAPTURE_WIDTH);
+  return energy >= lo && energy <= hi;
+}
+
+// The run's 95.902 keV line on comb-period bins at N_RATESUB_PHASES starting
+// points, with the Ge tail.
+inline CaptureLine MeasureDirectCaptureLine(const std::vector<Double_t> &events,
+                                            Double_t bin_kev,
+                                            const RateSubShape &shape,
+                                            const TString &tag) {
+  const Int_t n_bins = (Int_t)std::lround(DIRECT_CAPTURE_WIDTH / bin_kev);
+  std::vector<TH1D *> hists;
+  for (Int_t k = 0; k < N_RATESUB_PHASES; k++) {
+    Double_t start = DIRECT_CAPTURE_LO + k * bin_kev / N_RATESUB_PHASES;
+    TH1D *h = new TH1D(Form("direct_capture_%s_%d", tag.Data(), k), "", n_bins,
+                       start, start + n_bins * bin_kev);
+    h->SetDirectory(nullptr);
+    for (size_t i = 0; i < events.size(); i++)
+      h->Fill(events[i]);
+    hists.push_back(h);
+  }
+  CaptureLine line =
+      AverageCaptureLine(hists, shape.ge_tail_height_ratio,
+                         shape.ge_tau_over_sigma, kTRUE, "direct_" + tag);
+  for (size_t k = 0; k < hists.size(); k++)
+    delete hists[k];
+  return line;
+}
+
+// One direct fit: the Ge tail held at the source-run tail, or free. A seed,
+// when given, starts the fit.
+inline FitResult FitDirectGeOnce(const std::vector<Double_t> &events,
+                                 Double_t bin_kev, const RateSubShape &shape,
+                                 const std::vector<Double_t> &escape_mus,
+                                 const std::vector<Double_t> &escape_yields,
+                                 Bool_t hold_tail, const FitResult *seed,
+                                 const TString &input_name,
+                                 const TString &label) {
+  RooFitUtils sim;
+  sim.SetTailRatioMax(TAIL_RATIO_MAX);
+  std::vector<Double_t> mus(1, (Double_t)E_NEAR_GE);
+  const Bool_t flat_continuum = kFALSE;
+  sim.AddChannel("direct", events, DIRECT_WINDOW_LO, DIRECT_WINDOW_HI, bin_kev,
+                 1, mus, flat_continuum, kFALSE, kTRUE, kFALSE, kFALSE);
+  if (hold_tail) {
+    sim.HoldParameter("direct:LowExpTailAmplitude1",
+                      FullRangeTailRatio(shape.ge_tail_height_ratio,
+                                         shape.ge_tau_over_sigma));
+    sim.HoldParameter("direct:LowExpTailRatio1", shape.ge_tau_over_sigma);
+  }
+  if (!escape_mus.empty())
+    sim.AddFixedLines("direct", 0, escape_mus, escape_yields);
+  if (seed && seed->valid)
+    sim.SeedChannel("direct", *seed);
+  std::vector<FitResult> results = sim.FitSimultaneous(input_name, label);
+  if (results.empty())
+    return FitResult();
+  // Per-bin data, model and pull, for the residual check and the figure.
+  sim.DumpChannelCSV("direct",
+                     PlottingUtils::GetPlotsBaseDir() + "/fits/" + label);
+  FitResult fit = results[0];
+  fit.valid = fit.valid && !fit.peaks.empty() && fit.fit_status == 0 &&
+              fit.cov_qual == 3;
+  return fit;
+}
+
+inline void PrintDirectFit(const TString &label, const FitResult &fit) {
+  if (!fit.valid) {
+    std::cout << "DIRECT-FIT " << label << ": failed (status " << fit.fit_status
+              << ", covQual " << fit.cov_qual << ")" << std::endl;
+    return;
+  }
+  const PeakFitResult &ge = fit.peaks[0];
+  // The tail as RooFitUtils' full-range ratio to the Gaussian yield.
+  Double_t tail_ratio = (ge.gaus_amplitude > 0)
+                            ? ge.low_exp_tail_amplitude / ge.gaus_amplitude
+                            : 0.0;
+  std::cout << "DIRECT-FIT " << label << ": Ge " << std::fixed
+            << std::setprecision(4) << ge.mu << " +/- " << ge.mu_error
+            << " keV, sigma " << ge.sigma << ", Gaussian yield "
+            << std::setprecision(0) << ge.gaus_amplitude << ", tail ratio "
+            << std::setprecision(4) << tail_ratio << " tau/sigma "
+            << std::setprecision(3) << ge.low_exp_tail_ratio << "   chi2/ndf "
+            << fit.reduced_chi2 << std::endl;
+}
+
+// Where production leaves the day's held Ge tail for the testbed, which has no
+// source-run fits of its own: beside the direct fit's other files.
+inline TString DirectTailPath(const TString &plots_dir,
+                              const TString &date_label) {
+  return plots_dir + "/fits/Direct_" + date_label + "_held_tail.txt";
+}
+
+inline Bool_t WriteDirectTail(const TString &path, const RateSubShape &shape) {
+  std::ofstream out(path.Data());
+  if (!out.is_open()) {
+    std::cerr << "ERROR: cannot write " << path << std::endl;
+    return kFALSE;
+  }
+  out << std::setprecision(17);
+  out << "ge_tail_height_ratio " << shape.ge_tail_height_ratio << std::endl;
+  out << "ge_tau_over_sigma " << shape.ge_tau_over_sigma << std::endl;
+  return kTRUE;
+}
+
+inline Bool_t ReadDirectTail(const TString &path, RateSubShape &shape) {
+  std::ifstream in(path.Data());
+  std::string name;
+  Double_t value = 0;
+  Int_t found = 0;
+  while (in >> name >> value) {
+    if (name == "ge_tail_height_ratio") {
+      shape.ge_tail_height_ratio = value;
+      found++;
+    } else if (name == "ge_tau_over_sigma") {
+      shape.ge_tau_over_sigma = value;
+      found++;
+    }
+  }
+  return found == 2;
 }
 
 #endif // GAINTRANSFER_FIT_HPP
