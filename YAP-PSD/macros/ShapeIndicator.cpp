@@ -531,7 +531,7 @@ void PlotBestSIFOM(const SpectralCuts &cuts = CUTS) {
   leg->AddEntry(draw_fit_gamma, "#gamma fit", "l");
 
   char fom_text[100];
-  sprintf(fom_text, "FOM: %.3f", fom);
+  sprintf(fom_text, "FoM: %.3f", fom);
   leg->AddEntry((TObject *)0, fom_text, "");
   leg->Draw();
 
